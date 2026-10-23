@@ -589,6 +589,61 @@ function createContext(env, execCtx) {
 }
 __name(createContext, "createContext");
 
+// src/schema.js
+var MIGRATIONS = [
+  {
+    "name": "0001_init.sql",
+    "sql": "-- TrustGap schema for Cloudflare D1 (SQLite). Money is integer kobo; times are ISO-8601 UTC strings.\n\nCREATE TABLE sellers (\n  id INTEGER PRIMARY KEY,\n  full_name TEXT NOT NULL,\n  business_name TEXT NOT NULL,\n  phone TEXT NOT NULL UNIQUE,\n  email TEXT NOT NULL,\n  phone_verified_at TEXT,\n  pickup_address TEXT,\n  pickup_zone TEXT,\n  payout_bank_code TEXT,\n  payout_bank_name TEXT,\n  payout_account_number TEXT,\n  payout_account_name TEXT,\n  payout_verified_at TEXT,\n  id_type TEXT,\n  id_last4 TEXT,\n  id_verified_name TEXT,\n  id_provider_ref TEXT,\n  identity_verified_at TEXT,\n  amount_owed INTEGER NOT NULL DEFAULT 0,\n  suspended_at TEXT,\n  created_at TEXT NOT NULL\n);\n\nCREATE TABLE sessions (\n  token_hash TEXT PRIMARY KEY,\n  seller_id INTEGER REFERENCES sellers(id),\n  is_admin INTEGER NOT NULL DEFAULT 0,\n  expires_at TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\n\nCREATE TABLE otps (\n  id INTEGER PRIMARY KEY,\n  phone TEXT NOT NULL,\n  code_hash TEXT NOT NULL,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  expires_at TEXT NOT NULL,\n  consumed_at TEXT,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX otps_phone ON otps(phone, created_at);\n\nCREATE TABLE deals (\n  id INTEGER PRIMARY KEY,\n  token TEXT NOT NULL UNIQUE,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  replaces_deal_id INTEGER REFERENCES deals(id),\n  item_title TEXT NOT NULL,\n  item_description TEXT NOT NULL,\n  item_condition TEXT NOT NULL,\n  quantity INTEGER NOT NULL,\n  item_price INTEGER NOT NULL,\n  pickup_address TEXT NOT NULL,\n  pickup_zone TEXT NOT NULL,\n  delivery_zone TEXT NOT NULL,\n  delivery_fee INTEGER NOT NULL,\n  delivery_payer TEXT NOT NULL,\n  fee_payer TEXT NOT NULL,\n  platform_fee INTEGER NOT NULL,\n  buyer_total INTEGER NOT NULL,\n  seller_payout INTEGER NOT NULL,\n  delivery_days INTEGER NOT NULL,\n  inspection_hours INTEGER NOT NULL,\n  status TEXT NOT NULL,\n  expires_at TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX deals_seller ON deals(seller_id, status);\n\nCREATE TABLE checkouts (\n  id TEXT PRIMARY KEY,\n  deal_id INTEGER NOT NULL REFERENCES deals(id),\n  terms_json TEXT NOT NULL,\n  terms_hash TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\n\nCREATE TABLE orders (\n  id INTEGER PRIMARY KEY,\n  ref TEXT NOT NULL UNIQUE,\n  deal_id INTEGER NOT NULL REFERENCES deals(id),\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  buyer_token TEXT NOT NULL UNIQUE,\n  buyer_name TEXT NOT NULL,\n  buyer_phone TEXT NOT NULL,\n  buyer_email TEXT NOT NULL,\n  delivery_address TEXT NOT NULL,\n  delivery_landmark TEXT,\n  refund_bank_code TEXT NOT NULL,\n  refund_bank_name TEXT NOT NULL,\n  refund_account_enc TEXT NOT NULL,\n  refund_account_last4 TEXT NOT NULL,\n  refund_account_name TEXT NOT NULL,\n  terms_json TEXT NOT NULL,\n  terms_hash TEXT NOT NULL,\n  terms_accepted_at TEXT NOT NULL,\n  amount INTEGER NOT NULL,\n  status TEXT NOT NULL,\n  last_transition TEXT,\n  tx_ref TEXT NOT NULL UNIQUE,\n  provider_tx_id TEXT,\n  paid_at TEXT,\n  delivery_pin_enc TEXT,\n  pin_attempts INTEGER NOT NULL DEFAULT 0,\n  delivery_ref TEXT,\n  rider_url TEXT,\n  delivery_status TEXT NOT NULL DEFAULT 'not_booked',\n  packing_note TEXT,\n  ship_by TEXT,\n  dispatched_at TEXT,\n  delivered_at TEXT,\n  inspection_ends_at TEXT,\n  closed_at TEXT,\n  created_at TEXT NOT NULL\n);\n-- A deal can be paid for only once, however many checkout attempts it had.\nCREATE UNIQUE INDEX orders_one_paid_per_deal\n  ON orders(deal_id) WHERE status IN ('paid', 'shipping', 'delivered', 'disputed', 'completed', 'refunded');\nCREATE INDEX orders_status ON orders(status);\nCREATE INDEX orders_seller ON orders(seller_id);\n\nCREATE TABLE order_events (\n  id INTEGER PRIMARY KEY,\n  order_id INTEGER NOT NULL REFERENCES orders(id),\n  actor TEXT NOT NULL,\n  type TEXT NOT NULL,\n  detail TEXT,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX order_events_order ON order_events(order_id);\n\nCREATE TABLE disputes (\n  id INTEGER PRIMARY KEY,\n  order_id INTEGER NOT NULL REFERENCES orders(id),\n  opened_by TEXT NOT NULL,\n  category TEXT NOT NULL,\n  description TEXT NOT NULL,\n  status TEXT NOT NULL,\n  resolution_note TEXT,\n  buyer_refund INTEGER,\n  seller_payout INTEGER,\n  seller_charge INTEGER,\n  created_at TEXT NOT NULL,\n  resolved_at TEXT\n);\n\nCREATE TABLE ledger (\n  id INTEGER PRIMARY KEY,\n  order_id INTEGER REFERENCES orders(id),\n  kind TEXT NOT NULL,\n  amount INTEGER NOT NULL,\n  counterparty TEXT,\n  provider_ref TEXT,\n  status TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX ledger_order ON ledger(order_id);\n\n-- Messages handed to Make.com (which sends SMS via KudiSMS and email).\nCREATE TABLE outbox (\n  id INTEGER PRIMARY KEY,\n  order_id INTEGER,\n  event TEXT NOT NULL,\n  to_phone TEXT,\n  to_email TEXT,\n  sms TEXT,\n  email_subject TEXT,\n  status TEXT NOT NULL,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  last_error TEXT,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX outbox_status ON outbox(status);\n\nCREATE TABLE mock_transactions (\n  tx_ref TEXT PRIMARY KEY,\n  amount INTEGER NOT NULL,\n  status TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\n\nCREATE TABLE meta (\n  key TEXT PRIMARY KEY,\n  value TEXT\n);\n"
+  },
+  {
+    "name": "0002_processing_payouts_identity.sql",
+    "sql": "-- Payment processing line (Flutterwave's costs, passed on at cost) stored per deal.\nALTER TABLE deals ADD COLUMN processing_fee INTEGER NOT NULL DEFAULT 0;\n\n-- Payouts: a stable reference per attempt (Flutterwave's idempotency key), the attempt number,\n-- and the earliest time a payout may be sent (after the buyer's payment settles, T+1).\nALTER TABLE ledger ADD COLUMN transfer_ref TEXT;\nALTER TABLE ledger ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1;\nALTER TABLE ledger ADD COLUMN not_before TEXT;\nALTER TABLE ledger ADD COLUMN last_error TEXT;\nCREATE INDEX ledger_status ON ledger(status, not_before);\nCREATE UNIQUE INDEX ledger_transfer_ref ON ledger(transfer_ref) WHERE transfer_ref IS NOT NULL;\n\n-- Each NIN check costs money, so failed attempts are counted and capped.\nALTER TABLE sellers ADD COLUMN id_attempts INTEGER NOT NULL DEFAULT 0;\n"
+  }
+];
+
+// src/lib/migrate.js
+function splitStatements(sql) {
+  return sql.replace(/--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean);
+}
+__name(splitStatements, "splitStatements");
+async function appliedMigrations(db) {
+  await db.prepare("CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)").run();
+  const names = new Set((await db.prepare("SELECT name FROM _migrations").all()).results.map((r) => r.name));
+  const wrangler = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'd1_migrations'").first();
+  if (wrangler) for (const r of (await db.prepare("SELECT name FROM d1_migrations").all()).results) names.add(r.name);
+  return names;
+}
+__name(appliedMigrations, "appliedMigrations");
+async function migrate(db) {
+  let applied = await appliedMigrations(db);
+  for (const m of MIGRATIONS) {
+    if (applied.has(m.name)) continue;
+    const statements = splitStatements(m.sql).map((s) => db.prepare(s));
+    statements.push(db.prepare("INSERT INTO _migrations (name, applied_at) VALUES (?, ?)").bind(m.name, (/* @__PURE__ */ new Date()).toISOString()));
+    try {
+      await db.batch(statements);
+    } catch (err) {
+      applied = await appliedMigrations(db);
+      if (!applied.has(m.name)) throw new Error(`Database setup (${m.name}) failed: ${err.message}`);
+    }
+  }
+}
+__name(migrate, "migrate");
+var ready = /* @__PURE__ */ new WeakMap();
+function ensureSchema(env) {
+  if (!env.DB) return Promise.reject(new Error("No D1 binding called DB. Add it under Settings \u2192 Bindings."));
+  let p = ready.get(env.DB);
+  if (!p) {
+    p = migrate(env.DB).catch((err) => {
+      ready.delete(env.DB);
+      throw err;
+    });
+    ready.set(env.DB, p);
+  }
+  return p;
+}
+__name(ensureSchema, "ensureSchema");
+
 // src/lib/money.js
 function nairaToKobo(input) {
   const s = String(input ?? "").replace(/[,\s₦]/g, "");
@@ -1464,7 +1519,21 @@ async function loadOrderByBuyerToken(ctx, token) {
 }
 __name(loadOrderByBuyerToken, "loadOrderByBuyerToken");
 function publicRoutes(r) {
-  r.get("/api/health", () => ({ ok: true }));
+  r.get("/api/health", async ({ ctx }) => {
+    const expected = ["sellers", "sessions", "otps", "deals", "checkouts", "orders", "order_events", "disputes", "ledger", "outbox", "mock_transactions", "meta"];
+    if (!ctx.env.DB) return { ok: false, database: "No D1 binding called DB. Add it under Settings \u2192 Bindings." };
+    try {
+      await ensureSchema(ctx.env);
+      const tables = (await all(ctx.env, "SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
+      const missing = expected.filter((t) => !tables.includes(t));
+      if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(", ")}. The Worker could not create them \u2014 check Logs.` };
+      const columns = (await all(ctx.env, "PRAGMA table_info(deals)")).map((c) => c.name);
+      if (!columns.includes("processing_fee")) return { ok: false, database: "Database update 0002 not applied \u2014 check Logs." };
+      return { ok: true, database: "connected" };
+    } catch (err) {
+      return { ok: false, database: `Database error: ${err.message}` };
+    }
+  });
   r.get("/api/config", async ({ ctx }) => ({
     test_mode: ctx.config.testMode,
     payment_provider: ctx.payments.name,
@@ -2243,8 +2312,9 @@ var index_default = {
     let res;
     try {
       const url = new URL(request.url);
-      const match = router.match(request.method, url.pathname);
+      const match = router.match(request.method, url.pathname.replace(/\/{2,}/g, "/"));
       if (!match) throw new UserError("Not found", 404);
+      if (url.pathname !== "/api/health") await ensureSchema(env);
       const ctx = createContext(env, execCtx);
       const body = request.method === "POST" ? await readBody(request) : {};
       const out = await match.handler({ ctx, request, params: match.params, body, url });
@@ -2263,6 +2333,7 @@ var index_default = {
   },
   // Cron trigger (wrangler.toml): timers every 5 minutes, Google Sheets copy every 15.
   async scheduled(event, env, execCtx) {
+    await ensureSchema(env);
     const ctx = createContext(env, execCtx);
     await runJobs(ctx);
     if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {
