@@ -11,32 +11,78 @@ GitHub Pages (docs/)  ──calls──▶  Cloudflare Worker (worker/)  ──�
                                          └─▶ Fez (delivery — not connected yet; manual rider links meanwhile)
 ```
 
-## 1. Cloudflare Worker and D1 database
+## 1. Cloudflare Worker and D1 database (from the Cloudflare dashboard)
 
-```bash
-cd worker
-npm install
-npx wrangler login                      # opens your browser
-npx wrangler d1 create trustgap        # prints a database_id
-```
+The same way as CEA: create the Worker, paste the code, set the keys. Two ready-made files are
+in the repo for this:
 
-Paste the `database_id` into `worker/wrangler.toml`, then:
+- `worker/dashboard/worker.js` — the whole Worker in **one file**, to paste into "Edit code"
+- `worker/dashboard/schema.sql` — all the database tables, to paste into the D1 console
 
-```bash
-npm run db:migrate                      # creates the tables in Cloudflare
-npx wrangler secret put APP_SECRET      # paste a long random string (50+ characters)
-npx wrangler secret put ADMIN_PASSWORD  # a long password only you know
-npm run deploy                          # prints your Worker URL, e.g. https://trustgap-api.<you>.workers.dev
-```
+**a. Create the database**
+1. Cloudflare dashboard → **Storage & Databases → D1 SQL Database → Create**. Name it `trustgap`.
+2. Open it → **Console**. Paste everything from `worker/dashboard/schema.sql` → **Execute**.
+   (If the console complains about running several statements, paste and run one
+   `CREATE TABLE …;` / `ALTER TABLE …;` block at a time, top to bottom.)
 
-Then put that URL in two places:
-- `worker/wrangler.toml` → `API_URL`
-- `docs/assets/js/config.js` → `API_URL`
+**b. Create the Worker**
+1. **Workers & Pages → Create → Create Worker**. Name it `trustgap-api` → **Deploy** (the
+   "Hello World" code is fine for now).
+2. **Edit code** → select everything in the editor, delete it, paste **all** of
+   `worker/dashboard/worker.js` → **Deploy**.
 
-and run `npm run deploy` again.
+**c. Connect the database to the Worker**
+**trustgap-api → Settings → Bindings → Add → D1 database**: Variable name `DB` (exactly, in
+capitals), database `trustgap` → **Deploy/Save**.
 
-> **APP_SECRET** encrypts buyers' refund account numbers and delivery PINs and signs rider links.
-> Never change it after launch, or those become unreadable. Keep a copy somewhere safe.
+**d. Add the settings** — **Settings → Variables and Secrets → Add**:
+
+| Name | Type | Value |
+|---|---|---|
+| `APP_SECRET` | **Secret** | a long random string (50+ characters) — **save a copy in a password manager** |
+| `ADMIN_PASSWORD` | **Secret** | a long password only you know (for `/admin/`) |
+| `TEST_MODE` | Text | `true` (until you go live) |
+| `SITE_URL` | Text | `https://trustgap-co.github.io` |
+| `ALLOWED_ORIGINS` | Text | `https://trustgap-co.github.io` |
+| `API_URL` | Text | your Worker's address, e.g. `https://trustgap-api.<you>.workers.dev` (shown on the Worker's page) |
+| `PAYMENT_PROVIDER` | Text | `mock` (→ `flutterwave` later, step 6) |
+| `IDENTITY_PROVIDER` | Text | `mock` (→ `monnify` later, step 5) |
+| `LOGISTICS_PROVIDER` | Text | `manual` |
+
+Everything else (fee 1.5%, processing 2%, inspection 24h, …) has sensible defaults; add a variable
+only if you want to change one (the names are listed in `worker/wrangler.toml`). Later keys
+(Flutterwave, Monnify, Make.com, Google) are added the same way, always as **Secret**.
+
+To make a random `APP_SECRET` without a terminal: a password manager's generator (50+ characters,
+letters and numbers) is fine. `APP_SECRET` encrypts buyers' refund account numbers and delivery
+PINs and signs rider links: **never change it after launch**, or those become unreadable.
+
+**e. Turn on the timers** — **Settings → Triggers → Cron Triggers → Add**: `*/5 * * * *`
+(every 5 minutes). This expires links, releases payments after inspection, sends payouts and
+retries SMS. Google Sheets is copied on every third run.
+
+**f. Check it works** — open `https://trustgap-api.<you>.workers.dev/api/health` in your browser.
+You should see `{"ok":true}`.
+
+**g. Tell the website where the Worker is** — in GitHub, edit `docs/assets/js/config.js` and replace
+`https://trustgap-api.YOUR-SUBDOMAIN.workers.dev` with your Worker's address. Commit.
+
+**Updating the Worker later:** when the code changes, a new `worker/dashboard/worker.js` is
+generated (`npm run dashboard-files` in `worker/`). Paste it into **Edit code** again and Deploy.
+Your settings, secrets, database and cron trigger stay as they are. If a change adds a new file in
+`worker/migrations/`, also run that file's SQL once in the D1 console.
+
+### Alternative: the terminal (wrangler)
+
+If you prefer commands, `worker/wrangler.toml` holds the same settings: put your D1 `database_id`
+in it, then from `worker/`: `npm install`, `npx wrangler login`, `npm run db:migrate`,
+`npx wrangler secret put APP_SECRET`, `npx wrangler secret put ADMIN_PASSWORD`, `npm run deploy`.
+Pick one way and stick to it: a terminal deploy replaces the text variables you set in the
+dashboard with the ones in `wrangler.toml` (secrets are kept).
+
+> **Dashboard users, for the steps below:** wherever a step says `npx wrangler secret put NAME`,
+> add `NAME` under **Settings → Variables and Secrets** with type **Secret**. Wherever it says to set
+> something in `wrangler.toml` and deploy, add or change that **Text** variable there instead.
 
 ## 2. Website on GitHub Pages
 

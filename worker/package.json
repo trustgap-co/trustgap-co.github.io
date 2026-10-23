@@ -9,7 +9,8 @@
     "db:migrate:local": "wrangler d1 migrations apply trustgap --local",
     "db:migrate": "wrangler d1 migrations apply trustgap --remote",
     "deploy": "wrangler deploy",
-    "test": "node --no-warnings --test test/*.test.js"
+    "test": "node --no-warnings --test test/*.test.js",
+    "dashboard-files": "wrangler deploy --dry-run --outdir .bundle && node scripts/dashboard-files.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.40.0"

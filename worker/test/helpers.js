@@ -1,4 +1,5 @@
-import worker from '../src/index.js';
+// WORKER_ENTRY lets the same tests run against the single-file dashboard build.
+const worker = (await import(process.env.WORKER_ENTRY || '../src/index.js')).default;
 import { D1Shim } from './d1-shim.js';
 
 export const SITE = 'https://site.test';
