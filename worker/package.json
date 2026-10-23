@@ -1,0 +1,17 @@
+{
+  "name": "trustgap-api",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "TrustGap API on Cloudflare Workers + D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply trustgap --local",
+    "db:migrate": "wrangler d1 migrations apply trustgap --remote",
+    "deploy": "wrangler deploy",
+    "test": "node --no-warnings --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}

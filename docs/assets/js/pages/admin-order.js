@@ -21,7 +21,7 @@ async function render() {
       <div><h2>Deal</h2>
         <p><strong>${d.item_title}</strong> (${d.item_condition}, ×${d.quantity})</p>
         <p class="pre small">${d.item_description}</p>
-        <p class="small">Item ${money(d.item_price)} · delivery ${money(d.delivery_fee)} (${d.delivery_payer}) · fee ${money(d.platform_fee)} (${d.fee_payer})<br>
+        <p class="small">Item ${money(d.item_price)} · delivery ${money(d.delivery_fee)} (${d.delivery_payer}) · TrustGap fee ${money(d.platform_fee)} + processing ${money(d.processing_fee)} (${d.fee_payer})<br>
           Buyer paid <strong>${money(o.amount)}</strong> · seller gets <strong>${money(d.seller_payout)}</strong></p>
         <p class="small">Packing note: ${o.packing_note || '—'}</p></div>
       <div><h2>Seller</h2>

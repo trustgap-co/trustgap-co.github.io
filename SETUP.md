@@ -6,7 +6,7 @@ Everything here works on free plans. Do the steps in order. You need Node.js 22+
 GitHub Pages (docs/)  ──calls──▶  Cloudflare Worker (worker/)  ──▶  D1 database (the real records)
    the website                     the server + timers               └─▶ Google Sheets (read-only copy, every 15 min)
                                          │
-                                         ├─▶ Flutterwave (payments)   ├─▶ VerifyMe (seller ID checks)
+                                         ├─▶ Flutterwave (payments)   ├─▶ Monnify (seller NIN checks)
                                          ├─▶ Make.com webhook ─▶ KudiSMS (SMS) + email
                                          └─▶ Fez (delivery — not connected yet; manual rider links meanwhile)
 ```
@@ -107,30 +107,65 @@ Every 15 minutes the Worker rewrites tabs **Summary, Orders, Sellers, Disputes, 
 It is read-only: edits in the sheet are overwritten. Bank account numbers, PINs, full addresses and
 ID numbers are never copied. **Admin → Orders → Copy to Google Sheets now** forces a sync.
 
-## 5. VerifyMe (seller identity)
+## 5. Monnify (seller NIN checks)
 
-Until you have a key, `IDENTITY_PROVIDER = "mock"` accepts test NIN `11111111111` (DOB 1990-01-15).
+Sellers verify with their **NIN only**. Until you add keys, `IDENTITY_PROVIDER = "mock"` accepts
+test NIN `11111111111` (date of birth 1990-01-15).
 
-When you get API access:
-1. Check `worker/src/providers/identity/verifyme.js` against VerifyMe's current docs. Their docs
-   site couldn't be reached while this was written, so the endpoint and field names need checking.
-2. `npx wrangler secret put VERIFYME_SECRET_KEY`
-3. Set `IDENTITY_PROVIDER = "verifyme"` in `wrangler.toml` and deploy.
+1. In the Monnify dashboard, copy your **API key** and **secret key** (live, not sandbox: Monnify's
+   NIN check only works on the live environment).
+2. Top up your Monnify wallet. Each successful NIN check costs **₦60** and checks fail if the
+   balance is too low.
+3. Set the secrets and switch the provider:
 
-## 6. Flutterwave (when they reply)
+```bash
+npx wrangler secret put MONNIFY_API_KEY
+npx wrangler secret put MONNIFY_SECRET_KEY
+```
 
-1. Ask Flutterwave to confirm **in writing** that holding funds and paying out after delivery is
-   allowed on your account, and which product to use (see the earlier feasibility notes).
-2. Test keys first: `npx wrangler secret put FLW_SECRET_KEY` (a `FLWSECK_TEST-…` key),
-   `npx wrangler secret put FLW_WEBHOOK_HASH` (any random string, also entered in the Flutterwave
-   dashboard), and set the webhook URL to `https://<your-worker>/webhooks/flutterwave`.
-3. Set `PAYMENT_PROVIDER = "flutterwave"` and deploy. Run a few test orders.
-4. Live keys are refused unless you also set `ALLOW_LIVE_PAYMENTS = "true"`. Do that only after
-   the lawyer and Flutterwave (or your bank partner) have approved how the money is held.
+   then set `IDENTITY_PROVIDER = "monnify"` in `worker/wrangler.toml` and run `npm run deploy`.
 
-If Flutterwave says no, another provider or bank only needs a new file in
-`worker/src/providers/payments/` with the same functions (`listBanks`, `resolveAccount`,
-`createCheckout`, `verify`, `parseWebhook`, `transfer`).
+How it works: the Worker logs in to Monnify (`POST /api/v1/auth/login`), sends the NIN to
+`POST /api/v1/vas/nin-verification`, and compares the returned name with the seller's account name
+and the returned date of birth with what they typed. Only the last 4 digits of the NIN are stored.
+Each seller gets **3 attempts** (so a typo costs ₦60, not unlimited money); Monnify outages don't
+count. A seller who runs out can be verified by hand: **Admin → Sellers → Mark ID verified**.
+
+## 6. Flutterwave (Collect-and-Transfer)
+
+Flutterwave confirmed this model: TrustGap is the **primary merchant** (not an escrow provider).
+Buyer payments settle into TrustGap's Flutterwave wallet the next working day (T+1), and TrustGap
+pays sellers with the **Transfers API** once delivery is confirmed. The app already works this way:
+
+- **Pricing** covers Flutterwave's costs: "TrustGap fee" (1.5%, no cap) plus "Payment processing"
+  (Flutterwave's 2% on collections and the ₦53.75 + VAT payout fee, passed on at cost). Change
+  `PROCESSING_PERCENT` / `PAYOUT_FEE_NAIRA` in `wrangler.toml` if your merchant agreement differs.
+- **Payouts wait for settlement**: a payout is scheduled for the next working day after the buyer
+  paid (`SETTLEMENT_HOURS`), so it never fails for lack of wallet balance.
+- **No double payouts**: every transfer uses a fixed reference (`TGT-<ledger id>-<attempt>`) as
+  Flutterwave's idempotency key. A transfer whose outcome is unknown is retried with the same
+  reference; only a confirmed failure gets a new one (3 attempts, then **Admin → Ledger** shows it as
+  "needs_attention").
+- **Results** come from Flutterwave's `transfer.completed` webhook, always re-checked with
+  `GET /transfers/:id`, and a timer re-checks any transfer still unconfirmed after 30 minutes.
+
+Steps:
+1. Test keys first: `npx wrangler secret put FLW_SECRET_KEY` (a `FLWSECK_TEST-…` key) and
+   `npx wrangler secret put FLW_WEBHOOK_HASH` (any random string; enter the same one in the
+   Flutterwave dashboard as the webhook secret hash).
+2. In the Flutterwave dashboard set the webhook URL to `https://<your-worker>/webhooks/flutterwave`
+   and enable payment **and** transfer events.
+3. Set `PAYMENT_PROVIDER = "flutterwave"` and deploy. Run test orders through to payout and refund.
+4. Live keys are refused unless you also set `ALLOW_LIVE_PAYMENTS = "true"`. Flutterwave was clear
+   that **TrustGap, not Flutterwave, is the custodian of the money in the wallet**, so do this only
+   after a Nigerian fintech lawyer has advised on safeguarding and segregation of those funds.
+
+Still to ask Flutterwave (their integrations team offered a walkthrough):
+- Is the 2% on local NGN collections capped?
+- NGN transfer limits per transfer and per day.
+- The reserve / chargeback terms in your merchant agreement (chargebacks are TrustGap's liability).
+- Can a transfer that **failed** be retried with the same reference, or must it be new? (The app
+  assumes new.)
 
 ## 7. Fez (when they reply)
 
@@ -140,7 +175,9 @@ parcel and enters the buyer's PIN on it. For Fez, fill in `worker/src/providers/
 
 ## 8. Going live checklist
 
-- [ ] Lawyer and payment partner approve the custody model in writing
+- [ ] Lawyer advises on holding customer funds (Flutterwave confirmed TrustGap is the custodian)
+- [ ] Merchant agreement checked: reserves, chargebacks, prohibited items, whether the 2% is capped
+- [ ] Monnify wallet funded for NIN checks (₦60 each)
 - [ ] `TEST_MODE = "false"` (stops showing login codes on screen and the test banner)
 - [ ] Real `APP_SECRET` and `ADMIN_PASSWORD` set as secrets, with a backup copy of `APP_SECRET`
 - [ ] KudiSMS sender ID approved, transactional route working, a real code received on a DND number

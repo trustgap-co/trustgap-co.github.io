@@ -5,7 +5,7 @@ try {
   const { seller: s, stats, orders, deals } = await api('/api/seller/dashboard', { as: 'seller' });
   const setup = [
     !s.payout && html`<li>Add the bank account you want to be paid into</li>`,
-    !s.identity_verified && html`<li>Verify your identity with your NIN or BVN</li>`,
+    !s.identity_verified && html`<li>Verify your identity with your NIN</li>`,
   ].filter(Boolean);
   show('#app', html`<h1>Hi ${s.business_name}</h1>
     ${setup.length ? html`<div class="callout warn"><strong>Before you can create payment links:</strong><ul>${setup}</ul>

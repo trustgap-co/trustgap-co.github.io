@@ -18,13 +18,13 @@ async function render() {
   <section class="card narrow">
     <h1>2. Identity</h1>
     ${s.identity_verified
-      ? html`<div class="callout ok">✓ Verified on ${date(s.identity_verified_at)}. Buyers see a “Identity verified” badge on your links.</div>`
-      : html`<p class="muted">We check your NIN or BVN with VerifyMe. The name and date of birth must match your account. We only keep the last 4 digits.</p>
+      ? html`<div class="callout ok">✓ Verified on ${date(s.identity_verified_at)}. Buyers see an “Identity verified” badge on your links.</div>`
+      : s.id_attempts_left === 0
+        ? html`<div class="callout warn">You have used all your verification attempts. Contact TrustGap support to finish verification.</div>`
+        : html`<p class="muted">We check your NIN (National Identification Number) with Monnify. The name and date of birth on it must match your account. We only keep the last 4 digits.</p>
+        <p class="small muted">${s.id_attempts_left} attempt${s.id_attempts_left > 1 ? 's' : ''} left — please double-check before submitting.</p>
         <form class="form" id="identity">
-          <div class="grid2">
-            <label>ID type <select name="id_type" required><option value="nin">NIN</option><option value="bvn">BVN</option></select></label>
-            <label>Number <input name="id_number" required inputmode="numeric" pattern="\\d{11}" maxlength="11"></label>
-          </div>
+          <label>NIN <input name="nin" required inputmode="numeric" pattern="\\d{11}" maxlength="11" placeholder="11 digits"></label>
           <label>Date of birth <input name="dob" type="date" required></label>
           ${config.test_mode ? html`<details class="hint"><summary>Test mode: use a test NIN</summary>
             <p>11111111111 — Adebayo Oluwaseun John, born 1990-01-15</p></details>` : ''}

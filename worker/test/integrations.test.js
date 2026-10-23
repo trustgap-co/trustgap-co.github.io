@@ -1,0 +1,94 @@
+import { test, describe, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { generateKeyPairSync, createHmac } from 'node:crypto';
+import { boot, onboardSeller, createDeal, buyerPays } from './helpers.js';
+
+// Replaces global fetch for one test, recording calls to external services.
+let realFetch;
+let calls;
+function stubFetch(handler) {
+  calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return handler(String(url), init);
+  };
+}
+beforeEach(() => (realFetch = globalThis.fetch));
+afterEach(() => (globalThis.fetch = realFetch));
+
+const ok = (data) => new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+describe('Make.com notifications', () => {
+  test('messages are signed and delivered to the Make webhook', async () => {
+    stubFetch(() => ok({ accepted: true }));
+    const t = boot({ MAKE_WEBHOOK_URL: 'https://hook.make.test/abc', MAKE_WEBHOOK_SECRET: 'make-secret' });
+    await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    assert.equal(calls.length, 1);
+    const { url, init } = calls[0];
+    assert.equal(url, 'https://hook.make.test/abc');
+    const body = JSON.parse(init.body);
+    assert.equal(body.event, 'login_code');
+    assert.equal(body.to_phone_intl, '2348031234567');
+    assert.match(body.sms, /Your TrustGap code is \d{6}/);
+    const expected = createHmac('sha256', 'make-secret').update(init.body).digest('base64url');
+    assert.equal(init.headers['X-TrustGap-Signature'], expected);
+    assert.equal((await t.one('SELECT status FROM outbox')).status, 'sent');
+  });
+
+  test('failed deliveries are retried by the timer', async () => {
+    let up = false;
+    stubFetch(() => (up ? ok({}) : new Response('down', { status: 500 })));
+    const t = boot({ MAKE_WEBHOOK_URL: 'https://hook.make.test/abc' });
+    await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    assert.equal((await t.one('SELECT status FROM outbox')).status, 'failed');
+    up = true;
+    await t.scheduled();
+    const row = await t.one('SELECT status, attempts FROM outbox');
+    assert.equal(row.status, 'sent');
+    assert.equal(row.attempts, 2);
+  });
+});
+
+describe('Google Sheets copy', () => {
+  test('syncs orders, sellers, disputes and ledger without sensitive data', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+    let written;
+    stubFetch((url, init) => {
+      if (url.startsWith('https://oauth2.googleapis.com/token')) return ok({ access_token: 'tok' });
+      if (url.includes('?fields=sheets.properties.title')) return ok({ sheets: [{ properties: { title: 'Orders' } }] });
+      if (url.endsWith('/values:batchUpdate')) written = JSON.parse(init.body);
+      return ok({});
+    });
+    const t = boot({ GOOGLE_SHEET_ID: 'sheet123', GOOGLE_SERVICE_ACCOUNT_EMAIL: 'bot@x.iam.gserviceaccount.com', GOOGLE_PRIVATE_KEY: pem });
+    const deal = await createDeal(t, await onboardSeller(t));
+    await buyerPays(t, deal.token);
+    const admin = (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
+    const res = await t.post('/api/admin/sync-sheets', {}, admin);
+    assert.equal(res.status, 200, JSON.stringify(res.data));
+
+    const add = calls.find((c) => c.url.endsWith(':batchUpdate') && !c.url.includes('values'));
+    assert.deepEqual(JSON.parse(add.init.body).requests.map((r) => r.addSheet.properties.title), ['Summary', 'Sellers', 'Disputes', 'Ledger']);
+    const orders = written.data.find((d) => d.range === 'Orders!A1').values;
+    assert.equal(orders[1][1], 'paid');
+    assert.equal(orders[1][7], 50238);
+    const everything = JSON.stringify(written);
+    assert.doesNotMatch(everything, /0000000002|Admiralty|11111111111/);
+    assert.ok(calls.every((c) => !c.init.headers?.Authorization || c.init.headers.Authorization === 'Bearer tok'));
+  });
+
+  test('is skipped when not configured', async () => {
+    const t = boot();
+    const admin = (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
+    const res = await t.post('/api/admin/sync-sheets', {}, admin);
+    assert.match(res.data.result.skipped, /not configured/);
+  });
+});
+
+describe('Flutterwave adapter guard', () => {
+  test('refuses a live key unless live payments are explicitly allowed', async () => {
+    const t = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'FLWSECK-live-123' });
+    const res = await t.get('/api/config');
+    assert.equal(res.status, 500);
+  });
+});

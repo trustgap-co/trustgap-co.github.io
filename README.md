@@ -14,15 +14,15 @@ rider delivers and the buyer's PIN confirms it; the seller is paid after a short
 | Website | Static HTML/JS in `docs/`, hosted on **GitHub Pages** |
 | Server, timers | **Cloudflare Worker** in `worker/` (cron every 5 minutes) |
 | Database | **Cloudflare D1** (source of truth), copied read-only to **Google Sheets** every 15 minutes |
-| Seller identity | **VerifyMe** (NIN/BVN + name and date-of-birth match) |
+| Seller identity | **Monnify** NIN verification (name and date-of-birth match, 3 attempts) |
 | SMS and email | **Make.com** webhook → **KudiSMS** / email |
-| Payments | **Flutterwave** (adapter ready, gated until custody is approved) |
+| Payments | **Flutterwave** Collect-and-Transfer: collect into the wallet, pay sellers with the Transfers API (gated until custody is approved) |
 | Delivery | **Fez** (stub) — manual signed rider links meanwhile |
 
 ## How a deal flows
 
 1. **Seller signs up with an SMS code** (no passwords), verifies a payout account in their own
-   name, and verifies their identity with NIN or BVN.
+   name, and verifies their identity with their NIN.
 2. **Seller creates a link**: item, condition, price, private pickup address, the buyer's delivery
    area (sets the delivery fee), ship-within days, who pays delivery and the fee, and expiry time.
    Links can't be edited; a change makes a new link and retires the old one.
@@ -37,6 +37,11 @@ rider delivers and the buyer's PIN confirms it; the seller is paid after a short
    automatically.
 8. **Disputes**: admin sees everything and decides the refund, payout and any charge to the seller.
 
+**Fees**, shown as two lines on every link: **TrustGap fee** 1.5% of the item price (minimum ₦100,
+no cap) and **Payment processing**, Flutterwave's charges passed on at cost. About 3.9% in total;
+the seller and buyer agree who pays (buyer, seller or 50/50). Seller payouts go out the next working
+day after the buyer paid, once Flutterwave has settled the money.
+
 Timers also expire links, cancel abandoned checkouts, refund buyers when sellers miss the ship-by
 date, and retry failed SMS. Every money step is atomic, so a webhook, a redirect and a timer
 acting at the same moment can't pay twice.
@@ -47,10 +52,10 @@ acting at the same moment can't pay twice.
 |---|---|
 | `worker/src/core/` | Business rules: sellers & login codes, deals, orders & money, timers |
 | `worker/src/routes/` | API endpoints for the website, riders, admin and webhooks |
-| `worker/src/providers/` | Flutterwave, VerifyMe, Fez, Make.com and Google Sheets connections (+ simulated versions) |
+| `worker/src/providers/` | Flutterwave, Monnify, Fez, Make.com and Google Sheets connections (+ simulated versions) |
 | `worker/src/lib/` | Money maths, delivery zones (**placeholder prices**), buyer rules, encryption, signed links |
 | `worker/migrations/` | Database tables |
-| `worker/test/` | 31 tests: full journeys, race conditions, Make.com and Sheets integrations |
+| `worker/test/` | 40 tests: full journeys, race conditions, pricing, payouts, Monnify, Make.com and Sheets |
 | `docs/` | The website: `pay.html` (buyer link), `track.html`, `rider.html`, `seller/`, `admin/` |
 
 ## Run it locally

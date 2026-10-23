@@ -45,7 +45,8 @@ try {
       <fieldset><legend>Who pays what (as agreed)</legend>
         <p class="label">Delivery fee</p>
         <div class="choices">${radio('delivery_payer', 'buyer', 'Buyer pays')}${radio('delivery_payer', 'seller', 'I pay')}</div>
-        <p class="label">TrustGap fee (${fee.percent}%, min ${money(fee.minKobo)}, max ${money(fee.capKobo)})</p>
+        <p class="label">TrustGap fee (${fee.percent}%) + payment processing</p>
+        <p class="muted small">Payment processing passes Flutterwave’s charges on at cost (about ${config.processing.percent}% plus a small payout fee), so together it comes to roughly ${(fee.percent + config.processing.percent + 0.4).toFixed(1)}% of the price. Both lines are shown to the buyer separately.</p>
         <div class="choices">${radio('fee_payer', 'buyer', 'Buyer pays')}${radio('fee_payer', 'seller', 'I pay')}${radio('fee_payer', 'split', 'Split 50/50')}</div>
       </fieldset>
       <label>Link expires if not paid within

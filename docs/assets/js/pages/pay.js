@@ -15,10 +15,14 @@ const UNAVAILABLE = {
 
 function breakdown(d) {
   const p = d.price;
+  const half = d.fee_payer === 'split' ? ' (your half)' : '';
+  const feePercent = config.fee.percent;
   return html`<table class="breakdown">
     <tr><td>Item price${d.quantity > 1 ? ` (×${d.quantity})` : ''}</td><td>${money(p.item)}</td></tr>
     <tr><td>Delivery to ${d.delivery_area}</td><td>${p.delivery ? money(p.delivery) : html`<span class="muted">Paid by seller</span>`}</td></tr>
-    <tr><td>TrustGap protection fee${d.fee_payer === 'split' ? ' (your half)' : ''}</td><td>${p.fee ? money(p.fee) : html`<span class="muted">Paid by seller</span>`}</td></tr>
+    <tr><td>TrustGap fee (${feePercent}%)${half}</td><td>${p.platform_fee ? money(p.platform_fee) : html`<span class="muted">Paid by seller</span>`}</td></tr>
+    <tr><td>Payment processing${half} <small class="muted">— Flutterwave’s charges, passed on at cost</small></td>
+      <td>${p.processing_fee ? money(p.processing_fee) : html`<span class="muted">Paid by seller</span>`}</td></tr>
     <tr class="total"><td>You pay</td><td>${money(p.total)}</td></tr>
   </table>`;
 }

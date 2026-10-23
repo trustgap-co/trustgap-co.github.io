@@ -1,10 +1,11 @@
 import { api, html, show, shell, money, date, dealBadge, link, params, flash, fail, $ } from '../core.js';
 
-await shell('seller');
+const config = await shell('seller');
 
 async function render() {
   const { deal: d, order_id } = await api(`/api/seller/deals/${encodeURIComponent(params.get('id'))}`, { as: 'seller' });
   const p = d.price;
+  const payer = { buyer: 'buyer', seller: 'you', split: 'both, 50/50' }[d.fee_payer];
   const wa = `Hi! Here is the secure payment link for ${d.item_title}. Your money is held by TrustGap until you receive the item: ${d.link}`;
   show('#app', html`<section class="card">
     ${params.get('new') ? html`<div class="callout ok">Link created. Send it to your buyer.</div>` : ''}
@@ -20,7 +21,8 @@ async function render() {
     <table class="breakdown">
       <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
       <tr><td>Delivery (${d.pickup_area} → ${d.delivery_area}) — paid by ${d.delivery_payer === 'buyer' ? 'buyer' : 'you'}</td><td>${money(p.deliveryFee)}</td></tr>
-      <tr><td>TrustGap fee — paid by ${{ buyer: 'buyer', seller: 'you', split: 'both, 50/50' }[d.fee_payer]}</td><td>${money(p.platformFee)}</td></tr>
+      <tr><td>TrustGap fee (${config.fee.percent}%) — paid by ${payer}</td><td>${money(p.platformFee)}</td></tr>
+      <tr><td>Payment processing (Flutterwave’s charges) — paid by ${payer}</td><td>${money(p.processingFee)}</td></tr>
       <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
       <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
     </table>
