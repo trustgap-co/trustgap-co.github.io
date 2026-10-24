@@ -7,6 +7,6 @@ const files = readdirSync(new URL('migrations/', root)).filter((f) => f.endsWith
 const migrations = files.map((name) => ({ name, sql: readFileSync(new URL(`migrations/${name}`, root), 'utf8') }));
 writeFileSync(
   new URL('src/schema.js', root),
-  `// GENERATED from worker/migrations/*.sql by \`npm run embed-migrations\` — do not edit by hand.\nexport const MIGRATIONS = ${JSON.stringify(migrations, null, 2)};\n`,
+  `// GENERATED from worker/migrations/*.sql by \`npm run embed-migrations\`. Do not edit by hand.\nexport const MIGRATIONS = ${JSON.stringify(migrations, null, 2)};\n`,
 );
 console.log(`src/schema.js: ${files.join(', ')}`);

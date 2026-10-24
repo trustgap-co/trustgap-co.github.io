@@ -25,7 +25,7 @@ export function mapFezStatus(raw) {
   return 'booked'; // Pending Pick-Up, Pending Drop-off, Dropped-off, …
 }
 
-let session = null; // { key, token, secretKey, expiresAt } — reused until shortly before it expires
+let session = null; // { key, token, secretKey, expiresAt }, reused until shortly before it expires
 
 // Fez's expireToken is "YYYY-MM-DD HH:MM:SS" with no timezone; Fez runs on Lagos time (UTC+1).
 export function parseFezExpiry(value) {
@@ -87,7 +87,7 @@ export function createFezLogistics(ctx) {
   return {
     name: 'fez',
 
-    // POST /order/cost — the amount charged is cost + VAT ("totalCost").
+    // POST /order/cost: the amount charged is cost + VAT ("totalCost").
     async quote({ pickupState, dropoffState, weightKg }) {
       const data = await call('POST', '/order/cost', { state: dropoffState, pickUpState: pickupState, weight: weightKg });
       const total = Number(data.totalCost ?? (Number(data.cost?.cost ?? data.Cost?.cost) + Number(data.vat?.vatAmount || 0)));
@@ -95,7 +95,7 @@ export function createFezLogistics(ctx) {
       return { feeKobo: Math.ceil(total) * 100 };
     },
 
-    // POST /order — books the pickup. uniqueID is our order reference, and the buyer's delivery PIN
+    // POST /order books the pickup. uniqueID is our order reference, and the buyer's delivery PIN
     // goes in CustToken (Fez's "token sent to recipient for confirmation of receipt").
     async book({ order, deal, seller, pin }) {
       const data = await call('POST', '/order', [
@@ -156,7 +156,7 @@ export function createFezLogistics(ctx) {
       return call('POST', '/webhooks/store', { webhook: url });
     },
 
-    // POST /order/cancel — only while Fez still allows it (before dispatch).
+    // POST /order/cancel: only while Fez still allows it (before dispatch).
     async cancel(orderNo, reason) {
       return call('POST', '/order/cancel', { orderNo, reason: String(reason).slice(0, 255) });
     },

@@ -98,7 +98,7 @@ export async function syncSheets(ctx) {
     {
       range: 'Summary!A1',
       values: [
-        ['TrustGap — read-only copy. Edits here are overwritten.'],
+        ['TrustGap: read-only copy. Edits here are overwritten.'],
         ['Last synced', ctx.now().toISOString()],
         ['Money held for open orders (₦)', naira(held.t)],
         ['Open disputes', openDisputes.n],

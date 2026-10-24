@@ -182,7 +182,7 @@ export async function verifyIdentity(ctx, seller, input) {
   const used = async () => {
     await run(ctx.env, 'UPDATE sellers SET id_attempts = id_attempts + 1 WHERE id = ?', seller.id);
     const left = max - seller.id_attempts - 1;
-    return left > 0 ? ` You have ${left} attempt${left > 1 ? 's' : ''} left.` : ' That was your last attempt — contact TrustGap support.';
+    return left > 0 ? ` You have ${left} attempt${left > 1 ? 's' : ''} left.` : ' That was your last attempt. Please contact TrustGap support.';
   };
 
   let person;

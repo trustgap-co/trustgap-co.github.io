@@ -1,4 +1,4 @@
-// Monnify NIN Verification (https://developers.monnify.com — "Verifying your Customers").
+// Monnify NIN Verification (https://developers.monnify.com, "Verifying your Customers").
 // POST /api/v1/vas/nin-verification with { nin }. Live environment only; ₦60 per successful
 // request, paid from your Monnify wallet (requests fail if the balance is too low).
 // Auth: POST /api/v1/auth/login with Basic base64(apiKey:secretKey) returns a bearer token.
@@ -14,7 +14,7 @@ export function parseMonnifyDate(value) {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
 }
 
-let cachedToken = null; // { key, token, expiresAt } — reused across requests in the same Worker instance
+let cachedToken = null; // { key, token, expiresAt }, reused across requests in the same Worker instance
 
 export function createMonnifyIdentity({ env, now }) {
   const apiKey = env.MONNIFY_API_KEY;

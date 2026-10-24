@@ -33,7 +33,7 @@ export default {
         res = json({ error: err.message }, err.status);
       } else {
         console.error(err);
-        res = json({ error: 'Something went wrong on our side. Your money is safe — please try again in a moment.' }, 500);
+        res = json({ error: 'Something went wrong on our side. Your money is safe. Please try again in a moment.' }, 500);
       }
     }
     for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);

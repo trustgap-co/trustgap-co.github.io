@@ -43,9 +43,9 @@ export function publicRoutes(r) {
       await ensureSchema(ctx.env);
       const tables = (await all(ctx.env, "SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
       const missing = expected.filter((t) => !tables.includes(t));
-      if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(', ')}. The Worker could not create them — check Logs.` };
+      if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(', ')}. The Worker could not create them. Check Logs.` };
       const columns = (await all(ctx.env, 'PRAGMA table_info(deals)')).map((c) => c.name);
-      if (!columns.includes('processing_fee')) return { ok: false, database: 'Database update 0002 not applied — check Logs.' };
+      if (!columns.includes('processing_fee')) return { ok: false, database: 'Database update 0002 not applied. Check Logs.' };
       return { ok: true, database: 'connected' };
     } catch (err) {
       return { ok: false, database: `Database error: ${err.message}` };

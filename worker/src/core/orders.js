@@ -64,7 +64,7 @@ export async function placeOrder(ctx, { deal, input }) {
   }
   if (!namesMatch(buyerName, accountName)) {
     throw new UserError(
-      `The refund account belongs to "${accountName}". Refunds can only go to an account in your own name — use your own account, or enter your name exactly as your bank has it.`,
+      `The refund account belongs to "${accountName}". Refunds can only go to an account in your own name. Use your own account, or enter your name exactly as your bank has it.`,
     );
   }
 
@@ -184,14 +184,14 @@ export async function confirmPayment(ctx, txRef, actor = 'system') {
     phone: seller.phone,
     email: seller.email,
     sms: `TrustGap: ${formatNaira(order.amount)} for "${deal.item_title}" is secured (order ${order.ref}). Pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}.`,
-    emailSubject: `Payment secured — order ${order.ref}`,
+    emailSubject: `Payment secured: order ${order.ref}`,
   });
   await ctx.notify.send({
     orderId: order.id,
     event: 'payment_received_buyer',
     phone: order.buyer_phone,
     email: order.buyer_email,
-    sms: `TrustGap: payment received for "${deal.item_title}" (order ${order.ref}). Your money is held until delivery. Your delivery PIN is ${pin} — give it to the rider ONLY after checking the item. Track: ${trackUrl(ctx, order)}`,
+    sms: `TrustGap: payment received for "${deal.item_title}" (order ${order.ref}). Your money is held until delivery. Your delivery PIN is ${pin}. Give it to the rider ONLY after checking the item. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`,
   });
   return getOrder(ctx, order.id);
@@ -348,7 +348,7 @@ export async function markDelivered(ctx, order, actor, eventType) {
     orderId: order.id,
     event: 'delivered_buyer',
     phone: order.buyer_phone,
-    sms: `TrustGap: order ${order.ref} delivered. If something is wrong, report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)} — otherwise the seller is paid automatically.`,
+    sms: `TrustGap: order ${order.ref} delivered. If something is wrong, report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)}. Otherwise the seller is paid automatically.`,
   });
   await ctx.notify.send({
     orderId: order.id,

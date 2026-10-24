@@ -1,4 +1,4 @@
-// TrustGap Worker — GENERATED FILE, do not edit by hand.
+// TrustGap Worker: GENERATED FILE, do not edit by hand.
 // Built from worker/src/ with `npm run dashboard-files`. Paste ALL of it into
 // Cloudflare → Workers & Pages → trustgap-api → Edit code, replacing what is there, then Deploy.
 var __defProp = Object.defineProperty;
@@ -587,14 +587,14 @@ function createFezLogistics(ctx) {
   __name(call, "call");
   return {
     name: "fez",
-    // POST /order/cost — the amount charged is cost + VAT ("totalCost").
+    // POST /order/cost: the amount charged is cost + VAT ("totalCost").
     async quote({ pickupState, dropoffState, weightKg }) {
       const data = await call("POST", "/order/cost", { state: dropoffState, pickUpState: pickupState, weight: weightKg });
       const total = Number(data.totalCost ?? Number(data.cost?.cost ?? data.Cost?.cost) + Number(data.vat?.vatAmount || 0));
       if (!Number.isFinite(total) || total <= 0) throw new Error(`Fez returned no delivery price for ${dropoffState}.`);
       return { feeKobo: Math.ceil(total) * 100 };
     },
-    // POST /order — books the pickup. uniqueID is our order reference, and the buyer's delivery PIN
+    // POST /order books the pickup. uniqueID is our order reference, and the buyer's delivery PIN
     // goes in CustToken (Fez's "token sent to recipient for confirmation of receipt").
     async book({ order, deal, seller, pin }) {
       const data = await call("POST", "/order", [
@@ -649,7 +649,7 @@ function createFezLogistics(ctx) {
     async registerWebhook(url) {
       return call("POST", "/webhooks/store", { webhook: url });
     },
-    // POST /order/cancel — only while Fez still allows it (before dispatch).
+    // POST /order/cancel: only while Fez still allows it (before dispatch).
     async cancel(orderNo, reason) {
       return call("POST", "/order/cancel", { orderNo, reason: String(reason).slice(0, 255) });
     }
@@ -1294,7 +1294,7 @@ async function placeOrder(ctx, { deal, input }) {
   }
   if (!namesMatch(buyerName, accountName)) {
     throw new UserError(
-      `The refund account belongs to "${accountName}". Refunds can only go to an account in your own name \u2014 use your own account, or enter your name exactly as your bank has it.`
+      `The refund account belongs to "${accountName}". Refunds can only go to an account in your own name. Use your own account, or enter your name exactly as your bank has it.`
     );
   }
   if (input.expected_total !== void 0 && Number(input.expected_total) !== deal.buyer_total) {
@@ -1403,14 +1403,14 @@ async function confirmPayment(ctx, txRef, actor = "system") {
     phone: seller.phone,
     email: seller.email,
     sms: `TrustGap: ${formatNaira(order.amount)} for "${deal.item_title}" is secured (order ${order.ref}). Pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}.`,
-    emailSubject: `Payment secured \u2014 order ${order.ref}`
+    emailSubject: `Payment secured: order ${order.ref}`
   });
   await ctx.notify.send({
     orderId: order.id,
     event: "payment_received_buyer",
     phone: order.buyer_phone,
     email: order.buyer_email,
-    sms: `TrustGap: payment received for "${deal.item_title}" (order ${order.ref}). Your money is held until delivery. Your delivery PIN is ${pin} \u2014 give it to the rider ONLY after checking the item. Track: ${trackUrl(ctx, order)}`,
+    sms: `TrustGap: payment received for "${deal.item_title}" (order ${order.ref}). Your money is held until delivery. Your delivery PIN is ${pin}. Give it to the rider ONLY after checking the item. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`
   });
   return getOrder(ctx, order.id);
@@ -1572,7 +1572,7 @@ async function markDelivered(ctx, order, actor, eventType) {
     orderId: order.id,
     event: "delivered_buyer",
     phone: order.buyer_phone,
-    sms: `TrustGap: order ${order.ref} delivered. If something is wrong, report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)} \u2014 otherwise the seller is paid automatically.`
+    sms: `TrustGap: order ${order.ref} delivered. If something is wrong, report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)}. Otherwise the seller is paid automatically.`
   });
   await ctx.notify.send({
     orderId: order.id,
@@ -1817,9 +1817,9 @@ function publicRoutes(r) {
       await ensureSchema(ctx.env);
       const tables = (await all(ctx.env, "SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
       const missing = expected.filter((t) => !tables.includes(t));
-      if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(", ")}. The Worker could not create them \u2014 check Logs.` };
+      if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(", ")}. The Worker could not create them. Check Logs.` };
       const columns = (await all(ctx.env, "PRAGMA table_info(deals)")).map((c) => c.name);
-      if (!columns.includes("processing_fee")) return { ok: false, database: "Database update 0002 not applied \u2014 check Logs." };
+      if (!columns.includes("processing_fee")) return { ok: false, database: "Database update 0002 not applied. Check Logs." };
       return { ok: true, database: "connected" };
     } catch (err) {
       return { ok: false, database: `Database error: ${err.message}` };
@@ -2119,7 +2119,7 @@ async function verifyIdentity(ctx, seller, input) {
   const used = /* @__PURE__ */ __name(async () => {
     await run(ctx.env, "UPDATE sellers SET id_attempts = id_attempts + 1 WHERE id = ?", seller.id);
     const left = max - seller.id_attempts - 1;
-    return left > 0 ? ` You have ${left} attempt${left > 1 ? "s" : ""} left.` : " That was your last attempt \u2014 contact TrustGap support.";
+    return left > 0 ? ` You have ${left} attempt${left > 1 ? "s" : ""} left.` : " That was your last attempt. Please contact TrustGap support.";
   }, "used");
   let person;
   try {
@@ -2466,7 +2466,7 @@ async function syncSheets(ctx) {
     {
       range: "Summary!A1",
       values: [
-        ["TrustGap \u2014 read-only copy. Edits here are overwritten."],
+        ["TrustGap: read-only copy. Edits here are overwritten."],
         ["Last synced", ctx.now().toISOString()],
         ["Money held for open orders (\u20A6)", naira(held.t)],
         ["Open disputes", openDisputes.n]
@@ -2662,7 +2662,7 @@ var index_default = {
         res = json({ error: err.message }, err.status);
       } else {
         console.error(err);
-        res = json({ error: "Something went wrong on our side. Your money is safe \u2014 please try again in a moment." }, 500);
+        res = json({ error: "Something went wrong on our side. Your money is safe. Please try again in a moment." }, 500);
       }
     }
     for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);

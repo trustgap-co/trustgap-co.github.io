@@ -1,4 +1,4 @@
-// GENERATED from worker/migrations/*.sql by `npm run embed-migrations` — do not edit by hand.
+// GENERATED from worker/migrations/*.sql by `npm run embed-migrations`. Do not edit by hand.
 export const MIGRATIONS = [
   {
     "name": "0001_init.sql",
