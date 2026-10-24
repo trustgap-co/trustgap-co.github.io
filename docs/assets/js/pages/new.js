@@ -1,6 +1,7 @@
 import { api, html, show, onSubmit, shell, money, link, params, stateInput, statesList, formData, fail, track, trackThenGo, $ } from '../core.js';
 
 const config = await shell('seller');
+const MAX_PHOTOS = 4;
 
 try {
   const { seller } = await api('/api/seller/me', { as: 'seller' });
@@ -20,6 +21,13 @@ try {
       ${v.replaces ? html`<input type="hidden" name="replaces" value="${v.replaces}">` : ''}
       <fieldset><legend>The item</legend>
         <label>Item name <input name="item_title" required maxlength="120" value="${v.item_title || ''}" placeholder="Nike Tech Fleece sneakers, size 42, blue"></label>
+        <div class="photo-field">
+          <p class="label">Photos of the item <small>1 to ${MAX_PHOTOS}, of the actual item you will send. The buyer sees them before paying.</small></p>
+          <div class="photo-grid" id="photo-grid"></div>
+          <label class="btn btn-secondary photo-add" id="photo-add">+ Add photos
+            <input type="file" accept="image/*" multiple id="photo-input" class="visually-hidden"></label>
+          <p class="muted small" id="photo-note" aria-live="polite"></p>
+        </div>
         <label>Full description <small>colour, size, model, what’s in the box, any defects</small>
           <textarea name="item_description" required rows="4" maxlength="1000">${v.item_description || ''}</textarea></label>
         <div class="grid2">
@@ -65,6 +73,42 @@ try {
     </form>
   </section>`);
 
+  // ---- Photos: shrunk on the phone to a JPEG of at most 1280px (about 150–400 KB) before upload.
+  // Re-drawing the photo also drops the camera's hidden details, such as GPS location.
+  let photos = []; // data URLs of new photos
+  const keeping = v.replaces ? v.photos || [] : []; // a revised link keeps the old photos unless new ones are added
+  const drawPhotos = () => {
+    const shown = photos.length ? photos : keeping;
+    show('#photo-grid', html`${shown.map((src, i) => html`<figure><img src="${src}" alt="Item photo ${i + 1}">
+      ${photos.length ? html`<button type="button" class="photo-del" data-del="${i}" aria-label="Remove photo ${i + 1}">×</button>` : ''}</figure>`)}`);
+    $('#photo-add').hidden = photos.length >= MAX_PHOTOS;
+    $('#photo-note').textContent = photos.length ? `${photos.length} of ${MAX_PHOTOS} photos added.`
+      : keeping.length ? `Keeping the ${keeping.length} photo${keeping.length > 1 ? 's' : ''} from your old link. Add new ones to replace them.`
+      : 'Take clear photos in good light: front, back, labels and any defects.';
+  };
+  $('#photo-input').addEventListener('change', async (e) => {
+    const files = [...e.target.files].slice(0, MAX_PHOTOS - photos.length);
+    e.target.value = '';
+    $('#photo-note').textContent = 'Preparing photos…';
+    for (const file of files) {
+      try {
+        photos.push(await shrinkPhoto(file));
+      } catch {
+        $('#photo-note').textContent = `“${file.name}” couldn’t be read. Try a JPG or PNG photo, or a screenshot of it.`;
+        drawPhotos();
+        return;
+      }
+    }
+    drawPhotos();
+  });
+  $('#photo-grid').addEventListener('click', (e) => {
+    const i = e.target.closest('[data-del]')?.dataset.del;
+    if (i == null) return;
+    photos.splice(Number(i), 1);
+    drawPhotos();
+  });
+  drawPhotos();
+
   // Live price: the same calculation the link will use, so the seller knows exactly what they get.
   const form = $('#deal');
   const payerLabel = { buyer: 'paid by buyer', seller: 'paid by you', split: 'split 50/50' };
@@ -103,14 +147,43 @@ try {
   preview();
 
   onSubmit($('#deal'), async (data) => {
+    if (!photos.length && !keeping.length) throw new Error('Add at least one photo of the item, so the buyer can see what they are paying for.');
+    if (photos.length) data.photos = photos;
     const { deal } = await api('/api/seller/deals', { method: 'POST', body: data, as: 'seller' });
     const price = Number(String(data.item_price).replace(/[^\d.]/g, '')) || 0;
     trackThenGo('deal_link_created', {
       currency: 'NGN', value: price * (Number(data.quantity) || 1), item_condition: data.item_condition, quantity: Number(data.quantity) || 1,
       delivery_payer: data.delivery_payer, fee_payer: data.fee_payer, pickup_state: data.pickup_state, delivery_state: data.delivery_state,
-      expires_hours: Number(data.expires_hours), is_revision: Boolean(data.replaces),
+      expires_hours: Number(data.expires_hours), is_revision: Boolean(data.replaces), photo_count: deal.photos.length,
     }, link(`seller/deal.html?id=${deal.id}&new=1`));
   });
 } catch (err) {
   fail(err);
+}
+
+// Loads a photo from the phone and returns it as a JPEG data URL, at most 1280px on its longest side
+// and under ~450 KB. Browsers apply the photo's rotation when drawing it, so it comes out upright.
+async function shrinkPhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const scale = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#fff'; // transparent PNGs get a white background instead of black
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    g.drawImage(img, 0, 0, canvas.width, canvas.height);
+    let out;
+    for (const quality of [0.82, 0.72, 0.62, 0.5]) {
+      out = canvas.toDataURL('image/jpeg', quality);
+      if (out.length * 0.75 < 450 * 1024) break;
+    }
+    return out;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }

@@ -1,5 +1,5 @@
 // The buyer's private tracking page: status, delivery PIN, confirm or report a problem.
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, local, track, trackThenGo, naira, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, $ } from '../core.js';
 
 await shell('buyer');
 const token = params.get('t') || '';
@@ -11,6 +11,7 @@ async function render() {
   show('#app', html`<section class="card">
     <div class="spread"><h1>Order ${o.ref}</h1>${orderBadge(o.status)}</div>
     <p><strong>${o.item_title}</strong> from ${o.seller_name} · ${money(o.amount)}</p>
+    ${gallery(o.photos, o.item_title)}
     <p class="muted small">Delivering to ${o.delivery_address}, ${o.delivery_state}</p>
     ${['awaiting_payment', 'cancelled'].includes(o.status)
       ? html`<div class="callout warn">Payment not completed.

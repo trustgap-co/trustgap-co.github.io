@@ -1,6 +1,6 @@
 // The link the seller sends. Step 1: confirm the whole deal, including the delivery address the
 // seller entered (read-only) and the exact total. Step 2: contact details and refund account, pay.
-import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, track, trackThenGo, naira, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, gallery, track, trackThenGo, naira, $ } from '../core.js';
 
 const config = await shell('buyer');
 const token = params.get('d') || '';
@@ -23,6 +23,7 @@ const ecommerce = (d) => ({
   delivery_payer: d.delivery_payer,
   fee_payer: d.fee_payer,
   seller_identity_verified: Boolean(d.seller.identity_verified),
+  photo_count: d.photos?.length || 0,
   items: [{ item_id: `deal_${params.get('o') || 'link'}`, item_name: d.item_title, item_category: d.item_condition,
     price: naira(d.price.item / (d.quantity || 1)), quantity: d.quantity }],
 });
@@ -47,6 +48,8 @@ function review(d, rules) {
     <p class="seller-line">Seller: <strong>${d.seller.business_name}</strong>
       ${d.seller.identity_verified ? html`<span class="badge badge-ok">✓ Identity verified</span>` : html`<span class="badge badge-muted">Identity not yet verified</span>`}</p>
     <h1>${d.item_title}</h1>
+    ${d.photos?.length ? html`${gallery(d.photos, d.item_title)}
+      <p class="muted small">Photos from the seller${d.photos.length > 1 ? ` (${d.photos.length}, swipe to see all)` : ''}. Tap to enlarge. At delivery, check the item matches them before giving your PIN.</p>` : ''}
     <p><span class="badge badge-info">${d.item_condition}</span> · Quantity ${d.quantity}</p>
     <p class="pre">${d.item_description}</p>
     <div class="callout info">

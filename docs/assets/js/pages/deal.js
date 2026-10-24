@@ -1,4 +1,4 @@
-import { api, html, show, shell, money, date, dealBadge, link, params, flash, fail, $ } from '../core.js';
+import { api, html, show, shell, money, date, dealBadge, link, params, flash, fail, gallery, $ } from '../core.js';
 
 const config = await shell('seller');
 
@@ -10,6 +10,7 @@ async function render() {
   show('#app', html`<section class="card">
     ${params.get('new') ? html`<div class="callout ok">Link created. Send it to your buyer.</div>` : ''}
     <div class="spread"><h1>${d.item_title}</h1>${dealBadge(d.status)}</div>
+    ${gallery(d.photos, d.item_title)}
     ${d.status === 'open'
       ? html`<div class="share"><input readonly value="${d.link}" aria-label="Payment link">
           <button type="button" class="btn" data-copy="${d.link}" data-copy-type="deal_link">Copy link</button>

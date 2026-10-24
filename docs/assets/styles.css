@@ -440,3 +440,22 @@ body.site main > section:nth-of-type(n+3), body.site .legal > :nth-child(n+12) {
 .cookie-table td { vertical-align: top; padding: 8px; }
 /* App pages fill in after loading; keep the footer below the screen so it doesn't jump down. */
 body:not(.site) > main { min-height: calc(100vh - 64px); min-height: calc(100svh - 64px); }
+
+/* ---- Item photos ---- */
+[hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.gallery { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 12px 0 6px; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.gallery a { flex: 0 0 82%; scroll-snap-align: start; border-radius: 12px; overflow: hidden; background: var(--brand-soft); aspect-ratio: 4 / 3; }
+.gallery a:only-child { flex-basis: 100%; }
+.gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (min-width: 700px) { .gallery a { flex-basis: calc(50% - 4px); } }
+.photo-field { margin: 4px 0 14px; }
+.photo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0; }
+.photo-grid:empty { display: none; }
+.photo-grid figure { position: relative; margin: 0; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--brand-soft); }
+.photo-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-del { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(11,27,61,.8); color: #fff;
+  font-size: 1.1rem; line-height: 1; cursor: pointer; }
+.photo-add { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.photo-add:focus-within { outline: 2px solid var(--link); outline-offset: 2px; }
+.photo-field .label small { display: block; font-weight: 400; color: var(--muted); font-size: .85rem; margin-top: 2px; }

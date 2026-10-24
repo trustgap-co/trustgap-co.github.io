@@ -162,6 +162,12 @@ export const timeline = (events, { detail = false } = {}) => html`<ol class="tim
     ${detail && e.detail ? html`<code class="t-detail">${e.detail}</code>` : ''}</li>`,
 )}</ol>`;
 
+// The seller's item photos as a swipeable strip; tapping one opens it full size.
+export const gallery = (urls, label = 'Item') =>
+  urls?.length
+    ? html`<div class="gallery" role="list" aria-label="${label} photos">${urls.map((u, i) =>
+      html`<a role="listitem" href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="${label}, photo ${i + 1} of ${urls.length}" decoding="async" ${i ? raw('loading="lazy"') : ''}></a>`)}</div>`
+    : '';
 export const errorBox = (msg) => (msg ? html`<div class="error" role="alert">${msg}</div>` : '');
 export const flash = {
   set: (m) => session.set('tg_flash', m),

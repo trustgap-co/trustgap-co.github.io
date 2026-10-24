@@ -1,11 +1,11 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery } from '../core.js';
 
 await shell('admin');
 const id = encodeURIComponent(params.get('id'));
 const naira = (kobo) => String(kobo / 100);
 
 async function render() {
-  const { order: o, deal: d, seller: s, disputes, ledger, events, messages } = await api(`/api/admin/orders/${id}`, { as: 'admin' });
+  const { order: o, deal: d, photos, seller: s, disputes, ledger, events, messages } = await api(`/api/admin/orders/${id}`, { as: 'admin' });
   const open = disputes.find((x) => x.status === 'open');
   const presets = open
     ? [
@@ -20,6 +20,7 @@ async function render() {
     <div class="grid2">
       <div><h2>Deal</h2>
         <p><strong>${d.item_title}</strong> (${d.item_condition}, ×${d.quantity})</p>
+        ${photos?.length ? gallery(photos, d.item_title) : html`<p class="muted small">No photos (link made before photos were added).</p>`}
         <p class="pre small">${d.item_description}</p>
         <p class="small">Item ${money(d.item_price)} · delivery ${money(o.delivery_fee)} to ${o.delivery_state} (${d.delivery_payer}) · TrustGap fee ${money(o.platform_fee)} + processing ${money(o.processing_fee)} (${d.fee_payer})<br>
           Parcel ${d.weight_kg} kg${d.fragile ? ', fragile' : ''}<br>
