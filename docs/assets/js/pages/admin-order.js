@@ -9,9 +9,9 @@ async function render() {
   const open = disputes.find((x) => x.status === 'open');
   const presets = open
     ? [
-        ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: o.amount, seller_payout: 0, seller_charge: d.delivery_fee * 2 }],
-        ['Buyer refused a correct item: refund minus both delivery trips', { buyer_refund: Math.max(0, o.amount - d.delivery_fee * 2), seller_payout: 0, seller_charge: 0 }],
-        ['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: d.seller_payout, seller_charge: 0 }],
+        ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: o.amount, seller_payout: 0, seller_charge: o.delivery_fee * 2 }],
+        ['Buyer refused a correct item: refund minus both delivery trips', { buyer_refund: Math.max(0, o.amount - o.delivery_fee * 2), seller_payout: 0, seller_charge: 0 }],
+        ['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: o.seller_payout, seller_charge: 0 }],
       ]
     : [];
 
@@ -21,22 +21,25 @@ async function render() {
       <div><h2>Deal</h2>
         <p><strong>${d.item_title}</strong> (${d.item_condition}, ×${d.quantity})</p>
         <p class="pre small">${d.item_description}</p>
-        <p class="small">Item ${money(d.item_price)} · delivery ${money(d.delivery_fee)} (${d.delivery_payer}) · TrustGap fee ${money(d.platform_fee)} + processing ${money(d.processing_fee)} (${d.fee_payer})<br>
-          Buyer paid <strong>${money(o.amount)}</strong> · seller gets <strong>${money(d.seller_payout)}</strong></p>
+        <p class="small">Item ${money(d.item_price)} · delivery ${money(o.delivery_fee)} to ${o.delivery_state} (${d.delivery_payer}) · TrustGap fee ${money(o.platform_fee)} + processing ${money(o.processing_fee)} (${d.fee_payer})<br>
+          Parcel ${d.weight_kg} kg${d.fragile ? ', fragile' : ''}<br>
+          Buyer paid <strong>${money(o.amount)}</strong> · seller gets <strong>${money(o.seller_payout)}</strong></p>
         <p class="small">Packing note: ${o.packing_note || '—'}</p></div>
       <div><h2>Seller</h2>
         <p>${s.business_name} (${s.full_name}) ${s.identity_verified ? '✓ ID' : '✗ ID'}<br>${s.phone} · ${s.email}<br>
-          Pickup: ${d.pickup_address} (${d.pickup_area})<br>Payout: ${s.payout_bank_name} ${s.payout_account_number}
+          Pickup: ${d.pickup_address}, ${d.pickup_state}<br>Payout: ${s.payout_bank_name} ${s.payout_account_number}
           ${s.amount_owed ? html`<br><strong>Owes ${money(s.amount_owed)}</strong>` : ''}</p>
         <h2>Buyer</h2>
-        <p>${o.buyer_name}<br>${o.buyer_phone} · ${o.buyer_email}<br>${o.delivery_address} (${o.delivery_area})
+        <p>${o.buyer_name}<br>${o.buyer_phone} · ${o.buyer_email}<br>${o.delivery_address}, ${o.delivery_state}
           ${o.delivery_landmark ? html`<br>Near ${o.delivery_landmark}` : ''}<br>
           Refund: ${o.refund_bank_name} ••••${o.refund_account_last4} (${o.refund_account_name})</p>
         <p class="small"><a href="${o.track_url}" target="_blank" rel="noopener">Buyer tracking page</a>
           ${o.rider_url ? html` · <a href="${o.rider_url}" target="_blank" rel="noopener">Rider page</a>
             <button type="button" class="linklike" data-copy="${o.rider_url}">(copy rider link)</button>` : ''}</p></div>
     </div>
-    <p class="small">Delivery: ${o.delivery_label} ${o.delivery_ref ? `· ${o.delivery_ref}` : ''} · ship by ${date(o.ship_by)} · PIN attempts ${o.pin_attempts}</p>
+    <p class="small">Delivery: ${o.delivery_label} ${o.courier ? `· ${o.courier}` : ''} ${o.delivery_ref ? `· ${o.delivery_ref}` : ''}
+      ${o.courier_status ? `· courier says “${o.courier_status}”` : ''} · ship by ${date(o.ship_by)} · PIN attempts ${o.pin_attempts}
+      ${o.courier === 'fez' && o.status === 'shipping' ? html`<button class="linklike" id="sync">check with Fez now</button>` : ''}</p>
   </section>
   ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''}">
     <h2>Dispute #${x.id} — ${x.category_label} (${x.status})</h2>
@@ -66,6 +69,12 @@ async function render() {
     <h2>Messages sent</h2>
     <ul class="small">${messages.map((m) => html`<li><strong>${m.to_phone || m.to_email}</strong> (${m.status}): ${m.sms}</li>`)}</ul>
   </section>`);
+
+  $('#sync')?.addEventListener('click', async () => {
+    const { status } = await api(`/api/admin/orders/${id}/sync-courier`, { method: 'POST', body: {}, as: 'admin' });
+    flash.set(`Fez status: ${status}`);
+    location.reload();
+  });
 
   const form = $('#resolve');
   if (form) {

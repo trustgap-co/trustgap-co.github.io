@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Questions · TrustGap</title>
+  <meta name="description" content="Answers about TrustGap: how payment is secured, when sellers are paid, inspection, disputes, seller identity checks, partners, safety and privacy.">
+  <meta property="og:image" content="https://trustgap-co.github.io/assets/images/og-image.jpg">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"></noscript>
+  <meta name="theme-color" content="#0B1B3D">
+  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="preconnect" href="https://trustgap-api.trustgap-co.workers.dev" crossorigin>
+</head>
+<body class="site">
+<main id="app">
+
+  <section class="page-hero">
+    <div class="container">
+      <p class="eyebrow">Questions</p>
+      <h1>Frequently asked questions</h1>
+      <p>Can’t find your answer? Email <span data-site="supportEmail"></span> or call <span data-site="supportPhone"></span>.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container" style="max-width:860px">
+
+      <div class="faq-group">
+        <h2>The basics</h2>
+        <div class="faq">
+          <details><summary>Does TrustGap replace WhatsApp or Instagram?</summary><p>No. Keep the conversation where it started. TrustGap adds a protected deal link for the payment, delivery and release steps.</p></details>
+          <details><summary>Does the seller get my money immediately?</summary><p>No. The deal page shows the release condition. In the standard flow, the seller is paid after confirmed delivery and the stated inspection window, subject to the published dispute rules.</p></details>
+          <details><summary>Do I need an account to buy?</summary><p>No. Buyers just open the seller’s link, check the deal and pay. You get a tracking link by SMS.</p></details>
+          <details><summary>Is TrustGap an escrow service or a bank?</summary><p>No. TrustGap is a transaction-coordination service: it records the agreed deal, connects payment and delivery, and applies the release and dispute rules shown on the deal. Payments are processed by a licensed payment provider.</p></details>
+        </div>
+      </div>
+
+      <div class="faq-group">
+        <h2>Delivery and inspection</h2>
+        <div class="faq">
+          <details><summary>Can I inspect the item before confirming delivery?</summary><p>Yes. Check the item at the door — right item, model, size, colour, no visible damage — and only then give the rider your 4-digit PIN. After that, you have <span data-site="inspectionWindow"></span> to report a hidden problem.</p></details>
+          <details><summary>When does the inspection window start?</summary><p>When you give the rider your PIN and the parcel is marked delivered. The deal shows the length of the window before you pay.</p></details>
+          <details><summary>What if the item is wrong, damaged, fake or not as described?</summary><p>Open a dispute within the inspection window and provide the requested evidence. TrustGap then follows the published review, return and refund rules. See <a href="legal/disputes.html">Returns, refunds &amp; disputes</a>.</p></details>
+          <details><summary>What if I’m not home when the rider comes?</summary><p>The rider records a failed attempt and the courier contacts you to try again. Your money stays held while this happens.</p></details>
+          <details><summary>Where do you deliver?</summary><p>Delivery coverage: <span data-site="deliveryCoverage"></span>. The seller sees the delivery price for your route before creating the link.</p></details>
+        </div>
+      </div>
+
+      <div class="faq-group">
+        <h2>Sellers</h2>
+        <div class="faq">
+          <details><summary>Does TrustGap verify sellers?</summary><p>TrustGap checks a seller’s identity (NIN) and that their payout account is in their own name. That does not mean TrustGap has independently verified every item, claim or business practice. Check the deal details and our policies before paying.</p></details>
+          <details><summary>When does the seller get paid?</summary><p>When the release condition is met: the buyer confirms, or the inspection window ends without a valid problem. Payout timing: <span data-site="payoutTiming"></span>.</p></details>
+          <details><summary>What if the buyer never responds after delivery?</summary><p>The seller is paid automatically when the inspection window ends.</p></details>
+          <details><summary>Can I change a link after sending it?</summary><p>Links can’t be edited, so the buyer always pays for exactly what they saw. Make a new link — the old one is retired automatically.</p></details>
+        </div>
+      </div>
+
+      <div class="faq-group">
+        <h2>Partners</h2>
+        <div class="faq">
+          <details><summary>What does Flutterwave do?</summary><p>Flutterwave may provide the payment and payout infrastructure used in the transaction, subject to the actual TrustGap integration and applicable terms. TrustGap manages the transaction flow and release rules described on the deal page.</p></details>
+          <details><summary>What does Fez Delivery do?</summary><p>Fez Delivery provides courier services and delivery visibility where the route and integration support it. Tracking, coverage, delivery times and any delivery exceptions are subject to the applicable service terms.</p></details>
+        </div>
+        <p class="small muted">More detail: <a href="legal/partners.html">Partner and responsibility disclosure</a>.</p>
+      </div>
+
+      <div class="faq-group">
+        <h2>Safety and privacy</h2>
+        <div class="faq">
+          <details><summary>What information do you collect?</summary><p>From buyers: name, phone, email, delivery address, and a refund account. From sellers: name, phone, business name, NIN check result, pickup address and payout account. Plus the details of each deal and its delivery. See the <a href="legal/privacy.html">Privacy Policy</a>.</p></details>
+          <details><summary>Why is a NIN check needed for sellers?</summary><p>To reduce impersonation and payout fraud: the payout must go to the person who created the link. Buyers see only “Identity verified”, never the NIN or date of birth.</p></details>
+          <details><summary>What is shared with the payment and delivery partners?</summary><p>Only what each needs. The payment provider gets payment and payout details; the courier gets the recipient’s name, phone and address. The seller never sees your refund account.</p></details>
+          <details><summary>Does TrustGap store my card or bank login?</summary><p>No. Card payments happen on the payment provider’s secure page; TrustGap never sees your card number, PIN or OTP. Refund account numbers are stored encrypted.</p></details>
+          <details><summary>How long are records kept?</summary><p>Only as long as needed for the deal, disputes, accounting and the law. Details are in the <a href="legal/privacy.html#retention">Privacy Policy</a>.</p></details>
+          <details><summary>How do I report a scam or suspicious message?</summary><p>Email <span data-site="supportEmail"></span>. TrustGap will never ask for your card PIN, OTP or password, and real links start with trustgap-co.github.io.</p></details>
+          <details><summary>What happens after a data incident?</summary><p>We assess the risk and notify the Nigeria Data Protection Commission and affected people where the law requires. See <a href="legal/data-protection.html">Data protection &amp; your rights</a>.</p></details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section navy">
+    <div class="container" style="text-align:center;max-width:760px">
+      <h2>Still have a question?</h2>
+      <p>Email <span data-site="supportEmail"></span> · <span data-site="supportHours"></span></p>
+      <div class="cta-row" style="justify-content:center"><a class="btn btn-lg btn-light" href="how.html">See how it works</a></div>
+    </div>
+  </section>
+</main>
+<script type="module" src="assets/js/pages/static.js"></script>
+</body>
+</html>

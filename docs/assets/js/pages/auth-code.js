@@ -1,7 +1,7 @@
 // Step 2 of signup/login: enter the 6-digit code sent by SMS.
-import { api, auth, html, show, onSubmit, link, params, $ } from '../core.js';
+import { api, auth, html, show, onSubmit, link, params, trackThenGo, $ } from '../core.js';
 
-export function codeStep(phone, sent, { next }) {
+export function codeStep(phone, sent, { next, flow }) {
   show('#app', html`<section class="card narrow">
     <h1>Enter your code</h1>
     <p class="muted">We sent a 6-digit code by SMS to <strong>${phone}</strong>. It expires in 10 minutes.</p>
@@ -16,6 +16,7 @@ export function codeStep(phone, sent, { next }) {
   onSubmit($('#code'), async ({ code }) => {
     const { token } = await api('/api/auth/verify', { method: 'POST', body: { phone, code } });
     auth.setSeller(token);
-    location.href = params.get('next')?.startsWith(link('')) ? params.get('next') : link(next);
+    const url = params.get('next')?.startsWith(link('')) ? params.get('next') : link(next);
+    trackThenGo(flow === 'signup' ? 'sign_up' : 'login', { method: 'sms' }, url);
   });
 }

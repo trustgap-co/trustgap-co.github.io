@@ -1,8 +1,7 @@
-// Builds the two files for setting up TrustGap from the Cloudflare dashboard (no terminal needed there):
-//   dashboard/worker.js  — the whole Worker in ONE file, to paste into "Edit code"
-//   dashboard/schema.sql — all database tables, to paste into the D1 console
-// Run with `npm run dashboard-files` after `wrangler deploy --dry-run` has bundled the code.
-import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+// Builds dashboard/worker.js — the whole Worker in ONE file, to paste into the Cloudflare
+// dashboard's "Edit code". The Worker creates its own database tables, so nothing else is needed.
+// Run with `npm run dashboard-files` (it bundles the code with `wrangler deploy --dry-run` first).
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
 const root = new URL('../', import.meta.url);
 mkdirSync(new URL('dashboard/', root), { recursive: true });
@@ -16,12 +15,4 @@ writeFileSync(
 ${bundle}`,
 );
 
-const migrations = readdirSync(new URL('migrations/', root)).filter((f) => f.endsWith('.sql')).sort();
-const sql = migrations
-  .map((f) => readFileSync(new URL(`migrations/${f}`, root), 'utf8').replace(/^\s*--.*$/gm, '').replace(/\n{3,}/g, '\n\n').trim())
-  .join('\n\n');
-writeFileSync(
-  new URL('dashboard/schema.sql', root),
-  `-- TrustGap database tables (${migrations.join(' + ')}). Paste into Cloudflare → D1 → trustgap → Console and run once.\n\n${sql}\n`,
-);
-console.log(`dashboard/worker.js (${Math.round(bundle.length / 1024)} KB) and dashboard/schema.sql (${migrations.length} migrations) written.`);
+console.log(`dashboard/worker.js (${Math.round(bundle.length / 1024)} KB) written. It creates its own database tables on first use.`);

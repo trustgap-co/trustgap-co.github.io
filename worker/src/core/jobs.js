@@ -1,12 +1,12 @@
 import { all, run } from '../lib/db.js';
 import { deliver } from '../providers/notify/make.js';
-import { confirmPayment, releaseToSeller, openDispute, sendTransfer, settleTransfer } from './orders.js';
+import { confirmPayment, releaseToSeller, openDispute, sendTransfer, settleTransfer, syncCourierStatus } from './orders.js';
 import { iso, logEvent, transition } from './common.js';
 
 // Runs on the Cloudflare cron trigger (every 5 minutes) and from the admin "Run timers now" button.
 export async function runJobs(ctx) {
   const now = iso(ctx.now());
-  const result = { expired: 0, cancelled: 0, released: 0, notShipped: 0, transfersSent: 0, transfersChecked: 0, resent: 0 };
+  const result = { expired: 0, cancelled: 0, released: 0, notShipped: 0, couriersChecked: 0, transfersSent: 0, transfersChecked: 0, resent: 0 };
 
   result.expired = (await run(ctx.env, "UPDATE deals SET status = 'expired' WHERE status = 'open' AND expires_at <= ?", now)).meta.changes;
 
@@ -27,6 +27,15 @@ export async function runJobs(ctx) {
   for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'paid' AND ship_by <= ? LIMIT 50", now)) {
     await openDispute(ctx, o, { by: 'system', category: 'not_shipped', description: 'The seller did not book pickup within the agreed time.' });
     result.notShipped++;
+  }
+
+  // Parcels with the courier (Fez): read their status, in case a webhook was missed.
+  for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'shipping' AND courier = ? AND delivery_ref IS NOT NULL LIMIT 30", ctx.logistics.name)) {
+    try {
+      if (await syncCourierStatus(ctx, o)) result.couriersChecked++;
+    } catch (err) {
+      console.error('courier status check failed', o.ref, err.message);
+    }
   }
 
   // Payouts and refunds that are now due (after settlement), plus retries of unknown/failed ones.

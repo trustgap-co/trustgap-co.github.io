@@ -1,8 +1,60 @@
 import { first, insertStmt, updateStmt, stmt } from '../lib/db.js';
 import { randomToken } from '../lib/crypto.js';
-import { nairaToKobo, quote, splitCharges, formatNaira } from '../lib/money.js';
-import { zoneById, deliveryFeeKobo } from '../lib/zones.js';
+import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira } from '../lib/money.js';
+import { normaliseState } from '../lib/states.js';
 import { UserError, CONDITIONS, EXPIRY_OPTIONS, iso, addHours, str, requireLength, getDeal, getSeller } from './common.js';
+
+const PAYERS = ['buyer', 'seller', 'split'];
+
+// The fields that decide the price. Shared by the seller's "Calculate price" preview and link
+// creation, so the preview is always exactly what the link will charge.
+function pricingInput(ctx, input) {
+  const itemPrice = nairaToKobo(input.item_price);
+  if (itemPrice == null || itemPrice < 500 * 100) throw new UserError('Price must be at least ₦500.');
+  if (itemPrice > ctx.config.maxDealKobo) {
+    throw new UserError(`During the pilot, deals are limited to ${formatNaira(ctx.config.maxDealKobo)}.`);
+  }
+  const pickupState = normaliseState(input.pickup_state);
+  if (!pickupState) throw new UserError('Enter the state you ship from (one of the 36 states or FCT).');
+  const deliveryState = normaliseState(input.delivery_state);
+  if (!deliveryState) throw new UserError("Enter the buyer's state (one of the 36 states or FCT).");
+  // Fez prices by whole kilograms.
+  const weightKg = Math.ceil(Number(input.weight_kg ?? 1));
+  if (!Number.isFinite(weightKg) || weightKg < 1 || weightKg > 100) throw new UserError('Parcel weight must be 1 to 100 kg.');
+  const deliveryPayer = str(input.delivery_payer);
+  const feePayer = str(input.fee_payer);
+  if (!PAYERS.includes(deliveryPayer)) throw new UserError('Choose who pays for delivery.');
+  if (!PAYERS.includes(feePayer)) throw new UserError('Choose who pays the TrustGap fee.');
+  return { itemPrice, pickupState, deliveryState, weightKg, deliveryPayer, feePayer };
+}
+
+// Delivery price from the courier (Fez /order/cost, or the manual table), the TrustGap fee, and
+// payment processing grossed up on the real total.
+async function priceDeal(ctx, p) {
+  let deliveryFee;
+  try {
+    ({ feeKobo: deliveryFee } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
+  } catch (err) {
+    throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
+  }
+  const pf = platformFee(p.itemPrice, ctx.config.fee);
+  const buyerShare = p.feePayer === 'buyer' ? 1 : p.feePayer === 'split' ? 0.5 : 0;
+  const pr = processingFee(
+    { itemPrice: p.itemPrice, buyerDelivery: buyerPart(p.deliveryPayer, deliveryFee), platform: pf, buyerShare },
+    ctx.config.processing,
+  );
+  const q = splitCharges({ itemPrice: p.itemPrice, deliveryFee, deliveryPayer: p.deliveryPayer, feePayer: p.feePayer, platformFee: pf, processingFee: pr });
+  if (q.sellerPayout <= 0) {
+    throw new UserError(`Delivery to ${p.deliveryState} plus fees is more than you would receive. Adjust the price or who pays.`);
+  }
+  return q;
+}
+
+// "Calculate price" on the seller's form.
+export async function previewDeal(ctx, input) {
+  const p = pricingInput(ctx, input);
+  return { pickup_state: p.pickupState, delivery_state: p.deliveryState, price: await priceDeal(ctx, p) };
+}
 
 export async function createDeal(ctx, seller, input) {
   if (seller.suspended_at) throw new UserError('Your account is suspended. Contact support.');
@@ -20,28 +72,16 @@ export async function createDeal(ctx, seller, input) {
   if (!CONDITIONS.includes(itemCondition)) throw new UserError('Choose the item condition.');
   const quantity = Number(input.quantity || 1);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) throw new UserError('Quantity must be 1 to 100.');
-  const itemPrice = nairaToKobo(input.item_price);
-  if (itemPrice == null || itemPrice < 500 * 100) throw new UserError('Price must be at least ₦500.');
-  if (itemPrice > ctx.config.maxDealKobo) {
-    throw new UserError(`During the pilot, deals are limited to ${formatNaira(ctx.config.maxDealKobo)}.`);
-  }
   const pickupAddress = requireLength(input.pickup_address, 'Pickup address', 10, 300);
-  const pickupZone = str(input.pickup_zone);
-  const deliveryZone = str(input.delivery_zone);
-  if (!zoneById(pickupZone)) throw new UserError('Choose your pickup area.');
-  if (!zoneById(deliveryZone)) throw new UserError("Choose the buyer's delivery area.");
-  const deliveryPayer = str(input.delivery_payer);
-  const feePayer = str(input.fee_payer);
-  if (!['buyer', 'seller'].includes(deliveryPayer)) throw new UserError('Choose who pays for delivery.');
-  if (!['buyer', 'seller', 'split'].includes(feePayer)) throw new UserError('Choose who pays the TrustGap fee.');
+  const deliveryAddress = requireLength(input.delivery_address, "Buyer's delivery address", 10, 300);
+  const deliveryLandmark = str(input.delivery_landmark).slice(0, 200);
+  const fragile = input.fragile === true || input.fragile === 'yes' || input.fragile === 'on';
   const deliveryDays = Number(input.delivery_days || 2);
   if (!Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > 7) throw new UserError('Ship-within must be 1 to 7 days.');
   const expiresHours = Number(input.expires_hours || 24);
   if (!EXPIRY_OPTIONS.includes(expiresHours)) throw new UserError('Choose when the link expires.');
-
-  const deliveryFee = deliveryFeeKobo(pickupZone, deliveryZone);
-  const q = quote({ itemPrice, deliveryFee, deliveryPayer, feePayer }, ctx.config.fee, ctx.config.processing);
-  if (q.sellerPayout <= 0) throw new UserError('After delivery and fees you would receive nothing. Adjust the price or who pays.');
+  const p = pricingInput(ctx, input);
+  const q = await priceDeal(ctx, p);
 
   const now = ctx.now();
   const token = randomToken(12);
@@ -63,13 +103,19 @@ export async function createDeal(ctx, seller, input) {
       item_description: itemDescription,
       item_condition: itemCondition,
       quantity,
-      item_price: itemPrice,
+      item_price: p.itemPrice,
       pickup_address: pickupAddress,
-      pickup_zone: pickupZone,
-      delivery_zone: deliveryZone,
-      delivery_fee: deliveryFee,
-      delivery_payer: deliveryPayer,
-      fee_payer: feePayer,
+      pickup_zone: p.pickupState, // legacy column, kept filled
+      pickup_state: p.pickupState,
+      weight_kg: p.weightKg,
+      fragile,
+      delivery_address: deliveryAddress,
+      delivery_landmark: deliveryLandmark || null,
+      delivery_state: p.deliveryState,
+      delivery_zone: p.deliveryState, // legacy column, kept filled
+      delivery_fee: q.deliveryFee,
+      delivery_payer: p.deliveryPayer,
+      fee_payer: p.feePayer,
       platform_fee: q.platformFee,
       processing_fee: q.processingFee,
       buyer_total: q.buyerTotal,
@@ -80,7 +126,7 @@ export async function createDeal(ctx, seller, input) {
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now),
     }),
-    updateStmt(ctx.env, 'sellers', seller.id, { pickup_address: pickupAddress, pickup_zone: pickupZone }),
+    updateStmt(ctx.env, 'sellers', seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState }),
   );
   await ctx.env.DB.batch(statements);
   return first(ctx.env, 'SELECT * FROM deals WHERE token = ?', token);
@@ -100,7 +146,7 @@ export async function cancelDeal(ctx, seller, dealId) {
   if (res.meta.changes !== 1) throw new UserError('Only an unpaid, open link can be cancelled.');
 }
 
-// Breakdown from the amounts saved with the deal, so later fee changes never alter an existing link.
+// The amounts saved with the link. Later fee or courier price changes never alter an existing link.
 export function priceBreakdown(deal) {
   return splitCharges({
     itemPrice: deal.item_price,
@@ -112,7 +158,8 @@ export function priceBreakdown(deal) {
   });
 }
 
-// What the buyer may see. Never includes the pickup address or seller contact details.
+// What the buyer may see: the whole deal, including the delivery address the seller entered (so
+// they can check it), but never the seller's pickup address or contact details.
 export async function publicDealView(ctx, deal) {
   const seller = await getSeller(ctx, deal.seller_id);
   const q = priceBreakdown(deal);
@@ -124,7 +171,9 @@ export async function publicDealView(ctx, deal) {
     item_description: deal.item_description,
     item_condition: deal.item_condition,
     quantity: deal.quantity,
-    delivery_area: zoneById(deal.delivery_zone)?.name,
+    ships_from: deal.pickup_state,
+    delivery: { address: deal.delivery_address, landmark: deal.delivery_landmark, state: deal.delivery_state },
+    delivery_payer: deal.delivery_payer,
     delivery_days: deal.delivery_days,
     inspection_hours: deal.inspection_hours,
     expires_at: deal.expires_at,
@@ -132,10 +181,9 @@ export async function publicDealView(ctx, deal) {
     price: {
       item: q.itemPrice,
       delivery: q.buyerDelivery,
-      delivery_paid_by_seller: q.sellerDelivery > 0,
+      delivery_full: q.deliveryFee,
       platform_fee: q.buyerPlatformShare,
       processing_fee: q.buyerProcessingShare,
-      fee_paid_by_seller: q.buyerFeeShare === 0,
       total: q.buyerTotal,
     },
   };

@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, trackThenGo, $ } from '../core.js';
 
 await shell('seller');
 
@@ -7,7 +7,7 @@ async function render() {
   show('#app', html`<section class="card">
     <div class="spread"><h1>Order ${o.ref}</h1>${orderBadge(o.status)}</div>
     <p><strong>${o.item_title}</strong> · ${money(o.seller_payout)} to you after delivery</p>
-    <p class="muted">Buyer: ${o.buyer_name} · Delivery area: ${o.delivery_area}</p>
+    <p class="muted">Buyer: ${o.buyer_name} · Delivering to ${o.delivery_state}${o.delivery_payer !== 'buyer' ? html` · delivery ${money(o.delivery_fee)} (${o.delivery_payer === 'split' ? 'half' : 'all'} paid by you)` : ''}</p>
     ${o.status === 'paid'
       ? html`<div class="callout info"><strong>The buyer’s money is secured.</strong> Pack the item and book pickup before ${date(o.ship_by)}, or the buyer is refunded.
           <form class="form" id="book">
@@ -16,7 +16,7 @@ async function render() {
             <button class="btn">Item is packed — book pickup</button>
           </form></div>`
       : ''}
-    ${o.status === 'shipping' ? html`<p>Parcel status: <strong>${o.delivery_label}</strong></p>` : ''}
+    ${o.status === 'shipping' ? html`<p>Parcel status: <strong>${o.delivery_label}</strong>${o.courier_status ? html` <span class="muted">(courier: ${o.courier_status})</span>` : ''}</p>` : ''}
     ${o.status === 'delivered' ? html`<p>Delivered ${date(o.delivered_at)}. You are paid when the buyer confirms, or automatically at ${date(o.inspection_ends_at)}.</p>` : ''}
     ${dispute
       ? html`<div class="callout ${dispute.status === 'open' ? 'warn' : 'info'}">
@@ -31,7 +31,7 @@ async function render() {
     onSubmit($('#book'), async (data) => {
       await api(`/api/seller/orders/${encodeURIComponent(params.get('id'))}/book`, { method: 'POST', body: data, as: 'seller' });
       flash.set('Pickup booked. The buyer has been told.');
-      location.reload();
+      trackThenGo('pickup_booked', {}, location.href);
     });
   }
 }

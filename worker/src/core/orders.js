@@ -50,11 +50,6 @@ export async function placeOrder(ctx, { deal, input }) {
   if (buyerName.split(/\s+/).length < 2) throw new UserError('Enter your full name (first and last name).');
   const buyerPhone = normalisePhone(input.buyer_phone);
   const buyerEmail = validEmail(input.buyer_email);
-  const deliveryAddress = requireLength(input.delivery_address, 'Delivery address', 10, 300);
-  const deliveryLandmark = str(input.delivery_landmark).slice(0, 200);
-  if (input.confirm_area !== true && input.confirm_area !== 'yes') {
-    throw new UserError('Confirm that your address is in the delivery area shown.');
-  }
   const bankCode = str(input.refund_bank_code);
   const accountNumber = str(input.refund_account_number);
   if (!/^\d{10}$/.test(accountNumber)) throw new UserError('Refund account number must be 10 digits.');
@@ -73,6 +68,12 @@ export async function placeOrder(ctx, { deal, input }) {
     );
   }
 
+  // The address and every amount come from the link the buyer confirmed in step 1, never from
+  // this request. A mismatch means the page is out of date.
+  if (input.expected_total !== undefined && Number(input.expected_total) !== deal.buyer_total) {
+    throw new UserError(`This deal now costs ${formatNaira(deal.buyer_total)}. Please go back to step 1 and check it again.`, 409);
+  }
+
   const fresh = await refreshDeal(ctx, await getDeal(ctx, deal.id));
   if (fresh.status !== 'open') throw new UserError('This link is no longer available.', 410);
   const id = await insert(ctx.env, 'orders', {
@@ -83,8 +84,13 @@ export async function placeOrder(ctx, { deal, input }) {
     buyer_name: buyerName,
     buyer_phone: buyerPhone,
     buyer_email: buyerEmail,
-    delivery_address: deliveryAddress,
-    delivery_landmark: deliveryLandmark || null,
+    delivery_address: deal.delivery_address,
+    delivery_landmark: deal.delivery_landmark,
+    delivery_state: deal.delivery_state,
+    delivery_fee: deal.delivery_fee,
+    platform_fee: deal.platform_fee,
+    processing_fee: deal.processing_fee,
+    seller_payout: deal.seller_payout,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
     refund_account_enc: await encrypt(accountNumber, ctx.config.appSecret),
@@ -242,15 +248,16 @@ export async function bookPickup(ctx, seller, orderId, packingNote) {
   if (!won) throw new UserError('Pickup can only be booked for a paid order that has not shipped.');
   let booking;
   try {
-    booking = await ctx.logistics.book({ order: { ...order, packing_note: note }, deal, seller });
+    booking = await ctx.logistics.book({ order: { ...order, packing_note: note }, deal, seller, pin: await revealPin(ctx, order) });
   } catch (err) {
     await update(ctx.env, 'orders', order.id, { status: 'paid', delivery_status: 'not_booked', dispatched_at: null });
     throw new UserError(`Could not book the courier: ${err.message}`);
   }
   await ctx.env.DB.batch([
-    stmt(ctx.env, "UPDATE orders SET delivery_status = 'booked', delivery_ref = ?, rider_url = ? WHERE id = ?", booking.deliveryRef, booking.riderUrl || null, order.id),
+    stmt(ctx.env, "UPDATE orders SET delivery_status = 'booked', delivery_ref = ?, rider_url = ?, courier = ? WHERE id = ?",
+      booking.deliveryRef, booking.riderUrl || null, ctx.logistics.name, order.id),
     stmt(ctx.env, 'INSERT INTO ledger (order_id, kind, amount, counterparty, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      order.id, 'delivery_cost', deal.delivery_fee, 'courier', 'pending', iso(ctx.now())),
+      order.id, 'delivery_cost', order.delivery_fee, ctx.logistics.name, 'pending', iso(ctx.now())),
   ]);
   await logEvent(ctx, order.id, 'seller', 'pickup_booked', { delivery_ref: booking.deliveryRef, packing_note: note });
   await ctx.notify.send({
@@ -316,6 +323,12 @@ export async function verifyDeliveryPin(ctx, order, pin, actor) {
     await logEvent(ctx, order.id, actor, 'wrong_pin');
     throw new UserError(`Wrong PIN. ${ctx.config.pinMaxAttempts - order.pin_attempts - 1} attempt(s) left.`);
   }
+  if (!(await markDelivered(ctx, order, actor, 'delivered_with_pin'))) throw new UserError('This order was already updated.');
+}
+
+// Delivery confirmed (by the rider entering the PIN, or by the courier's own status): starts the
+// buyer's inspection window. Returns false if the order had already moved on.
+export async function markDelivered(ctx, order, actor, eventType) {
   const deal = await getDeal(ctx, order.deal_id);
   const now = ctx.now();
   const ends = addHours(now, deal.inspection_hours);
@@ -326,10 +339,10 @@ export async function verifyDeliveryPin(ctx, order, pin, actor) {
     { status: 'delivered', delivery_status: 'delivered', delivered_at: iso(now), inspection_ends_at: iso(ends) },
     (h) => [
       h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'delivery_cost'", order.id),
-      h.event(actor, 'delivered_with_pin'),
+      h.event(actor, eventType),
     ],
   );
-  if (!won) throw new UserError('This order was already updated.');
+  if (!won) return false;
   const seller = await getSeller(ctx, order.seller_id);
   await ctx.notify.send({
     orderId: order.id,
@@ -343,6 +356,46 @@ export async function verifyDeliveryPin(ctx, order, pin, actor) {
     phone: seller.phone,
     sms: `TrustGap: order ${order.ref} was delivered. Your payout is released when the buyer confirms or at ${fmtDate(ends)}, unless they report a problem.`,
   });
+  return true;
+}
+
+// ---------------------------------------------------------------- courier status (Fez)
+
+const STAGE_RANK = { booked: 1, picked_up: 2, out_for_delivery: 3 };
+
+// Reads the parcel's status from the courier and applies it. Called from the Fez webhook (which is
+// only a hint) and by the timers, so a missed webhook is caught up within minutes.
+export async function syncCourierStatus(ctx, order) {
+  if (!order.delivery_ref || order.courier !== ctx.logistics.name) return null;
+  const st = await ctx.logistics.getStatus(order.delivery_ref);
+  if (!st) return null;
+  if (st.raw && st.raw !== order.courier_status) {
+    await update(ctx.env, 'orders', order.id, { courier_status: st.raw });
+    await logEvent(ctx, order.id, 'courier', 'courier_status', st.reason ? `${st.raw}: ${st.reason}` : st.raw);
+  }
+  if (st.stage === 'delivered') {
+    if (order.status === 'shipping') await markDelivered(ctx, order, 'courier', 'delivered_by_courier');
+  } else if (STAGE_RANK[st.stage] && (STAGE_RANK[order.delivery_status] || 0) < STAGE_RANK[st.stage]) {
+    await run(ctx.env, "UPDATE orders SET delivery_status = ? WHERE id = ? AND status = 'shipping'", st.stage, order.id);
+    if (st.stage === 'out_for_delivery') {
+      await ctx.notify.send({
+        orderId: order.id,
+        event: 'delivery_out_for_delivery',
+        phone: order.buyer_phone,
+        sms: `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.`,
+      });
+    }
+  } else if (st.stage === 'returned' && order.delivery_status !== 'returned') {
+    await update(ctx.env, 'orders', order.id, { delivery_status: 'returned' });
+    if (order.status === 'shipping') {
+      await openDispute(ctx, await getOrder(ctx, order.id), {
+        by: 'courier',
+        category: 'returned_by_courier',
+        description: `The courier returned the parcel${st.reason ? `: ${st.reason}` : ''}.`,
+      });
+    }
+  }
+  return st;
 }
 
 // ---------------------------------------------------------------- disputes & money out
@@ -413,10 +466,9 @@ export async function resolveDispute(ctx, disputeId, input) {
 
 export async function releaseToSeller(ctx, order, reason) {
   if (order.status !== 'delivered') throw new UserError('Payment can only be released after delivery.');
-  const deal = await getDeal(ctx, order.deal_id);
   const seller = await getSeller(ctx, order.seller_id);
-  const recovered = Math.min(seller.amount_owed, deal.seller_payout);
-  const payout = deal.seller_payout - recovered;
+  const recovered = Math.min(seller.amount_owed, order.seller_payout);
+  const payout = order.seller_payout - recovered;
   const settles = settlesAt(ctx, order.paid_at);
   const won = await transition(ctx, order.id, ['delivered'], { status: 'completed', closed_at: iso(ctx.now()) }, (h) => [
     ...(recovered > 0
@@ -425,8 +477,8 @@ export async function releaseToSeller(ctx, order, reason) {
           h.insert('ledger', ledgerRow(ctx, order.id, 'debt_recovered', recovered, 'seller', 'success')),
         ]
       : []),
-    h.insert('ledger', ledgerRow(ctx, order.id, 'platform_fee', deal.platform_fee, 'trustgap', 'success')),
-    h.insert('ledger', ledgerRow(ctx, order.id, 'processing_fee', deal.processing_fee, 'flutterwave', 'success')),
+    h.insert('ledger', ledgerRow(ctx, order.id, 'platform_fee', order.platform_fee, 'trustgap', 'success')),
+    h.insert('ledger', ledgerRow(ctx, order.id, 'processing_fee', order.processing_fee, 'flutterwave', 'success')),
     ...(payout > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'seller_payout', payout, 'seller', 'pending', iso(settles)))] : []),
     h.event(reason === 'buyer_confirmed' ? 'buyer' : 'system', reason),
   ]);

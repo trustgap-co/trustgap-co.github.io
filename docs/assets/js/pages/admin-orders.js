@@ -8,7 +8,8 @@ async function render() {
   const { orders, counts } = await api(`/api/admin/orders?status=${encodeURIComponent(status)}`, { as: 'admin' });
   show('#app', html`<div class="spread"><h1>Orders</h1>
       <div class="actions"><button class="btn btn-small btn-secondary" id="jobs">Run timers now</button>
-      <button class="btn btn-small btn-secondary" id="sync">Copy to Google Sheets now</button></div></div>
+      <button class="btn btn-small btn-secondary" id="sync">Copy to Google Sheets now</button>
+      <button class="btn btn-small btn-secondary" id="fezhook">Register Fez webhook</button></div></div>
     <p class="filters">${FILTERS.map((f) => html`<a class="${f === status ? 'on' : ''}" href="${link(`admin/orders.html?status=${f}`)}">${f || 'active'}${f ? ` (${counts[f] || 0})` : ''}</a> `)}</p>
     <div class="list">${orders.map((o) => html`<a class="row" href="${link(`admin/order.html?id=${o.id}`)}">
       <div><strong>${o.ref}</strong> · ${o.item_title}<br><small class="muted">${o.business_name} → ${o.buyer_name} · ${date(o.created_at)}</small></div>
@@ -16,6 +17,15 @@ async function render() {
     ${orders.length ? '' : html`<p class="muted">No orders here.</p>`}`);
   $('#jobs').addEventListener('click', async () => {
     flash.set('Timers run: ' + JSON.stringify((await api('/api/admin/jobs', { method: 'POST', body: {}, as: 'admin' })).result));
+    location.reload();
+  });
+  $('#fezhook').addEventListener('click', async () => {
+    try {
+      const { registered } = await api('/api/admin/courier/register-webhook', { method: 'POST', body: {}, as: 'admin' });
+      flash.set(`Fez will send parcel updates to ${registered}`);
+    } catch (err) {
+      flash.set('Fez webhook: ' + err.message);
+    }
     location.reload();
   });
   $('#sync').addEventListener('click', async () => {

@@ -1,9 +1,8 @@
 import { first, all } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
-import { zoneById } from '../lib/zones.js';
 import { getSeller, payUrl, HELD_STATUSES } from '../core/common.js';
 import { signup, requestLogin, verifyCode, authenticate, logout, sellerView, setPayoutAccount, verifyIdentity } from '../core/sellers.js';
-import { createDeal, cancelDeal, refreshDeal, priceBreakdown } from '../core/deals.js';
+import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown } from '../core/deals.js';
 import { bookPickup, DELIVERY_LABELS } from '../core/orders.js';
 
 export async function requireSeller(ctx, request) {
@@ -23,8 +22,12 @@ const dealView = (ctx, d) => ({
   item_condition: d.item_condition,
   quantity: d.quantity,
   pickup_address: d.pickup_address,
-  pickup_area: zoneById(d.pickup_zone)?.name,
-  delivery_area: zoneById(d.delivery_zone)?.name,
+  pickup_state: d.pickup_state,
+  delivery_address: d.delivery_address,
+  delivery_landmark: d.delivery_landmark,
+  delivery_state: d.delivery_state,
+  weight_kg: d.weight_kg,
+  fragile: Boolean(d.fragile),
   delivery_payer: d.delivery_payer,
   fee_payer: d.fee_payer,
   delivery_days: d.delivery_days,
@@ -56,7 +59,7 @@ export function sellerRoutes(r) {
     const { seller } = await requireSeller(ctx, request);
     const orders = await all(
       ctx.env,
-      `SELECT o.id, o.ref, o.status, o.buyer_name, o.paid_at, o.amount, d.item_title, d.seller_payout
+      `SELECT o.id, o.ref, o.status, o.buyer_name, o.paid_at, o.amount, o.seller_payout, d.item_title
        FROM orders o JOIN deals d ON d.id = o.deal_id
        WHERE o.seller_id = ? AND o.status NOT IN ('awaiting_payment', 'cancelled', 'duplicate_refunded')
        ORDER BY o.id DESC LIMIT 50`,
@@ -76,6 +79,12 @@ export function sellerRoutes(r) {
       orders,
       deals,
     };
+  });
+
+  // "Calculate price": the exact delivery fee, fees, buyer total and payout, before creating the link.
+  r.post('/api/seller/quote', async ({ ctx, request, body }) => {
+    await requireSeller(ctx, request);
+    return previewDeal(ctx, body);
   });
 
   r.post('/api/seller/deals', async ({ ctx, request, body }) => {
@@ -109,9 +118,12 @@ export function sellerRoutes(r) {
         ref: o.ref,
         status: o.status,
         item_title: d.item_title,
-        seller_payout: d.seller_payout,
+        seller_payout: o.seller_payout,
+        delivery_fee: o.delivery_fee,
+        delivery_payer: d.delivery_payer,
+        courier_status: o.courier_status,
         buyer_name: o.buyer_name,
-        delivery_area: zoneById(d.delivery_zone)?.name,
+        delivery_state: o.delivery_state,
         delivery_status: o.delivery_status,
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         packing_note: o.packing_note,

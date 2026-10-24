@@ -18,6 +18,7 @@ export const BUYER_DISPUTE_CATEGORIES = {
 export const DISPUTE_CATEGORIES = {
   ...BUYER_DISPUTE_CATEGORIES,
   refused_at_door: 'Refused at the door',
+  returned_by_courier: 'Returned by the courier',
   not_shipped: 'Seller did not ship in time',
   seller_issue: 'Raised by seller',
 };

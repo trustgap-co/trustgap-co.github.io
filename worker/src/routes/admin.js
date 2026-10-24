@@ -1,10 +1,9 @@
 import { first, all, update } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
 import { verifyLink } from '../lib/crypto.js';
-import { zoneById } from '../lib/zones.js';
 import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso } from '../core/common.js';
 import { adminLogin, authenticate } from '../core/sellers.js';
-import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, DELIVERY_LABELS } from '../core/orders.js';
+import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
 import { syncSheets } from '../providers/sheets.js';
 
@@ -85,9 +84,8 @@ export function adminRoutes(r) {
         ...order,
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         track_url: trackUrl(ctx, o),
-        delivery_area: zoneById(d.delivery_zone)?.name,
       },
-      deal: { ...d, pickup_area: zoneById(d.pickup_zone)?.name, delivery_area: zoneById(d.delivery_zone)?.name },
+      deal: d,
       seller: {
         id: s.id, business_name: s.business_name, full_name: s.full_name, phone: s.phone, email: s.email,
         payout_bank_name: s.payout_bank_name, payout_account_number: s.payout_account_number,
@@ -148,6 +146,21 @@ export function adminRoutes(r) {
   })));
 
   r.post('/api/admin/ledger/:id/retry', admin(async ({ ctx, params }) => ({ entry: await sendTransfer(ctx, Number(params.id), { manual: true }) })));
+  r.post('/api/admin/orders/:id/sync-courier', admin(async ({ ctx, params }) => {
+    const o = await getOrder(ctx, Number(params.id));
+    if (!o) throw notFound('Order not found.');
+    const st = await syncCourierStatus(ctx, o);
+    return { status: st ? st.raw : 'No courier status (manual rider, or not booked yet).' };
+  }));
+
+  // Tells Fez where to send parcel status updates (Fez → POST /webhooks/store).
+  r.post('/api/admin/courier/register-webhook', admin(async ({ ctx }) => {
+    if (!ctx.logistics.registerWebhook) throw new UserError('Webhooks are only needed with LOGISTICS_PROVIDER=fez.');
+    const url = `${ctx.config.apiUrl}/webhooks/fez`;
+    await ctx.logistics.registerWebhook(url);
+    return { registered: url };
+  }));
+
   r.post('/api/admin/jobs', admin(async ({ ctx }) => ({ result: await runJobs(ctx) })));
   r.post('/api/admin/sync-sheets', admin(async ({ ctx }) => ({ result: await syncSheets(ctx) })));
 }

@@ -125,7 +125,7 @@ export function sellerView(s) {
     phone: s.phone,
     email: s.email,
     pickup_address: s.pickup_address,
-    pickup_zone: s.pickup_zone,
+    pickup_state: s.pickup_state,
     payout: s.payout_verified_at
       ? { bank_name: s.payout_bank_name, account_number: s.payout_account_number, account_name: s.payout_account_name }
       : null,

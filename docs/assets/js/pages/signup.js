@@ -1,7 +1,7 @@
-import { api, auth, html, show, onSubmit, link, shell, $ } from '../core.js';
+import { api, auth, html, show, onSubmit, link, shell, track, $ } from '../core.js';
 import { codeStep } from './auth-code.js';
 
-await shell('public');
+shell('public'); // not awaited: this page doesn't need the server settings to draw
 if (auth.seller()) location.href = link('seller/dashboard.html');
 
 show('#app', html`<section class="card narrow">
@@ -19,5 +19,6 @@ show('#app', html`<section class="card narrow">
 
 onSubmit($('#signup'), async (data) => {
   const sent = await api('/api/auth/signup', { method: 'POST', body: data });
-  codeStep(sent.phone, sent, { next: 'seller/settings.html' });
+  track('otp_requested', { flow: 'signup' });
+  codeStep(sent.phone, sent, { next: 'seller/settings.html', flow: 'signup' });
 });

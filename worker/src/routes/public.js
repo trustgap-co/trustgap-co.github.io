@@ -1,7 +1,8 @@
 import { first, all } from '../lib/db.js';
+import { ensureSchema } from '../lib/migrate.js';
 import { redirect, html, UserError, notFound } from '../lib/http.js';
-import { formatNaira } from '../lib/money.js';
-import { ZONES, zoneById } from '../lib/zones.js';
+import { formatNaira, buyerPart } from '../lib/money.js';
+import { STATES } from '../lib/states.js';
 import { RULES } from '../lib/terms.js';
 import { CONDITIONS, EXPIRY_OPTIONS, BUYER_DISPUTE_CATEGORIES, getDeal, getSeller } from '../core/common.js';
 import { refreshDeal, publicDealView } from '../core/deals.js';
@@ -15,6 +16,7 @@ import {
   releaseToSeller,
   DELIVERY_LABELS,
   settleTransfer,
+  syncCourierStatus,
 } from '../core/orders.js';
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -32,7 +34,23 @@ async function loadOrderByBuyerToken(ctx, token) {
 }
 
 export function publicRoutes(r) {
-  r.get('/api/health', () => ({ ok: true }));
+  // Also reports whether the database is connected and has all its tables, so setup problems
+  // (missing D1 binding, tables that could not be created) show up here, not as login errors.
+  r.get('/api/health', async ({ ctx }) => {
+    const expected = ['sellers', 'sessions', 'otps', 'deals', 'checkouts', 'orders', 'order_events', 'disputes', 'ledger', 'outbox', 'mock_transactions', 'meta'];
+    if (!ctx.env.DB) return { ok: false, database: 'No D1 binding called DB. Add it under Settings → Bindings.' };
+    try {
+      await ensureSchema(ctx.env);
+      const tables = (await all(ctx.env, "SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
+      const missing = expected.filter((t) => !tables.includes(t));
+      if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(', ')}. The Worker could not create them — check Logs.` };
+      const columns = (await all(ctx.env, 'PRAGMA table_info(deals)')).map((c) => c.name);
+      if (!columns.includes('processing_fee')) return { ok: false, database: 'Database update 0002 not applied — check Logs.' };
+      return { ok: true, database: 'connected' };
+    } catch (err) {
+      return { ok: false, database: `Database error: ${err.message}` };
+    }
+  });
 
   r.get('/api/config', async ({ ctx }) => ({
     test_mode: ctx.config.testMode,
@@ -41,7 +59,8 @@ export function publicRoutes(r) {
     processing: ctx.config.processing,
     max_deal: ctx.config.maxDealKobo,
     inspection_hours: ctx.config.inspectionHours,
-    zones: ZONES.map(({ id, name }) => ({ id, name })),
+    states: STATES,
+    courier: ctx.logistics.name,
     conditions: CONDITIONS,
     expiry_options: EXPIRY_OPTIONS,
     dispute_categories: BUYER_DISPUTE_CATEGORIES,
@@ -78,6 +97,16 @@ export function publicRoutes(r) {
     if (!hint) return new Response('unauthorized', { status: 401 });
     if (hint.kind === 'transfer') await settleTransfer(ctx, hint);
     else await confirmPayment(ctx, hint.txRef, 'webhook');
+    return new Response('ok');
+  });
+
+  // Fez parcel status changes. Only a hint: the status is re-read from Fez before anything changes.
+  r.post('/webhooks/fez', async ({ ctx, request, body }) => {
+    const hint = await ctx.logistics.parseWebhook(request, body);
+    if (!hint) return new Response('ignored', { status: 200 });
+    if (!hint.signatureValid) console.warn('Fez webhook signature did not verify; re-checking status with Fez anyway', hint.deliveryRef);
+    const order = await first(ctx.env, 'SELECT * FROM orders WHERE delivery_ref = ?', hint.deliveryRef);
+    if (order) await syncCourierStatus(ctx, order);
     return new Response('ok');
   });
 
@@ -121,7 +150,9 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         item_title: deal.item_title,
         seller_name: seller.business_name,
         seller_phone: seller.phone,
-        delivery_area: zoneById(deal.delivery_zone)?.name,
+        delivery_state: o.delivery_state,
+        delivery_address: o.delivery_address,
+        courier_status: o.courier_status,
         delivery_status: o.delivery_status,
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         pin: ['paid', 'shipping'].includes(o.status) ? await revealPin(ctx, o) : null,
@@ -129,6 +160,13 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         delivered_at: o.delivered_at,
         inspection_ends_at: o.inspection_ends_at,
         refund_account: `${o.refund_bank_name} ••••${o.refund_account_last4}`,
+        price: {
+          item: deal.item_price,
+          delivery: buyerPart(deal.delivery_payer, o.delivery_fee),
+          platform_fee: buyerPart(deal.fee_payer, o.platform_fee),
+          processing_fee: buyerPart(deal.fee_payer, o.processing_fee),
+          total: o.amount,
+        },
         terms_hash: o.terms_hash,
         terms_accepted_at: o.terms_accepted_at,
         rules: JSON.parse(o.terms_json).rules,

@@ -33,6 +33,11 @@ export async function hmac(secret, message) {
   return b64url(await crypto.subtle.sign('HMAC', await hmacKey(secret), enc.encode(message)));
 }
 
+export async function hmacHex(secret, message) {
+  const sig = await crypto.subtle.sign('HMAC', await hmacKey(secret), enc.encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function safeEqual(a, b) {
   a = String(a);
   b = String(b);

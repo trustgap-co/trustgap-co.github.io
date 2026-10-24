@@ -5,25 +5,23 @@ Everything here works on free plans. Do the steps in order. You need Node.js 22+
 ```
 GitHub Pages (docs/)  ──calls──▶  Cloudflare Worker (worker/)  ──▶  D1 database (the real records)
    the website                     the server + timers               └─▶ Google Sheets (read-only copy, every 15 min)
-                                         │
-                                         ├─▶ Flutterwave (payments)   ├─▶ Monnify (seller NIN checks)
-                                         ├─▶ Make.com webhook ─▶ KudiSMS (SMS) + email
-                                         └─▶ Fez (delivery — not connected yet; manual rider links meanwhile)
+     │                                   │
+     └─▶ GA4 + Meta Pixel                ├─▶ Flutterwave (payments)   ├─▶ Monnify (seller NIN checks)
+         (after cookie consent)          ├─▶ Make.com webhook ─▶ KudiSMS (SMS) + email
+                                         └─▶ Fez Delivery (or manual rider links until Fez is switched on)
 ```
+
+Steps 1–7 set up the server and partners; steps 8–9 the website's content and analytics.
 
 ## 1. Cloudflare Worker and D1 database (from the Cloudflare dashboard)
 
-The same way as CEA: create the Worker, paste the code, set the keys. Two ready-made files are
-in the repo for this:
-
-- `worker/dashboard/worker.js` — the whole Worker in **one file**, to paste into "Edit code"
-- `worker/dashboard/schema.sql` — all the database tables, to paste into the D1 console
+The same way as CEA: create the Worker, paste the code, set the keys. The code is ready-made in
+`worker/dashboard/worker.js` — the whole Worker in **one file**. You don't need the D1 console:
+the Worker creates its database tables by itself the first time it runs.
 
 **a. Create the database**
-1. Cloudflare dashboard → **Storage & Databases → D1 SQL Database → Create**. Name it `trustgap`.
-2. Open it → **Console**. Paste everything from `worker/dashboard/schema.sql` → **Execute**.
-   (If the console complains about running several statements, paste and run one
-   `CREATE TABLE …;` / `ALTER TABLE …;` block at a time, top to bottom.)
+Cloudflare dashboard → **Storage & Databases → D1 SQL Database → Create**. Name it `trustgap`.
+Leave it empty.
 
 **b. Create the Worker**
 1. **Workers & Pages → Create → Create Worker**. Name it `trustgap-api` → **Deploy** (the
@@ -47,7 +45,7 @@ capitals), database `trustgap` → **Deploy/Save**.
 | `API_URL` | Text | your Worker's address, e.g. `https://trustgap-api.<you>.workers.dev` (shown on the Worker's page) |
 | `PAYMENT_PROVIDER` | Text | `mock` (→ `flutterwave` later, step 6) |
 | `IDENTITY_PROVIDER` | Text | `mock` (→ `monnify` later, step 5) |
-| `LOGISTICS_PROVIDER` | Text | `manual` |
+| `LOGISTICS_PROVIDER` | Text | `manual` (→ `fez` later, step 7) |
 
 Everything else (fee 1.5%, processing 2%, inspection 24h, …) has sensible defaults; add a variable
 only if you want to change one (the names are listed in `worker/wrangler.toml`). Later keys
@@ -62,15 +60,18 @@ PINs and signs rider links: **never change it after launch**, or those become un
 retries SMS. Google Sheets is copied on every third run.
 
 **f. Check it works** — open `https://trustgap-api.<you>.workers.dev/api/health` in your browser.
-You should see `{"ok":true}`.
+You should see `{"ok":true,"database":"connected"}`. The first visit also creates the tables
+(D1 → trustgap → Tables then lists 12). If it says something else, the message tells you what to fix.
 
-**g. Tell the website where the Worker is** — in GitHub, edit `docs/assets/js/config.js` and replace
-`https://trustgap-api.YOUR-SUBDOMAIN.workers.dev` with your Worker's address. Commit.
+**g. Tell the website where the Worker is** — `docs/assets/js/config.js` already points to
+`https://trustgap-api.trustgap-co.workers.dev`. If your Worker's address is different, change it there
+**and** in the `preconnect` line near the top of each page (search the `docs/` folder for
+`trustgap-api.trustgap-co.workers.dev` and replace every match). Commit.
 
 **Updating the Worker later:** when the code changes, a new `worker/dashboard/worker.js` is
 generated (`npm run dashboard-files` in `worker/`). Paste it into **Edit code** again and Deploy.
-Your settings, secrets, database and cron trigger stay as they are. If a change adds a new file in
-`worker/migrations/`, also run that file's SQL once in the D1 console.
+Your settings, secrets, database and cron trigger stay as they are. Database changes that come with
+new code (files in `worker/migrations/`) are applied by the Worker automatically on its next request.
 
 ### Alternative: the terminal (wrangler)
 
@@ -213,22 +214,136 @@ Still to ask Flutterwave (their integrations team offered a walkthrough):
 - Can a transfer that **failed** be retried with the same reference, or must it be new? (The app
   assumes new.)
 
-## 7. Fez (when they reply)
+## 7. Fez Delivery
 
-Until then, `LOGISTICS_PROVIDER = "manual"`: when a seller books pickup, the admin order page shows
-a **rider link** (signed, expires in 14 days) to send to your rider on WhatsApp. The rider updates the
-parcel and enters the buyer's PIN on it. For Fez, fill in `worker/src/providers/logistics/fez.js`.
+Until Fez is switched on, `LOGISTICS_PROVIDER = "manual"`: delivery is priced from a simple table
+(₦3,000 within the same state, ₦6,000 to another state, + 7.5% VAT — change with
+`DELIVERY_SAME_STATE_NAIRA` / `DELIVERY_OTHER_STATE_NAIRA`), and when a seller books pickup the admin
+order page shows a **rider link** (signed, 14 days) for your own rider, who enters the buyer's PIN.
 
-## 8. Going live checklist
+With Fez (`worker/src/providers/logistics/fez.js`, built from Fez's API docs):
+
+| When | Fez endpoint | What happens |
+|---|---|---|
+| Seller fills in the link (live preview) and creates it | `POST /order/cost` | Delivery price for pickup state → buyer's state, by weight; TrustGap uses `totalCost` (cost + VAT) and fixes it on the link |
+| Seller marks the item packed | `POST /order` | Creates the Fez order: buyer's address/state/name/phone, `uniqueID` = TrustGap order ref, weight, fragile, pickup address/state, the seller as sender (`thirdparty`), and the buyer's **delivery PIN as `CustToken`** |
+| Fez status changes | your webhook → `GET /orders/{orderNo}` | The webhook is only a hint; the status is re-read from Fez. Picked-Up / Dispatched update tracking, **Delivered** starts the buyer's inspection window, **Returned** opens a dispute |
+| Every 5 minutes | `GET /orders/{orderNo}` | Catches up any missed webhook |
+
+Steps:
+1. After onboarding and KYC, Fez gives you admin credentials (a user ID like `G-1234-5678` and a
+   password). Fez recommends changing the generated password first (in their portal, or their
+   `/user/changePassword` endpoint). Then add as **Secret**: `FEZ_USER_ID` and `FEZ_PASSWORD`.
+   The Worker logs in at `POST /user/authenticate`, uses the returned token and your organisation's
+   `secret-key` from the same reply, and logs in again before the token expires (or straight away
+   if Fez ever refuses it). `FEZ_SECRET_KEY` is only needed if you want to override that key.
+2. Add **Text** `FEZ_API_BASE`: `https://apisandbox.fezdelivery.co/v1` for testing; ask Fez for the
+   live address when you go live.
+3. Set `LOGISTICS_PROVIDER` to `fez` and deploy.
+4. **Admin → Orders → Register Fez webhook** (tells Fez to send updates to
+   `https://<your-worker>/webhooks/fez`).
+5. **Fund your Fez business wallet.** Fez charges each order to it; orders show "Pending Payment"
+   at Fez until it's funded (you'll see that in the order's timeline).
+
+Ask Fez to confirm: (a) their riders ask the recipient for the `CustToken` before handing over
+the parcel, (b) that `expireToken` is Lagos time, (c) the exact webhook signature
+(TrustGap checks HMAC-SHA256 of orderNo + status + timestamp with your secret key, but re-reads the
+status from Fez either way), (d) charges for returns and failed deliveries.
+
+## 8. Website content: company details, photos and policies
+
+**Uploading the website.** Everything for GitHub Pages is in `docs/`. If you update by hand
+(GitHub → **Add file → Upload files**), upload the whole `docs/` folder so the new files go in too
+(`analytics.js`, the `legal/` pages, the new marketing pages). Pages refresh within a minute or two.
+
+**Company details: `docs/assets/js/site-info.js`.** Fill these in once and every page, the footer
+and the policies update: legal name, RC number, registered and operating address, support /
+privacy / complaints / compliance emails, support phone and hours, data protection officer,
+effective and last-updated dates, minimum age, dispute and refund timeframes, delivery coverage and
+governing law. Anything still in `[brackets]` shows on the site as a yellow highlight, so you can
+see at a glance what's missing.
+
+Two switches in the same file:
+- `policiesApproved: true` removes the “Draft — under legal review” notice from the policy pages.
+  Set it **only after your lawyer approves** the policies (`docs/legal/`). Lines written for the
+  lawyer (e.g. “[LAWYER TO DRAFT THE SPECIFIC LIMITATION…]”) must be replaced before then.
+- `partnerNamesApproved: true` shows “Payment powered by Flutterwave. Delivery coordinated with Fez
+  Delivery.” on the home page. Set it only after **both** partners approve that wording in writing.
+
+**Policy pages: `docs/legal/`.** The 10 pages from the Legal Content Pack (terms, privacy, data
+protection, delivery, returns/refunds/disputes, fees and payments, acceptable use, cookies, seller
+terms, partners) plus an index. The wording is exactly the pack's. Your lawyer's edits can be made
+directly in those HTML files. `legal/cookies.html` also has a cookie register listing exactly what
+the site stores. Keep it up to date if you add tools.
+
+**Photos: `docs/assets/images/`.** Add the files listed in that folder's `README.md`, using exactly
+those names. Landscape 1200×900 WebP, under ~150 KB each (compress at squoosh.app), plus
+`og-image.jpg` (1200×630) for link previews on WhatsApp/X. Until a photo is there, its spot shows a
+labelled placeholder. Photos load only when they scroll into view, so they don't slow the first screen.
+
+## 9. Analytics: Google Analytics 4 and Meta Pixel
+
+Full list of events and reports: **[TRACKING.md](TRACKING.md)**.
+
+1. **GA4:** analytics.google.com → **Admin → Create → Property** → add a **Web** data stream for
+   `https://trustgap-co.github.io`. Copy the **Measurement ID** (`G-…`).
+2. **Meta Pixel:** business.facebook.com → **Events Manager → Connect data → Web → Meta Pixel**. Copy
+   the **Pixel ID** (a long number). In the pixel's settings, turn off **Automatic advanced matching**.
+3. Put both in `docs/assets/js/site-info.js`:
+
+   ```js
+   tracking: {
+     ga4Id: 'G-AB12CD34EF',
+     metaPixelId: '123456789012345',
+     requireConsent: true,
+   },
+   ```
+
+   Upload the file. While the placeholders (`G-XXXXXXXXXX`, `000000000000000`) are there, nothing
+   loads.
+4. **Check it:** open `https://trustgap-co.github.io/?debug_tracking=1`, accept cookies, and click
+   around. Events appear in the browser console and in **GA4 → Admin → DebugView** within seconds;
+   use Meta's **Test events** tab or the Meta Pixel Helper extension for the pixel.
+   `?debug_tracking=0` turns debugging off again.
+5. **In GA4, once:** mark `sign_up`, `deal_link_created`, `begin_checkout` and `purchase` as **key
+   events**, and register the custom dimensions listed in TRACKING.md.
+6. **In Meta:** use `CompleteRegistration` (seller sign-ups) or `Purchase` (buyer payments) as the
+   ad optimisation event.
+
+How it behaves:
+- **Cookie banner:** with `requireConsent: true` the trackers load only after a visitor taps
+  **Accept**. Visitors can change their mind with **Cookie settings** in the footer. This matches
+  the draft Cookie Policy. Only set `requireConsent: false` if your lawyer confirms consent isn't
+  needed. Visitors who tap “No thanks” are not counted, so expect GA4 numbers to be lower than real
+  traffic.
+- **Never tracked:** admin pages and the rider page.
+- **Private links stay private:** the buyer's deal and tracking links contain a secret code (and
+  the tracking page shows the delivery PIN). Before Google or Meta load, the code is swapped in the
+  address bar for a short key that only works on that phone. Reload and bookmarks still work there;
+  the SMS link works on any device.
+- **No personal data is sent:** no names, phone numbers, emails, addresses, bank details, NINs or
+  PINs. As a final check, quoted text, emails and long numbers are blanked out of every event.
+- **Speed:** the trackers load last, after the page has finished and the phone is idle.
+- **Purchases** are counted when the buyer lands on their tracking page after paying: once per
+  order per device, with the order reference as the ID, so Meta can de-duplicate if you add
+  server-side events later.
+
+## 10. Going live checklist
 
 - [ ] Lawyer advises on holding customer funds (Flutterwave confirmed TrustGap is the custodian)
+- [ ] Lawyer reviews the policy pages in `docs/legal/` and the buyer rules in `worker/src/lib/terms.js`;
+      then set `policiesApproved: true`
+- [ ] Company details filled in `site-info.js` (no yellow `[placeholders]` left anywhere on the site)
+- [ ] Flutterwave and Fez approve how they're named before setting `partnerNamesApproved: true`
+- [ ] Photos added to `docs/assets/images/`
+- [ ] GA4 and Meta Pixel IDs set; events checked with `?debug_tracking=1`; cookie banner wording
+      confirmed by the lawyer
 - [ ] Merchant agreement checked: reserves, chargebacks, prohibited items, whether the 2% is capped
 - [ ] Monnify wallet funded for NIN checks (₦60 each)
 - [ ] `TEST_MODE = "false"` (stops showing login codes on screen and the test banner)
 - [ ] Real `APP_SECRET` and `ADMIN_PASSWORD` set as secrets, with a backup copy of `APP_SECRET`
 - [ ] KudiSMS sender ID approved, transactional route working, a real code received on a DND number
-- [ ] Delivery prices in `worker/src/lib/zones.js` replaced with your courier's written rate card
-- [ ] Rules in `worker/src/lib/terms.js` reviewed by a lawyer; privacy notice published
+- [ ] Fez live keys set, webhook registered, Fez wallet funded, and a test parcel delivered end to end
 - [ ] Turn on D1 Time Travel / regular exports for backups
 - [ ] Consider Workers Paid ($5/month) once volume grows. The free plan allows 10ms CPU per request
 
@@ -241,7 +356,8 @@ npm run db:migrate:local
 npm run dev                                   # API on http://localhost:8787
 # in another terminal:
 cd docs && python3 -m http.server 8080        # site on http://localhost:8080
-npm test                                      # (in worker/) 31 tests, no Cloudflare account needed
+npm test                                      # (in worker/) 61 tests, no Cloudflare account needed
 ```
 
 Admin locally: http://localhost:8080/admin/ with the password from `.dev.vars`.
+Analytics locally: add `?debug_tracking=1` to see every event in the browser console (no IDs needed).

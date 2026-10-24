@@ -5,6 +5,7 @@ import { sellerRoutes } from './routes/seller.js';
 import { adminRoutes, riderRoutes } from './routes/admin.js';
 import { runJobs } from './core/jobs.js';
 import { syncSheets } from './providers/sheets.js';
+import { ensureSchema } from './lib/migrate.js';
 
 const router = new Router();
 publicRoutes(router);
@@ -19,8 +20,10 @@ export default {
     let res;
     try {
       const url = new URL(request.url);
-      const match = router.match(request.method, url.pathname);
+      // Collapse repeated slashes so "…workers.dev//api/…" still finds its route.
+      const match = router.match(request.method, url.pathname.replace(/\/{2,}/g, '/'));
       if (!match) throw new UserError('Not found', 404);
+      if (url.pathname !== '/api/health') await ensureSchema(env); // creates/updates tables on first use
       const ctx = createContext(env, execCtx);
       const body = request.method === 'POST' ? await readBody(request) : {};
       const out = await match.handler({ ctx, request, params: match.params, body, url });
@@ -40,6 +43,7 @@ export default {
 
   // Cron trigger (wrangler.toml): timers every 5 minutes, Google Sheets copy every 15.
   async scheduled(event, env, execCtx) {
+    await ensureSchema(env);
     const ctx = createContext(env, execCtx);
     await runJobs(ctx);
     if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {

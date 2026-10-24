@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, getBanks, bankOptions, testAccountsHint, date, flash, link, fail, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, getBanks, bankOptions, testAccountsHint, date, flash, link, fail, trackThenGo, $ } from '../core.js';
 
 const config = await shell('seller');
 
@@ -35,13 +35,13 @@ async function render() {
   onSubmit($('#payout'), async (data) => {
     const { seller } = await api('/api/seller/payout', { method: 'POST', body: data, as: 'seller' });
     flash.set(`Payout account verified: ${seller.payout.account_name}.`);
-    location.href = seller.identity_verified ? link('seller/dashboard.html') : location.href;
+    trackThenGo('payout_account_added', { first_time: !s.payout }, seller.identity_verified ? link('seller/dashboard.html') : location.href);
   });
   if ($('#identity')) {
     onSubmit($('#identity'), async (data) => {
       await api('/api/seller/identity', { method: 'POST', body: data, as: 'seller' });
       flash.set('Identity verified. You can now create payment links.');
-      location.href = link('seller/dashboard.html');
+      trackThenGo('identity_verified', { method: 'nin' }, link('seller/dashboard.html'));
     });
   }
 }

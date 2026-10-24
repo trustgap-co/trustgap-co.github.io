@@ -100,6 +100,13 @@ function loadConfig(env) {
     maxTransferAttempts: 3,
     maxIdentityAttempts: 3,
     maxDealKobo: num(env.MAX_DEAL_NAIRA, 3e5) * 100,
+    // Delivery prices used when LOGISTICS_PROVIDER=manual (your own riders). With Fez, the price
+    // comes from Fez's /order/cost for the buyer's state instead.
+    manualDelivery: {
+      sameStateKobo: num(env.DELIVERY_SAME_STATE_NAIRA, 3e3) * 100,
+      otherStateKobo: num(env.DELIVERY_OTHER_STATE_NAIRA, 6e3) * 100,
+      vatPercent: num(env.DELIVERY_VAT_PERCENT, 7.5)
+    },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,
@@ -244,6 +251,11 @@ async function hmac(secret, message) {
   return b64url(await crypto.subtle.sign("HMAC", await hmacKey(secret), enc.encode(message)));
 }
 __name(hmac, "hmac");
+async function hmacHex(secret, message) {
+  const sig = await crypto.subtle.sign("HMAC", await hmacKey(secret), enc.encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+__name(hmacHex, "hmacHex");
 function safeEqual(a, b) {
   a = String(a);
   b = String(b);
@@ -485,21 +497,161 @@ __name(createMonnifyIdentity, "createMonnifyIdentity");
 function createManualLogistics(ctx) {
   return {
     name: "manual",
+    async quote({ pickupState, dropoffState }) {
+      const { sameStateKobo, otherStateKobo, vatPercent } = ctx.config.manualDelivery;
+      const base = pickupState === dropoffState ? sameStateKobo : otherStateKobo;
+      return { feeKobo: Math.ceil(base * (100 + vatPercent) / 100 / 100) * 100 };
+    },
     async book({ order }) {
       const expires = new Date(ctx.now().getTime() + ctx.config.riderLinkDays * 864e5);
       const token = await signLink(ctx.config.appSecret, `rider-${order.id}`, expires);
       return { deliveryRef: "MAN-" + order.ref, riderUrl: `${ctx.config.siteUrl}/rider.html?t=${encodeURIComponent(token)}` };
+    },
+    async getStatus() {
+      return null;
+    },
+    async parseWebhook() {
+      return null;
     }
   };
 }
 __name(createManualLogistics, "createManualLogistics");
 
 // src/providers/logistics/fez.js
-function createFezLogistics() {
+function mapFezStatus(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s.includes("deliver")) return "delivered";
+  if (s.includes("return")) return "returned";
+  if (s.includes("cancel")) return "cancelled";
+  if (s.includes("dispatch")) return "out_for_delivery";
+  if (s.includes("picked")) return "picked_up";
+  if (s.includes("failed") || s.includes("rejected")) return "problem";
+  if (s.includes("pending payment")) return "awaiting_payment";
+  return "booked";
+}
+__name(mapFezStatus, "mapFezStatus");
+var session = null;
+function parseFezExpiry(value) {
+  const m = String(value || "").match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/);
+  return m ? Date.parse(`${m[1]}T${m[2]}+01:00`) : NaN;
+}
+__name(parseFezExpiry, "parseFezExpiry");
+function createFezLogistics(ctx) {
+  const { env } = ctx;
+  if (!env.FEZ_USER_ID || !env.FEZ_PASSWORD) {
+    throw new Error("FEZ_USER_ID and FEZ_PASSWORD are required when LOGISTICS_PROVIDER=fez");
+  }
+  const base = String(env.FEZ_API_BASE || "https://apisandbox.fezdelivery.co/v1").replace(/\/$/, "");
+  async function send(method, path, body, auth) {
+    let res;
+    try {
+      res = await fetch(base + path, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          ...auth ? { "secret-key": auth.secretKey, Authorization: `Bearer ${auth.token}` } : {}
+        },
+        body: body ? JSON.stringify(body) : void 0
+      });
+    } catch (err) {
+      throw new Error(`Fez unreachable: ${err.message}`);
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || String(data.status).toLowerCase() === "error") {
+      throw Object.assign(new Error(`Fez: ${data.description || data.message || res.status}`), { status: res.status });
+    }
+    return data;
+  }
+  __name(send, "send");
+  async function login({ force = false } = {}) {
+    const key = `${base}|${env.FEZ_USER_ID}`;
+    if (!force && session?.key === key && session.expiresAt > ctx.now().getTime() + 5 * 6e4) return session;
+    const data = await send("POST", "/user/authenticate", { user_id: env.FEZ_USER_ID, password: env.FEZ_PASSWORD });
+    const token = data.authDetails?.authToken;
+    const secretKey = env.FEZ_SECRET_KEY || data.orgDetails?.["secret-key"];
+    if (!token) throw new Error("Fez login worked but returned no authToken.");
+    if (!secretKey) throw new Error("Fez login returned no secret-key; set FEZ_SECRET_KEY.");
+    const expiry = parseFezExpiry(data.authDetails?.expireToken);
+    session = { key, token, secretKey, expiresAt: Number.isFinite(expiry) ? expiry : ctx.now().getTime() + 50 * 6e4 };
+    return session;
+  }
+  __name(login, "login");
+  async function call(method, path, body) {
+    try {
+      return await send(method, path, body, await login());
+    } catch (err) {
+      if (err.status !== 401) throw err;
+      return send(method, path, body, await login({ force: true }));
+    }
+  }
+  __name(call, "call");
   return {
     name: "fez",
-    async book() {
-      throw new Error("Fez integration is not configured yet. Use LOGISTICS_PROVIDER=manual for the pilot.");
+    // POST /order/cost — the amount charged is cost + VAT ("totalCost").
+    async quote({ pickupState, dropoffState, weightKg }) {
+      const data = await call("POST", "/order/cost", { state: dropoffState, pickUpState: pickupState, weight: weightKg });
+      const total = Number(data.totalCost ?? Number(data.cost?.cost ?? data.Cost?.cost) + Number(data.vat?.vatAmount || 0));
+      if (!Number.isFinite(total) || total <= 0) throw new Error(`Fez returned no delivery price for ${dropoffState}.`);
+      return { feeKobo: Math.ceil(total) * 100 };
+    },
+    // POST /order — books the pickup. uniqueID is our order reference, and the buyer's delivery PIN
+    // goes in CustToken (Fez's "token sent to recipient for confirmation of receipt").
+    async book({ order, deal, seller, pin }) {
+      const data = await call("POST", "/order", [
+        {
+          recipientAddress: order.delivery_address,
+          recipientState: order.delivery_state,
+          recipientName: order.buyer_name,
+          recipientPhone: order.buyer_phone,
+          recipientEmail: order.buyer_email,
+          uniqueID: order.ref,
+          BatchID: order.ref,
+          CustToken: pin,
+          itemDescription: `${deal.item_title} (x${deal.quantity})`.slice(0, 250),
+          additionalDetails: [order.delivery_landmark && `Landmark: ${order.delivery_landmark}`, order.packing_note && `Contents: ${order.packing_note}`, "Buyer gives a 4-digit PIN only after checking the item."].filter(Boolean).join(" | "),
+          valueOfItem: String(Math.round(deal.item_price / 100)),
+          weight: deal.weight_kg,
+          pickUpState: deal.pickup_state,
+          pickUpAddress: deal.pickup_address,
+          thirdparty: "true",
+          senderName: seller.business_name,
+          senderAddress: deal.pickup_address,
+          senderPhone: seller.phone,
+          fragile: Boolean(deal.fragile)
+        }
+      ]);
+      const orderNo = data.orderNos?.[order.ref];
+      if (!orderNo) throw new Error(`Fez did not return an order number (${data.description || "no details"}).`);
+      return { deliveryRef: orderNo, riderUrl: null };
+    },
+    // GET /orders/{orderNo}
+    async getStatus(orderNo) {
+      const data = await call("GET", `/orders/${encodeURIComponent(orderNo)}`);
+      const details = Array.isArray(data.orderDetails) ? data.orderDetails[0] : data.orderDetails;
+      if (!details) return null;
+      return { raw: details.orderStatus, stage: mapFezStatus(details.orderStatus), reason: details.returnReason || details.statusDescription || null };
+    },
+    // Fez's status webhook: { orderNumber, status } with X-Timestamp and
+    // X-Signature = SHA-256 HMAC (hex) of orderNo + status + timestamp, keyed with your secret key.
+    // It is only a hint: the status is always re-read with getStatus() before anything changes.
+    async parseWebhook(request, body) {
+      const orderNo = body?.orderNumber || body?.orderNo;
+      const status = body?.status ?? body?.orderStatus ?? "";
+      if (!orderNo) return null;
+      const timestamp = request.headers.get("X-Timestamp") || "";
+      const signature = (request.headers.get("X-Signature") || "").toLowerCase();
+      const { secretKey } = await login();
+      const expected = await hmacHex(secretKey, `${orderNo}${status}${timestamp}`);
+      const fresh = Math.abs(ctx.now().getTime() / 1e3 - Number(timestamp)) < 15 * 60;
+      return { deliveryRef: String(orderNo), signatureValid: safeEqual(signature, expected) && fresh };
+    },
+    // POST /webhooks/store
+    async registerWebhook(url) {
+      return call("POST", "/webhooks/store", { webhook: url });
+    },
+    // POST /order/cancel — only while Fez still allows it (before dispatch).
+    async cancel(orderNo, reason) {
+      return call("POST", "/order/cancel", { orderNo, reason: String(reason).slice(0, 255) });
     }
   };
 }
@@ -598,6 +750,31 @@ var MIGRATIONS = [
   {
     "name": "0002_processing_payouts_identity.sql",
     "sql": "-- Payment processing line (Flutterwave's costs, passed on at cost) stored per deal.\nALTER TABLE deals ADD COLUMN processing_fee INTEGER NOT NULL DEFAULT 0;\n\n-- Payouts: a stable reference per attempt (Flutterwave's idempotency key), the attempt number,\n-- and the earliest time a payout may be sent (after the buyer's payment settles, T+1).\nALTER TABLE ledger ADD COLUMN transfer_ref TEXT;\nALTER TABLE ledger ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1;\nALTER TABLE ledger ADD COLUMN not_before TEXT;\nALTER TABLE ledger ADD COLUMN last_error TEXT;\nCREATE INDEX ledger_status ON ledger(status, not_before);\nCREATE UNIQUE INDEX ledger_transfer_ref ON ledger(transfer_ref) WHERE transfer_ref IS NOT NULL;\n\n-- Each NIN check costs money, so failed attempts are counted and capped.\nALTER TABLE sellers ADD COLUMN id_attempts INTEGER NOT NULL DEFAULT 0;\n"
+  },
+  {
+    "name": "0003_states_and_courier.sql",
+    "sql": `-- Delivery is priced per order by the courier (Fez) from the buyer's address, instead of from
+-- fixed areas chosen by the seller. Links keep the pickup address/state and parcel details;
+-- the final delivery fee, processing fee and seller payout are stored on the order.
+ALTER TABLE deals ADD COLUMN pickup_state TEXT;
+ALTER TABLE deals ADD COLUMN weight_kg INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE deals ADD COLUMN fragile INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sellers ADD COLUMN pickup_state TEXT;
+
+ALTER TABLE orders ADD COLUMN delivery_state TEXT;
+ALTER TABLE orders ADD COLUMN delivery_fee INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN platform_fee INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN processing_fee INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN seller_payout INTEGER NOT NULL DEFAULT 0;
+-- Which courier carries the parcel ("manual" rider link or "fez") and the courier's own status text.
+ALTER TABLE orders ADD COLUMN courier TEXT;
+ALTER TABLE orders ADD COLUMN courier_status TEXT;
+CREATE INDEX orders_delivery_ref ON orders(delivery_ref);
+`
+  },
+  {
+    "name": "0004_seller_sets_delivery_address.sql",
+    "sql": "-- The seller puts the buyer's delivery address on the link (from the chat), so the delivery fee is\n-- known and shown to both sides before anyone pays. The buyer confirms it read-only in step 1.\nALTER TABLE deals ADD COLUMN delivery_address TEXT;\nALTER TABLE deals ADD COLUMN delivery_landmark TEXT;\nALTER TABLE deals ADD COLUMN delivery_state TEXT;\n"
   }
 ];
 
@@ -667,14 +844,15 @@ __name(platformFee, "platformFee");
 var ceilNaira = /* @__PURE__ */ __name((kobo) => Math.ceil(kobo / 100) * 100, "ceilNaira");
 function processingFee({ itemPrice, buyerDelivery, platform, buyerShare }, processing) {
   const r = processing.percent / 100;
-  return ceilNaira((r * (itemPrice + buyerDelivery + buyerShare * platform) + processing.payoutFeeKobo) / (1 - r * buyerShare));
+  const roundingAllowance = buyerShare === 0.5 ? 200 : 0;
+  return ceilNaira((r * (itemPrice + buyerDelivery + buyerShare * platform + roundingAllowance) + processing.payoutFeeKobo) / (1 - r * buyerShare));
 }
 __name(processingFee, "processingFee");
+var buyerPart = /* @__PURE__ */ __name((payer, amount) => payer === "buyer" ? amount : payer === "split" ? Math.ceil(amount / 200) * 100 : 0, "buyerPart");
 function splitCharges({ itemPrice, deliveryFee, deliveryPayer, feePayer, platformFee: pf, processingFee: pr }) {
-  const buyerDelivery = deliveryPayer === "buyer" ? deliveryFee : 0;
-  const share = /* @__PURE__ */ __name((amount) => feePayer === "buyer" ? amount : feePayer === "split" ? Math.ceil(amount / 2) : 0, "share");
-  const buyerPlatformShare = share(pf);
-  const buyerProcessingShare = share(pr);
+  const buyerDelivery = buyerPart(deliveryPayer, deliveryFee);
+  const buyerPlatformShare = buyerPart(feePayer, pf);
+  const buyerProcessingShare = buyerPart(feePayer, pr);
   const buyerFeeShare = buyerPlatformShare + buyerProcessingShare;
   return {
     itemPrice,
@@ -692,41 +870,55 @@ function splitCharges({ itemPrice, deliveryFee, deliveryPayer, feePayer, platfor
   };
 }
 __name(splitCharges, "splitCharges");
-function quote({ itemPrice, deliveryFee, deliveryPayer, feePayer }, fee, processing) {
-  const buyerShare = feePayer === "buyer" ? 1 : feePayer === "split" ? 0.5 : 0;
-  const buyerDelivery = deliveryPayer === "buyer" ? deliveryFee : 0;
-  const pf = platformFee(itemPrice, fee);
-  const pr = processingFee({ itemPrice, buyerDelivery, platform: pf, buyerShare }, processing);
-  return splitCharges({ itemPrice, deliveryFee, deliveryPayer, feePayer, platformFee: pf, processingFee: pr });
-}
-__name(quote, "quote");
 
-// src/lib/zones.js
-var ZONES = [
-  { id: "ikeja", name: "Ikeja / Maryland / Ojota / Ogba", group: "mainland" },
-  { id: "yaba", name: "Yaba / Surulere / Ebute-Metta / Mushin", group: "mainland" },
-  { id: "gbagada", name: "Gbagada / Anthony / Ketu / Magodo", group: "mainland" },
-  { id: "festac", name: "Festac / Amuwo-Odofin / Mile 2 / Satellite Town", group: "mainland" },
-  { id: "ikotun", name: "Ikotun / Egbeda / Idimu / Alimosho", group: "outer" },
-  { id: "ikorodu", name: "Ikorodu", group: "outer" },
-  { id: "island", name: "Lagos Island / Ikoyi / Victoria Island", group: "island" },
-  { id: "lekki", name: "Lekki Phase 1 / Oniru / Ikate / Chevron", group: "island" },
-  { id: "ajah", name: "Ajah / Sangotedo / Abraham Adesanya", group: "far_island" }
+// src/lib/states.js
+var STATES = [
+  "Abia",
+  "Adamawa",
+  "Akwa Ibom",
+  "Anambra",
+  "Bauchi",
+  "Bayelsa",
+  "Benue",
+  "Borno",
+  "Cross River",
+  "Delta",
+  "Ebonyi",
+  "Edo",
+  "Ekiti",
+  "Enugu",
+  "FCT",
+  "Gombe",
+  "Imo",
+  "Jigawa",
+  "Kaduna",
+  "Kano",
+  "Katsina",
+  "Kebbi",
+  "Kogi",
+  "Kwara",
+  "Lagos",
+  "Nasarawa",
+  "Niger",
+  "Ogun",
+  "Ondo",
+  "Osun",
+  "Oyo",
+  "Plateau",
+  "Rivers",
+  "Sokoto",
+  "Taraba",
+  "Yobe",
+  "Zamfara"
 ];
-var NAIRA = {
-  mainland: { mainland: 2500, outer: 3500, island: 3500, far_island: 4500 },
-  outer: { mainland: 3500, outer: 3500, island: 4500, far_island: 5500 },
-  island: { mainland: 3500, outer: 4500, island: 2500, far_island: 3500 },
-  far_island: { mainland: 4500, outer: 5500, island: 3500, far_island: 3e3 }
-};
-var zoneById = /* @__PURE__ */ __name((id) => ZONES.find((z) => z.id === id) || null, "zoneById");
-function deliveryFeeKobo(fromZoneId, toZoneId) {
-  const from = zoneById(fromZoneId);
-  const to = zoneById(toZoneId);
-  if (!from || !to) return null;
-  return NAIRA[from.group][to.group] * 100;
+var ALIASES = { abuja: "FCT", "federal capital territory": "FCT", "fct abuja": "FCT", "abuja fct": "FCT", nassarawa: "Nasarawa" };
+function normaliseState(input) {
+  const s = String(input ?? "").trim().toLowerCase().replace(/\s+state$/, "").replace(/\s+/g, " ");
+  if (!s) return null;
+  if (ALIASES[s]) return ALIASES[s];
+  return STATES.find((st) => st.toLowerCase() === s) || null;
 }
-__name(deliveryFeeKobo, "deliveryFeeKobo");
+__name(normaliseState, "normaliseState");
 
 // src/lib/terms.js
 var TERMS_VERSION = "2026-10-pilot-1";
@@ -759,7 +951,14 @@ async function snapshotTerms(deal, seller) {
       fee_payer: deal.fee_payer,
       buyer_total: deal.buyer_total
     },
-    delivery: { area: zoneById(deal.delivery_zone)?.name || deal.delivery_zone, ship_within_days: deal.delivery_days },
+    delivery: {
+      address: deal.delivery_address,
+      landmark: deal.delivery_landmark,
+      state: deal.delivery_state,
+      ships_from: deal.pickup_state,
+      ship_within_days: deal.delivery_days,
+      weight_kg: deal.weight_kg
+    },
     inspection_hours: deal.inspection_hours,
     rules: RULES(deal)
   };
@@ -783,6 +982,7 @@ var BUYER_DISPUTE_CATEGORIES = {
 var DISPUTE_CATEGORIES = {
   ...BUYER_DISPUTE_CATEGORIES,
   refused_at_door: "Refused at the door",
+  returned_by_courier: "Returned by the courier",
   not_shipped: "Seller did not ship in time",
   seller_issue: "Raised by seller"
 };
@@ -871,6 +1071,51 @@ function fmtDate(d) {
 __name(fmtDate, "fmtDate");
 
 // src/core/deals.js
+var PAYERS = ["buyer", "seller", "split"];
+function pricingInput(ctx, input) {
+  const itemPrice = nairaToKobo(input.item_price);
+  if (itemPrice == null || itemPrice < 500 * 100) throw new UserError("Price must be at least \u20A6500.");
+  if (itemPrice > ctx.config.maxDealKobo) {
+    throw new UserError(`During the pilot, deals are limited to ${formatNaira(ctx.config.maxDealKobo)}.`);
+  }
+  const pickupState = normaliseState(input.pickup_state);
+  if (!pickupState) throw new UserError("Enter the state you ship from (one of the 36 states or FCT).");
+  const deliveryState = normaliseState(input.delivery_state);
+  if (!deliveryState) throw new UserError("Enter the buyer's state (one of the 36 states or FCT).");
+  const weightKg = Math.ceil(Number(input.weight_kg ?? 1));
+  if (!Number.isFinite(weightKg) || weightKg < 1 || weightKg > 100) throw new UserError("Parcel weight must be 1 to 100 kg.");
+  const deliveryPayer = str(input.delivery_payer);
+  const feePayer = str(input.fee_payer);
+  if (!PAYERS.includes(deliveryPayer)) throw new UserError("Choose who pays for delivery.");
+  if (!PAYERS.includes(feePayer)) throw new UserError("Choose who pays the TrustGap fee.");
+  return { itemPrice, pickupState, deliveryState, weightKg, deliveryPayer, feePayer };
+}
+__name(pricingInput, "pricingInput");
+async function priceDeal(ctx, p) {
+  let deliveryFee;
+  try {
+    ({ feeKobo: deliveryFee } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
+  } catch (err) {
+    throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
+  }
+  const pf = platformFee(p.itemPrice, ctx.config.fee);
+  const buyerShare = p.feePayer === "buyer" ? 1 : p.feePayer === "split" ? 0.5 : 0;
+  const pr = processingFee(
+    { itemPrice: p.itemPrice, buyerDelivery: buyerPart(p.deliveryPayer, deliveryFee), platform: pf, buyerShare },
+    ctx.config.processing
+  );
+  const q = splitCharges({ itemPrice: p.itemPrice, deliveryFee, deliveryPayer: p.deliveryPayer, feePayer: p.feePayer, platformFee: pf, processingFee: pr });
+  if (q.sellerPayout <= 0) {
+    throw new UserError(`Delivery to ${p.deliveryState} plus fees is more than you would receive. Adjust the price or who pays.`);
+  }
+  return q;
+}
+__name(priceDeal, "priceDeal");
+async function previewDeal(ctx, input) {
+  const p = pricingInput(ctx, input);
+  return { pickup_state: p.pickupState, delivery_state: p.deliveryState, price: await priceDeal(ctx, p) };
+}
+__name(previewDeal, "previewDeal");
 async function createDeal(ctx, seller, input) {
   if (seller.suspended_at) throw new UserError("Your account is suspended. Contact support.");
   if (!seller.payout_verified_at) throw new UserError("Add and verify your payout bank account before creating links.");
@@ -886,27 +1131,16 @@ async function createDeal(ctx, seller, input) {
   if (!CONDITIONS.includes(itemCondition)) throw new UserError("Choose the item condition.");
   const quantity = Number(input.quantity || 1);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) throw new UserError("Quantity must be 1 to 100.");
-  const itemPrice = nairaToKobo(input.item_price);
-  if (itemPrice == null || itemPrice < 500 * 100) throw new UserError("Price must be at least \u20A6500.");
-  if (itemPrice > ctx.config.maxDealKobo) {
-    throw new UserError(`During the pilot, deals are limited to ${formatNaira(ctx.config.maxDealKobo)}.`);
-  }
   const pickupAddress = requireLength(input.pickup_address, "Pickup address", 10, 300);
-  const pickupZone = str(input.pickup_zone);
-  const deliveryZone = str(input.delivery_zone);
-  if (!zoneById(pickupZone)) throw new UserError("Choose your pickup area.");
-  if (!zoneById(deliveryZone)) throw new UserError("Choose the buyer's delivery area.");
-  const deliveryPayer = str(input.delivery_payer);
-  const feePayer = str(input.fee_payer);
-  if (!["buyer", "seller"].includes(deliveryPayer)) throw new UserError("Choose who pays for delivery.");
-  if (!["buyer", "seller", "split"].includes(feePayer)) throw new UserError("Choose who pays the TrustGap fee.");
+  const deliveryAddress = requireLength(input.delivery_address, "Buyer's delivery address", 10, 300);
+  const deliveryLandmark = str(input.delivery_landmark).slice(0, 200);
+  const fragile = input.fragile === true || input.fragile === "yes" || input.fragile === "on";
   const deliveryDays = Number(input.delivery_days || 2);
   if (!Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > 7) throw new UserError("Ship-within must be 1 to 7 days.");
   const expiresHours = Number(input.expires_hours || 24);
   if (!EXPIRY_OPTIONS.includes(expiresHours)) throw new UserError("Choose when the link expires.");
-  const deliveryFee = deliveryFeeKobo(pickupZone, deliveryZone);
-  const q = quote({ itemPrice, deliveryFee, deliveryPayer, feePayer }, ctx.config.fee, ctx.config.processing);
-  if (q.sellerPayout <= 0) throw new UserError("After delivery and fees you would receive nothing. Adjust the price or who pays.");
+  const p = pricingInput(ctx, input);
+  const q = await priceDeal(ctx, p);
   const now = ctx.now();
   const token = randomToken(12);
   const statements = [];
@@ -927,13 +1161,21 @@ async function createDeal(ctx, seller, input) {
       item_description: itemDescription,
       item_condition: itemCondition,
       quantity,
-      item_price: itemPrice,
+      item_price: p.itemPrice,
       pickup_address: pickupAddress,
-      pickup_zone: pickupZone,
-      delivery_zone: deliveryZone,
-      delivery_fee: deliveryFee,
-      delivery_payer: deliveryPayer,
-      fee_payer: feePayer,
+      pickup_zone: p.pickupState,
+      // legacy column, kept filled
+      pickup_state: p.pickupState,
+      weight_kg: p.weightKg,
+      fragile,
+      delivery_address: deliveryAddress,
+      delivery_landmark: deliveryLandmark || null,
+      delivery_state: p.deliveryState,
+      delivery_zone: p.deliveryState,
+      // legacy column, kept filled
+      delivery_fee: q.deliveryFee,
+      delivery_payer: p.deliveryPayer,
+      fee_payer: p.feePayer,
       platform_fee: q.platformFee,
       processing_fee: q.processingFee,
       buyer_total: q.buyerTotal,
@@ -944,7 +1186,7 @@ async function createDeal(ctx, seller, input) {
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now)
     }),
-    updateStmt(ctx.env, "sellers", seller.id, { pickup_address: pickupAddress, pickup_zone: pickupZone })
+    updateStmt(ctx.env, "sellers", seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState })
   );
   await ctx.env.DB.batch(statements);
   return first(ctx.env, "SELECT * FROM deals WHERE token = ?", token);
@@ -985,7 +1227,9 @@ async function publicDealView(ctx, deal) {
     item_description: deal.item_description,
     item_condition: deal.item_condition,
     quantity: deal.quantity,
-    delivery_area: zoneById(deal.delivery_zone)?.name,
+    ships_from: deal.pickup_state,
+    delivery: { address: deal.delivery_address, landmark: deal.delivery_landmark, state: deal.delivery_state },
+    delivery_payer: deal.delivery_payer,
     delivery_days: deal.delivery_days,
     inspection_hours: deal.inspection_hours,
     expires_at: deal.expires_at,
@@ -993,10 +1237,9 @@ async function publicDealView(ctx, deal) {
     price: {
       item: q.itemPrice,
       delivery: q.buyerDelivery,
-      delivery_paid_by_seller: q.sellerDelivery > 0,
+      delivery_full: q.deliveryFee,
       platform_fee: q.buyerPlatformShare,
       processing_fee: q.buyerProcessingShare,
-      fee_paid_by_seller: q.buyerFeeShare === 0,
       total: q.buyerTotal
     }
   };
@@ -1038,11 +1281,6 @@ async function placeOrder(ctx, { deal, input }) {
   if (buyerName.split(/\s+/).length < 2) throw new UserError("Enter your full name (first and last name).");
   const buyerPhone = normalisePhone(input.buyer_phone);
   const buyerEmail = validEmail(input.buyer_email);
-  const deliveryAddress = requireLength(input.delivery_address, "Delivery address", 10, 300);
-  const deliveryLandmark = str(input.delivery_landmark).slice(0, 200);
-  if (input.confirm_area !== true && input.confirm_area !== "yes") {
-    throw new UserError("Confirm that your address is in the delivery area shown.");
-  }
   const bankCode = str(input.refund_bank_code);
   const accountNumber = str(input.refund_account_number);
   if (!/^\d{10}$/.test(accountNumber)) throw new UserError("Refund account number must be 10 digits.");
@@ -1059,6 +1297,9 @@ async function placeOrder(ctx, { deal, input }) {
       `The refund account belongs to "${accountName}". Refunds can only go to an account in your own name \u2014 use your own account, or enter your name exactly as your bank has it.`
     );
   }
+  if (input.expected_total !== void 0 && Number(input.expected_total) !== deal.buyer_total) {
+    throw new UserError(`This deal now costs ${formatNaira(deal.buyer_total)}. Please go back to step 1 and check it again.`, 409);
+  }
   const fresh = await refreshDeal(ctx, await getDeal(ctx, deal.id));
   if (fresh.status !== "open") throw new UserError("This link is no longer available.", 410);
   const id = await insert(ctx.env, "orders", {
@@ -1069,8 +1310,13 @@ async function placeOrder(ctx, { deal, input }) {
     buyer_name: buyerName,
     buyer_phone: buyerPhone,
     buyer_email: buyerEmail,
-    delivery_address: deliveryAddress,
-    delivery_landmark: deliveryLandmark || null,
+    delivery_address: deal.delivery_address,
+    delivery_landmark: deal.delivery_landmark,
+    delivery_state: deal.delivery_state,
+    delivery_fee: deal.delivery_fee,
+    platform_fee: deal.platform_fee,
+    processing_fee: deal.processing_fee,
+    seller_payout: deal.seller_payout,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
     refund_account_enc: await encrypt(accountNumber, ctx.config.appSecret),
@@ -1218,20 +1464,27 @@ async function bookPickup(ctx, seller, orderId, packingNote) {
   if (!won) throw new UserError("Pickup can only be booked for a paid order that has not shipped.");
   let booking;
   try {
-    booking = await ctx.logistics.book({ order: { ...order, packing_note: note }, deal, seller });
+    booking = await ctx.logistics.book({ order: { ...order, packing_note: note }, deal, seller, pin: await revealPin(ctx, order) });
   } catch (err) {
     await update(ctx.env, "orders", order.id, { status: "paid", delivery_status: "not_booked", dispatched_at: null });
     throw new UserError(`Could not book the courier: ${err.message}`);
   }
   await ctx.env.DB.batch([
-    stmt(ctx.env, "UPDATE orders SET delivery_status = 'booked', delivery_ref = ?, rider_url = ? WHERE id = ?", booking.deliveryRef, booking.riderUrl || null, order.id),
+    stmt(
+      ctx.env,
+      "UPDATE orders SET delivery_status = 'booked', delivery_ref = ?, rider_url = ?, courier = ? WHERE id = ?",
+      booking.deliveryRef,
+      booking.riderUrl || null,
+      ctx.logistics.name,
+      order.id
+    ),
     stmt(
       ctx.env,
       "INSERT INTO ledger (order_id, kind, amount, counterparty, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       order.id,
       "delivery_cost",
-      deal.delivery_fee,
-      "courier",
+      order.delivery_fee,
+      ctx.logistics.name,
       "pending",
       iso(ctx.now())
     )
@@ -1296,6 +1549,10 @@ async function verifyDeliveryPin(ctx, order, pin, actor) {
     await logEvent(ctx, order.id, actor, "wrong_pin");
     throw new UserError(`Wrong PIN. ${ctx.config.pinMaxAttempts - order.pin_attempts - 1} attempt(s) left.`);
   }
+  if (!await markDelivered(ctx, order, actor, "delivered_with_pin")) throw new UserError("This order was already updated.");
+}
+__name(verifyDeliveryPin, "verifyDeliveryPin");
+async function markDelivered(ctx, order, actor, eventType) {
   const deal = await getDeal(ctx, order.deal_id);
   const now = ctx.now();
   const ends = addHours(now, deal.inspection_hours);
@@ -1306,10 +1563,10 @@ async function verifyDeliveryPin(ctx, order, pin, actor) {
     { status: "delivered", delivery_status: "delivered", delivered_at: iso(now), inspection_ends_at: iso(ends) },
     (h) => [
       h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'delivery_cost'", order.id),
-      h.event(actor, "delivered_with_pin")
+      h.event(actor, eventType)
     ]
   );
-  if (!won) throw new UserError("This order was already updated.");
+  if (!won) return false;
   const seller = await getSeller(ctx, order.seller_id);
   await ctx.notify.send({
     orderId: order.id,
@@ -1323,8 +1580,43 @@ async function verifyDeliveryPin(ctx, order, pin, actor) {
     phone: seller.phone,
     sms: `TrustGap: order ${order.ref} was delivered. Your payout is released when the buyer confirms or at ${fmtDate(ends)}, unless they report a problem.`
   });
+  return true;
 }
-__name(verifyDeliveryPin, "verifyDeliveryPin");
+__name(markDelivered, "markDelivered");
+var STAGE_RANK = { booked: 1, picked_up: 2, out_for_delivery: 3 };
+async function syncCourierStatus(ctx, order) {
+  if (!order.delivery_ref || order.courier !== ctx.logistics.name) return null;
+  const st = await ctx.logistics.getStatus(order.delivery_ref);
+  if (!st) return null;
+  if (st.raw && st.raw !== order.courier_status) {
+    await update(ctx.env, "orders", order.id, { courier_status: st.raw });
+    await logEvent(ctx, order.id, "courier", "courier_status", st.reason ? `${st.raw}: ${st.reason}` : st.raw);
+  }
+  if (st.stage === "delivered") {
+    if (order.status === "shipping") await markDelivered(ctx, order, "courier", "delivered_by_courier");
+  } else if (STAGE_RANK[st.stage] && (STAGE_RANK[order.delivery_status] || 0) < STAGE_RANK[st.stage]) {
+    await run(ctx.env, "UPDATE orders SET delivery_status = ? WHERE id = ? AND status = 'shipping'", st.stage, order.id);
+    if (st.stage === "out_for_delivery") {
+      await ctx.notify.send({
+        orderId: order.id,
+        event: "delivery_out_for_delivery",
+        phone: order.buyer_phone,
+        sms: `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.`
+      });
+    }
+  } else if (st.stage === "returned" && order.delivery_status !== "returned") {
+    await update(ctx.env, "orders", order.id, { delivery_status: "returned" });
+    if (order.status === "shipping") {
+      await openDispute(ctx, await getOrder(ctx, order.id), {
+        by: "courier",
+        category: "returned_by_courier",
+        description: `The courier returned the parcel${st.reason ? `: ${st.reason}` : ""}.`
+      });
+    }
+  }
+  return st;
+}
+__name(syncCourierStatus, "syncCourierStatus");
 async function openDispute(ctx, order, { by, category, description }) {
   if (!DISPUTE_CATEGORIES[category]) throw new UserError("Choose what went wrong.");
   const text = str(description).slice(0, 2e3);
@@ -1392,18 +1684,17 @@ async function resolveDispute(ctx, disputeId, input) {
 __name(resolveDispute, "resolveDispute");
 async function releaseToSeller(ctx, order, reason) {
   if (order.status !== "delivered") throw new UserError("Payment can only be released after delivery.");
-  const deal = await getDeal(ctx, order.deal_id);
   const seller = await getSeller(ctx, order.seller_id);
-  const recovered = Math.min(seller.amount_owed, deal.seller_payout);
-  const payout = deal.seller_payout - recovered;
+  const recovered = Math.min(seller.amount_owed, order.seller_payout);
+  const payout = order.seller_payout - recovered;
   const settles = settlesAt(ctx, order.paid_at);
   const won = await transition(ctx, order.id, ["delivered"], { status: "completed", closed_at: iso(ctx.now()) }, (h) => [
     ...recovered > 0 ? [
       h.sql("UPDATE sellers SET amount_owed = amount_owed - ? WHERE id = ?", recovered, seller.id),
       h.insert("ledger", ledgerRow(ctx, order.id, "debt_recovered", recovered, "seller", "success"))
     ] : [],
-    h.insert("ledger", ledgerRow(ctx, order.id, "platform_fee", deal.platform_fee, "trustgap", "success")),
-    h.insert("ledger", ledgerRow(ctx, order.id, "processing_fee", deal.processing_fee, "flutterwave", "success")),
+    h.insert("ledger", ledgerRow(ctx, order.id, "platform_fee", order.platform_fee, "trustgap", "success")),
+    h.insert("ledger", ledgerRow(ctx, order.id, "processing_fee", order.processing_fee, "flutterwave", "success")),
     ...payout > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "seller_payout", payout, "seller", "pending", iso(settles)))] : [],
     h.event(reason === "buyer_confirmed" ? "buyer" : "system", reason)
   ]);
@@ -1541,7 +1832,8 @@ function publicRoutes(r) {
     processing: ctx.config.processing,
     max_deal: ctx.config.maxDealKobo,
     inspection_hours: ctx.config.inspectionHours,
-    zones: ZONES.map(({ id, name }) => ({ id, name })),
+    states: STATES,
+    courier: ctx.logistics.name,
     conditions: CONDITIONS,
     expiry_options: EXPIRY_OPTIONS,
     dispute_categories: BUYER_DISPUTE_CATEGORIES,
@@ -1569,6 +1861,14 @@ function publicRoutes(r) {
     if (!hint) return new Response("unauthorized", { status: 401 });
     if (hint.kind === "transfer") await settleTransfer(ctx, hint);
     else await confirmPayment(ctx, hint.txRef, "webhook");
+    return new Response("ok");
+  });
+  r.post("/webhooks/fez", async ({ ctx, request, body }) => {
+    const hint = await ctx.logistics.parseWebhook(request, body);
+    if (!hint) return new Response("ignored", { status: 200 });
+    if (!hint.signatureValid) console.warn("Fez webhook signature did not verify; re-checking status with Fez anyway", hint.deliveryRef);
+    const order = await first(ctx.env, "SELECT * FROM orders WHERE delivery_ref = ?", hint.deliveryRef);
+    if (order) await syncCourierStatus(ctx, order);
     return new Response("ok");
   });
   r.get("/mock/pay/:txRef", async ({ ctx, params }) => {
@@ -1606,7 +1906,9 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         item_title: deal.item_title,
         seller_name: seller.business_name,
         seller_phone: seller.phone,
-        delivery_area: zoneById(deal.delivery_zone)?.name,
+        delivery_state: o.delivery_state,
+        delivery_address: o.delivery_address,
+        courier_status: o.courier_status,
         delivery_status: o.delivery_status,
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         pin: ["paid", "shipping"].includes(o.status) ? await revealPin(ctx, o) : null,
@@ -1614,6 +1916,13 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         delivered_at: o.delivered_at,
         inspection_ends_at: o.inspection_ends_at,
         refund_account: `${o.refund_bank_name} \u2022\u2022\u2022\u2022${o.refund_account_last4}`,
+        price: {
+          item: deal.item_price,
+          delivery: buyerPart(deal.delivery_payer, o.delivery_fee),
+          platform_fee: buyerPart(deal.fee_payer, o.platform_fee),
+          processing_fee: buyerPart(deal.fee_payer, o.processing_fee),
+          total: o.amount
+        },
         terms_hash: o.terms_hash,
         terms_accepted_at: o.terms_accepted_at,
         rules: JSON.parse(o.terms_json).rules,
@@ -1734,8 +2043,8 @@ async function authenticate(ctx, request) {
   return first(ctx.env, "SELECT * FROM sessions WHERE token_hash = ? AND expires_at > ?", await sha256Hex(m[1]), iso(ctx.now()));
 }
 __name(authenticate, "authenticate");
-async function logout(ctx, session) {
-  if (session) await run(ctx.env, "DELETE FROM sessions WHERE token_hash = ?", session.token_hash);
+async function logout(ctx, session2) {
+  if (session2) await run(ctx.env, "DELETE FROM sessions WHERE token_hash = ?", session2.token_hash);
 }
 __name(logout, "logout");
 async function adminLogin(ctx, input) {
@@ -1759,7 +2068,7 @@ function sellerView(s) {
     phone: s.phone,
     email: s.email,
     pickup_address: s.pickup_address,
-    pickup_zone: s.pickup_zone,
+    pickup_state: s.pickup_state,
     payout: s.payout_verified_at ? { bank_name: s.payout_bank_name, account_number: s.payout_account_number, account_name: s.payout_account_name } : null,
     identity_verified: Boolean(s.identity_verified_at),
     identity_verified_at: s.identity_verified_at,
@@ -1839,11 +2148,11 @@ __name(verifyIdentity, "verifyIdentity");
 
 // src/routes/seller.js
 async function requireSeller(ctx, request) {
-  const session = await authenticate(ctx, request);
-  if (!session?.seller_id) throw new UserError("Please log in.", 401);
-  const seller = await getSeller(ctx, session.seller_id);
+  const session2 = await authenticate(ctx, request);
+  if (!session2?.seller_id) throw new UserError("Please log in.", 401);
+  const seller = await getSeller(ctx, session2.seller_id);
   if (!seller) throw new UserError("Please log in.", 401);
-  return { session, seller };
+  return { session: session2, seller };
 }
 __name(requireSeller, "requireSeller");
 var dealView = /* @__PURE__ */ __name((ctx, d) => ({
@@ -1855,8 +2164,12 @@ var dealView = /* @__PURE__ */ __name((ctx, d) => ({
   item_condition: d.item_condition,
   quantity: d.quantity,
   pickup_address: d.pickup_address,
-  pickup_area: zoneById(d.pickup_zone)?.name,
-  delivery_area: zoneById(d.delivery_zone)?.name,
+  pickup_state: d.pickup_state,
+  delivery_address: d.delivery_address,
+  delivery_landmark: d.delivery_landmark,
+  delivery_state: d.delivery_state,
+  weight_kg: d.weight_kg,
+  fragile: Boolean(d.fragile),
   delivery_payer: d.delivery_payer,
   fee_payer: d.fee_payer,
   delivery_days: d.delivery_days,
@@ -1883,7 +2196,7 @@ function sellerRoutes(r) {
     const { seller } = await requireSeller(ctx, request);
     const orders = await all(
       ctx.env,
-      `SELECT o.id, o.ref, o.status, o.buyer_name, o.paid_at, o.amount, d.item_title, d.seller_payout
+      `SELECT o.id, o.ref, o.status, o.buyer_name, o.paid_at, o.amount, o.seller_payout, d.item_title
        FROM orders o JOIN deals d ON d.id = o.deal_id
        WHERE o.seller_id = ? AND o.status NOT IN ('awaiting_payment', 'cancelled', 'duplicate_refunded')
        ORDER BY o.id DESC LIMIT 50`,
@@ -1903,6 +2216,10 @@ function sellerRoutes(r) {
       orders,
       deals
     };
+  });
+  r.post("/api/seller/quote", async ({ ctx, request, body }) => {
+    await requireSeller(ctx, request);
+    return previewDeal(ctx, body);
   });
   r.post("/api/seller/deals", async ({ ctx, request, body }) => {
     const deal = await createDeal(ctx, (await requireSeller(ctx, request)).seller, body);
@@ -1931,9 +2248,12 @@ function sellerRoutes(r) {
         ref: o.ref,
         status: o.status,
         item_title: d.item_title,
-        seller_payout: d.seller_payout,
+        seller_payout: o.seller_payout,
+        delivery_fee: o.delivery_fee,
+        delivery_payer: d.delivery_payer,
+        courier_status: o.courier_status,
         buyer_name: o.buyer_name,
-        delivery_area: zoneById(d.delivery_zone)?.name,
+        delivery_state: o.delivery_state,
         delivery_status: o.delivery_status,
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         packing_note: o.packing_note,
@@ -1955,7 +2275,7 @@ __name(sellerRoutes, "sellerRoutes");
 // src/core/jobs.js
 async function runJobs(ctx) {
   const now = iso(ctx.now());
-  const result = { expired: 0, cancelled: 0, released: 0, notShipped: 0, transfersSent: 0, transfersChecked: 0, resent: 0 };
+  const result = { expired: 0, cancelled: 0, released: 0, notShipped: 0, couriersChecked: 0, transfersSent: 0, transfersChecked: 0, resent: 0 };
   result.expired = (await run(ctx.env, "UPDATE deals SET status = 'expired' WHERE status = 'open' AND expires_at <= ?", now)).meta.changes;
   const staleBefore = iso(new Date(ctx.now().getTime() - ctx.config.paymentTimeoutMinutes * 2 * 6e4));
   for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'awaiting_payment' AND created_at <= ? LIMIT 50", staleBefore)) {
@@ -1971,6 +2291,13 @@ async function runJobs(ctx) {
   for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'paid' AND ship_by <= ? LIMIT 50", now)) {
     await openDispute(ctx, o, { by: "system", category: "not_shipped", description: "The seller did not book pickup within the agreed time." });
     result.notShipped++;
+  }
+  for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'shipping' AND courier = ? AND delivery_ref IS NOT NULL LIMIT 30", ctx.logistics.name)) {
+    try {
+      if (await syncCourierStatus(ctx, o)) result.couriersChecked++;
+    } catch (err) {
+      console.error("courier status check failed", o.ref, err.message);
+    }
   }
   for (const l of await all(
     ctx.env,
@@ -2004,7 +2331,7 @@ var naira = /* @__PURE__ */ __name((kobo) => kobo == null ? "" : kobo / 100, "na
 var ROW_LIMIT = 5e3;
 var TABS = {
   Orders: {
-    sql: `SELECT o.*, d.item_title, d.delivery_zone, d.seller_payout, s.business_name
+    sql: `SELECT o.*, d.item_title, s.business_name
           FROM orders o JOIN deals d ON d.id = o.deal_id JOIN sellers s ON s.id = o.seller_id
           WHERE o.status != 'cancelled' ORDER BY o.id DESC LIMIT ${ROW_LIMIT}`,
     header: [
@@ -2014,7 +2341,7 @@ var TABS = {
       "Seller",
       "Buyer",
       "Buyer phone",
-      "Delivery area",
+      "Delivery state",
       "Paid (\u20A6)",
       "Seller gets (\u20A6)",
       "Delivery",
@@ -2030,7 +2357,7 @@ var TABS = {
       o.business_name,
       o.buyer_name,
       o.buyer_phone,
-      zoneById(o.delivery_zone)?.name || o.delivery_zone,
+      o.delivery_state || "",
       naira(o.amount),
       naira(o.seller_payout),
       o.delivery_status,
@@ -2159,8 +2486,8 @@ __name(syncSheets, "syncSheets");
 
 // src/routes/admin.js
 async function requireAdmin(ctx, request) {
-  const session = await authenticate(ctx, request);
-  if (!session?.is_admin) throw new UserError("Admin login required.", 401);
+  const session2 = await authenticate(ctx, request);
+  if (!session2?.is_admin) throw new UserError("Admin login required.", 401);
 }
 __name(requireAdmin, "requireAdmin");
 async function riderOrder(ctx, token) {
@@ -2231,10 +2558,9 @@ function adminRoutes(r) {
       order: {
         ...order,
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
-        track_url: trackUrl(ctx, o),
-        delivery_area: zoneById(d.delivery_zone)?.name
+        track_url: trackUrl(ctx, o)
       },
-      deal: { ...d, pickup_area: zoneById(d.pickup_zone)?.name, delivery_area: zoneById(d.delivery_zone)?.name },
+      deal: d,
       seller: {
         id: s.id,
         business_name: s.business_name,
@@ -2294,6 +2620,18 @@ function adminRoutes(r) {
     sheets_synced_at: (await first(ctx.env, "SELECT value FROM meta WHERE key = 'sheets_synced_at'"))?.value || null
   })));
   r.post("/api/admin/ledger/:id/retry", admin(async ({ ctx, params }) => ({ entry: await sendTransfer(ctx, Number(params.id), { manual: true }) })));
+  r.post("/api/admin/orders/:id/sync-courier", admin(async ({ ctx, params }) => {
+    const o = await getOrder(ctx, Number(params.id));
+    if (!o) throw notFound("Order not found.");
+    const st = await syncCourierStatus(ctx, o);
+    return { status: st ? st.raw : "No courier status (manual rider, or not booked yet)." };
+  }));
+  r.post("/api/admin/courier/register-webhook", admin(async ({ ctx }) => {
+    if (!ctx.logistics.registerWebhook) throw new UserError("Webhooks are only needed with LOGISTICS_PROVIDER=fez.");
+    const url = `${ctx.config.apiUrl}/webhooks/fez`;
+    await ctx.logistics.registerWebhook(url);
+    return { registered: url };
+  }));
   r.post("/api/admin/jobs", admin(async ({ ctx }) => ({ result: await runJobs(ctx) })));
   r.post("/api/admin/sync-sheets", admin(async ({ ctx }) => ({ result: await syncSheets(ctx) })));
 }

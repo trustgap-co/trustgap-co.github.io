@@ -1,5 +1,4 @@
 import { all, first, run } from '../lib/db.js';
-import { zoneById } from '../lib/zones.js';
 
 // Read-only copy of the database into Google Sheets for viewing and reporting.
 // D1 stays the source of truth: edits made in the sheet are overwritten on the next sync.
@@ -10,12 +9,12 @@ const ROW_LIMIT = 5000;
 
 const TABS = {
   Orders: {
-    sql: `SELECT o.*, d.item_title, d.delivery_zone, d.seller_payout, s.business_name
+    sql: `SELECT o.*, d.item_title, s.business_name
           FROM orders o JOIN deals d ON d.id = o.deal_id JOIN sellers s ON s.id = o.seller_id
           WHERE o.status != 'cancelled' ORDER BY o.id DESC LIMIT ${ROW_LIMIT}`,
-    header: ['Ref', 'Status', 'Item', 'Seller', 'Buyer', 'Buyer phone', 'Delivery area', 'Paid (₦)', 'Seller gets (₦)',
+    header: ['Ref', 'Status', 'Item', 'Seller', 'Buyer', 'Buyer phone', 'Delivery state', 'Paid (₦)', 'Seller gets (₦)',
       'Delivery', 'Paid at', 'Delivered at', 'Closed at', 'Created at'],
-    row: (o) => [o.ref, o.status, o.item_title, o.business_name, o.buyer_name, o.buyer_phone, zoneById(o.delivery_zone)?.name || o.delivery_zone,
+    row: (o) => [o.ref, o.status, o.item_title, o.business_name, o.buyer_name, o.buyer_phone, o.delivery_state || '',
       naira(o.amount), naira(o.seller_payout), o.delivery_status, o.paid_at, o.delivered_at, o.closed_at, o.created_at],
   },
   Sellers: {

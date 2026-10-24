@@ -1,5 +1,4 @@
 import { sha256Hex } from './crypto.js';
-import { zoneById } from './zones.js';
 
 export const TERMS_VERSION = '2026-10-pilot-1';
 
@@ -34,7 +33,14 @@ export async function snapshotTerms(deal, seller) {
       fee_payer: deal.fee_payer,
       buyer_total: deal.buyer_total,
     },
-    delivery: { area: zoneById(deal.delivery_zone)?.name || deal.delivery_zone, ship_within_days: deal.delivery_days },
+    delivery: {
+      address: deal.delivery_address,
+      landmark: deal.delivery_landmark,
+      state: deal.delivery_state,
+      ships_from: deal.pickup_state,
+      ship_within_days: deal.delivery_days,
+      weight_kg: deal.weight_kg,
+    },
     inspection_hours: deal.inspection_hours,
     rules: RULES(deal),
   };

@@ -27,6 +27,13 @@ export function loadConfig(env) {
     maxTransferAttempts: 3,
     maxIdentityAttempts: 3,
     maxDealKobo: num(env.MAX_DEAL_NAIRA, 300000) * 100,
+    // Delivery prices used when LOGISTICS_PROVIDER=manual (your own riders). With Fez, the price
+    // comes from Fez's /order/cost for the buyer's state instead.
+    manualDelivery: {
+      sameStateKobo: num(env.DELIVERY_SAME_STATE_NAIRA, 3000) * 100,
+      otherStateKobo: num(env.DELIVERY_OTHER_STATE_NAIRA, 6000) * 100,
+      vatPercent: num(env.DELIVERY_VAT_PERCENT, 7.5),
+    },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,

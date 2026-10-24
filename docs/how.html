@@ -3,42 +3,171 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>How it works · TrustGap</title>
-    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <title>How TrustGap works · Agree. Secure. Deliver. Inspect. Release.</title>
+  <meta name="description" content="The full TrustGap process: what “payment secured” means, when the seller may dispatch, every delivery status, the inspection window, and what happens when something goes wrong.">
+  <meta property="og:image" content="https://trustgap-co.github.io/assets/images/og-image.jpg">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"></noscript>
   <meta name="theme-color" content="#0B1B3D">
   <link rel="stylesheet" href="assets/styles.css">
+  <link rel="preconnect" href="https://trustgap-api.trustgap-co.workers.dev" crossorigin>
 </head>
-<body>
-  <main id="app">
-    <section class="card">
-      <h1>How TrustGap protects both sides</h1>
-      <h2>For buyers</h2>
-      <ul>
-        <li>You see the exact item, condition, price, delivery fee and rules before you pay. That version is saved and can’t be changed.</li>
-        <li>Your money is held until the item reaches you. You get a 4-digit delivery PIN — only give it to the rider after checking the item.</li>
-        <li>After delivery you have a short inspection window to report hidden problems.</li>
-        <li>Wrong, fake or damaged item? It goes back and you’re refunded to your own bank account.</li>
+<body class="site">
+<main id="app">
+
+  <section class="page-hero">
+    <div class="container">
+      <p class="eyebrow">How it works</p>
+      <h1>Agree. Secure. Deliver. Inspect. Release.</h1>
+      <p>Every TrustGap deal follows the same published steps, so the buyer and the seller always know what happens next — and what happens if something goes wrong.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================ FIVE STEPS -->
+  <section class="section">
+    <div class="container grid-2">
+      <div>
+        <p class="eyebrow">The five steps</p>
+        <h2>From “we have a deal” to “everyone is satisfied”.</h2>
+        <ol class="steps-long">
+          <li><h3>1. Create one clear deal link</h3>
+            <p>The seller turns the chat into a link: item, condition, quantity, price, pickup address, the buyer’s delivery address, who pays delivery and who pays the fees. The seller sees the courier price and their exact payout before sending it. A link can’t be edited — a change makes a new link and retires the old one.</p></li>
+          <li><h3>2. The buyer reviews and pays</h3>
+            <p>The buyer sees the exact deal, the delivery address, every fee and the rules, then pays on the payment provider’s secure page. TrustGap saves a fingerprint of exactly what the buyer agreed to.</p></li>
+          <li><h3>3. Payment secured — the seller dispatches</h3>
+            <p>When the payment is confirmed, the seller’s dashboard shows a clear go-ahead to book pickup — not a screenshot or a promise. The seller adds a packing note as evidence.</p></li>
+          <li><h3>4. Tracked delivery and a private PIN</h3>
+            <p>The buyer receives a 4-digit delivery PIN by SMS and on their tracking page. The seller never sees it. The rider can only mark the parcel delivered with that PIN, which the buyer gives after checking the item.</p></li>
+          <li><h3>5. Inspect, then release</h3>
+            <p>The inspection window starts at handover. If the buyer confirms or raises nothing, the seller’s payout is released. If the buyer reports a problem, the dispute process applies and the money stays held until it is decided.</p></li>
+        </ol>
+      </div>
+      <figure class="img-slot" data-src="assets/images/how-handover.webp" data-size="1200×900"
+        data-alt="A buyer checking an item at the door while the rider waits"
+        data-hint="A buyer opening a parcel and checking the item at the door, a delivery rider waiting beside them."></figure>
+    </div>
+  </section>
+
+  <!-- ============================================================ PAYMENT SECURED -->
+  <section class="section alt">
+    <div class="container">
+      <p class="eyebrow">Plain language</p>
+      <h2>What “payment secured” means — and what it doesn’t.</h2>
+      <div class="does" style="margin-top:24px">
+        <div class="tile"><h3>It means</h3>
+          <ul class="checks">
+            <li>The payment provider has confirmed the buyer’s payment and TrustGap has checked the amount.</li>
+            <li>The money is recorded against this one deal and is <strong>not</strong> paid to the seller yet.</li>
+            <li>The seller may now dispatch, within the ship-by time on the deal.</li>
+            <li>The money is released or refunded only by the rules shown on the deal.</li>
+          </ul></div>
+        <div class="tile"><h3>It does not mean</h3>
+          <ul class="not-list">
+            <li>That the seller has been paid.</li>
+            <li>That the item is authentic or exactly as described — that is what the inspection window is for.</li>
+            <li>That delivery is guaranteed on a particular day.</li>
+            <li>That TrustGap is a bank. TrustGap coordinates the deal; a licensed payment provider processes the money.</li>
+          </ul></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ STATUSES -->
+  <section class="section">
+    <div class="container" style="max-width:860px">
+      <p class="eyebrow">Every status, explained</p>
+      <h2>Both sides see the same status at the same time.</h2>
+      <p class="lead">The buyer’s tracking page and the seller’s dashboard show these statuses with times, so nobody has to ask “has the money come?” or “where is my parcel?”.</p>
+      <ul class="status-list" style="margin-top:24px">
+        <li><b>Link created</b><span>The seller has created the deal. Nothing has been paid. The link expires at the time shown on it.</span></li>
+        <li><b class="money">Payment secured</b><span>The buyer has paid. The money is held under the deal rules. The seller is told to dispatch.</span></li>
+        <li><b>Pickup booked</b><span>The seller has booked the courier and added a packing note. This is the dispatch go-ahead in action.</span></li>
+        <li><b>Picked up</b><span>The courier has the parcel.</span></li>
+        <li><b>Out for delivery</b><span>The rider is on the way to the buyer.</span></li>
+        <li><b>Delivered</b><span>The buyer checked the item and gave the rider their PIN. The inspection window starts now.</span></li>
+        <li><b>Inspection open</b><span>The buyer can confirm the item or report a hidden problem until the window closes.</span></li>
+        <li><b class="money">Released</b><span>No problem reported (or the buyer confirmed). The seller’s payout is sent to their verified account.</span></li>
+        <li><b class="alert">Attempt failed</b><span>The rider couldn’t complete delivery (buyer unreachable, wrong address). The courier tries again.</span></li>
+        <li><b class="alert">Refused</b><span>The buyer refused the parcel at the door. A dispute opens automatically.</span></li>
+        <li><b class="alert">Disputed</b><span>A problem was reported. The money stays held while TrustGap reviews the evidence.</span></li>
+        <li><b class="alert">Returned</b><span>The parcel went back to the seller.</span></li>
+        <li><b class="money">Refunded</b><span>Money sent back to the buyer’s own bank account, minus only deductions shown in writing.</span></li>
       </ul>
-      <h2>For sellers</h2>
-      <ul>
-        <li>Every seller’s identity is checked against their NIN and payouts only go to an account in their own name.</li>
-        <li>You only ship once the buyer’s money is secured.</li>
-        <li>No more buyers refusing to pay at the door: delivery is confirmed with the buyer’s PIN.</li>
-        <li>If the buyer goes quiet after delivery, you are paid automatically when the inspection window ends.</li>
-        <li>Your packing note and the rider’s records are your evidence if there is a dispute.</li>
-      </ul>
-      <h2>Fees</h2>
-      <p>Two lines, both shown on the link before anyone pays:</p>
-      <ul>
-        <li><strong>TrustGap fee:</strong> 1.5% of the item price (minimum ₦100).</li>
-        <li><strong>Payment processing:</strong> what Flutterwave charges to take the payment and pay the seller (about 2% plus a small payout fee), passed on at cost.</li>
-      </ul>
-      <p>Together that is roughly 3.9% of the price. The seller and buyer agree who pays it — the buyer, the seller, or half each.</p>
-    </section>
-  </main>
-  <script type="module" src="assets/js/pages/static.js"></script>
+    </div>
+  </section>
+
+  <!-- ============================================================ INSPECTION -->
+  <section class="section navy">
+    <div class="container grid-2">
+      <div>
+        <p class="eyebrow">The inspection window</p>
+        <h2>Check at the door. Then a little more time for hidden problems.</h2>
+        <p>The window starts the moment the buyer gives the rider their PIN. Its length is shown on the deal before payment — currently <strong><span data-site="inspectionWindow"></span></strong>.</p>
+        <ul class="checks">
+          <li>Check what you can at the door: it’s the right item, model, size and colour, and it isn’t visibly damaged.</li>
+          <li>Only then give the rider your PIN.</li>
+          <li>Found a hidden problem afterwards? Use <strong>Report a problem</strong> on your tracking page before the window closes, with photos or video.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="margin-top:0">What counts as a valid problem</h3>
+        <p>Wrong item, quantity, size or model · materially different from the description or condition · counterfeit · significant damage · missing parts · defective or unsafe.</p>
+        <h3>Evidence that helps</h3>
+        <p>Clear photos or a short video of the item, packaging and label; serial numbers where relevant; and the chat where the item was described. The seller’s packing note and the courier’s records are reviewed too.</p>
+        <p class="small" style="opacity:.8">Changing your mind about a correct item is not covered. See <a href="legal/disputes.html" style="color:#9DB9F5">Returns, refunds &amp; disputes</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ WHEN THINGS GO WRONG -->
+  <section class="section">
+    <div class="container">
+      <p class="eyebrow">When things go wrong</p>
+      <h2>What happens if…</h2>
+      <div class="grid-3" style="margin-top:24px">
+        <div class="case"><h3>The seller doesn’t dispatch</h3><p>Each deal says how many days the seller has to hand the item to the courier.</p>
+          <p class="then">→ If the time passes without pickup, the buyer is refunded in full, automatically.</p></div>
+        <div class="case"><h3>The buyer isn’t available</h3><p>The rider records a failed attempt and the courier contacts the buyer to try again.</p>
+          <p class="then">→ The money stays held. Repeated failures are handled under the Delivery Policy.</p></div>
+        <div class="case"><h3>The address is wrong</h3><p>The buyer confirms the delivery address the seller entered before paying, and is told not to pay if it’s wrong.</p>
+          <p class="then">→ If the courier still can’t deliver, TrustGap contacts both sides to arrange a corrected address or a return.</p></div>
+        <div class="case"><h3>The item is refused at the door</h3><p>A dispute opens automatically and the parcel goes back to the seller.</p>
+          <p class="then">→ Wrong item: full refund. Correct item refused: delivery and return costs may be deducted, shown in writing.</p></div>
+        <div class="case"><h3>The item is wrong, fake or damaged</h3><p>The buyer reports it within the inspection window with evidence.</p>
+          <p class="then">→ If upheld, the item goes back to the seller and the buyer gets a full refund to their own account.</p></div>
+        <div class="case"><h3>The buyer goes quiet</h3><p>The buyer doesn’t confirm and doesn’t report a problem.</p>
+          <p class="then">→ When the inspection window ends, the seller is paid automatically — no chasing.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ RETURNS & PAYOUT -->
+  <section class="section alt">
+    <div class="container grid-2">
+      <div class="tile">
+        <h3 style="margin-top:0">How a return works</h3>
+        <p>Don’t send anything back on your own. When a return is approved, TrustGap books it with the courier and tells both sides who pays. If the seller sent the wrong or faulty item, the seller pays. If the buyer refused a correct item, the return cost may come out of the refund. The seller confirms the item came back.</p>
+      </div>
+      <div class="tile">
+        <h3 style="margin-top:0">When the seller is paid</h3>
+        <p>Once the release condition is met, the payout goes to the seller’s verified account in their own name. Timing: <span data-site="payoutTiming"></span>. Weekends, public holidays and bank checks can add time.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section navy">
+    <div class="container" style="text-align:center;max-width:760px">
+      <h2>Ready to make your next deal a protected one?</h2>
+      <div class="cta-row" style="justify-content:center">
+        <a class="btn btn-lg btn-light" href="seller/signup.html">Start a protected deal</a>
+        <a class="btn btn-lg btn-outline-light" href="fees.html">See the fees</a>
+      </div>
+    </div>
+  </section>
+</main>
+<script type="module" src="assets/js/pages/static.js"></script>
 </body>
 </html>
