@@ -3,7 +3,7 @@
 // (From the TrustGap Legal Content Pack: "Required placeholders before publication".)
 export const SITE = {
   legalName: 'Tubalcain Ads Enterprise',
-  rcNumber: 'RC 9568185',
+  rcNumber: '9568185',
   registeredAddress: '11, Ojighvwre street, Ugborikoko, Effurun, Delta State, Nigeria',
   operatingAddress: 'lagos Nigeria',
   supportEmail: 'trustgap.co@gmail.com',
