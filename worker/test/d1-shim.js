@@ -1,10 +1,6 @@
 // A stand-in for Cloudflare D1 built on Node's SQLite, so tests run the real Worker code with
 // `node --test` and no Cloudflare tooling. Supports what the app uses: prepare/bind/first/all/run/batch.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
-const MIGRATIONS = fileURLToPath(new URL('../migrations/', import.meta.url));
 const plain = (row) => (row ? { ...row } : null);
 
 class Statement {
@@ -36,7 +32,7 @@ class Statement {
 export class D1Shim {
   constructor() {
     this.db = new DatabaseSync(':memory:');
-    for (const file of readdirSync(MIGRATIONS).sort()) this.db.exec(readFileSync(MIGRATIONS + file, 'utf8'));
+    // Starts empty, like a new D1 database: the Worker creates its own tables (src/lib/migrate.js).
   }
   prepare(sql) {
     return new Statement(this.db, sql);

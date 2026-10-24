@@ -5,7 +5,7 @@ compatibility_date = "2025-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "trustgap"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "ebea18ed-ac3c-42de-88b8-8d2c75e223e4"
 migrations_dir = "migrations"
 
 [triggers]
@@ -16,16 +16,17 @@ crons = ["*/5 * * * *"]
 [vars]
 TEST_MODE = "true"
 SITE_URL = "https://trustgap-co.github.io"
-API_URL = "https://trustgap-api.YOUR-SUBDOMAIN.workers.dev"
+API_URL = "https://trustgap-api.trustgap-co.workers.dev"
 ALLOWED_ORIGINS = "https://trustgap-co.github.io"
 PAYMENT_PROVIDER = "mock"
 IDENTITY_PROVIDER = "mock"        # "monnify" once MONNIFY_API_KEY / MONNIFY_SECRET_KEY are set
-LOGISTICS_PROVIDER = "manual"
+LOGISTICS_PROVIDER = "manual"      # "fez" once FEZ_USER_ID / FEZ_PASSWORD are set
+FEZ_API_BASE = "https://apisandbox.fezdelivery.co/v1"
 REQUIRE_SELLER_ID = "true"
 FEE_PERCENT = "1.5"               # TrustGap fee (no cap)
 FEE_MIN_NAIRA = "100"
 PROCESSING_PERCENT = "2"          # Flutterwave on local NGN collections
 PAYOUT_FEE_NAIRA = "57.79"        # Flutterwave transfer fee ₦53.75 + 7.5% VAT
 SETTLEMENT_HOURS = "24"           # Flutterwave settles T+1; payouts wait for it
-MAX_DEAL_NAIRA = "1000000"
+MAX_DEAL_NAIRA = "300000"
 INSPECTION_HOURS = "24"

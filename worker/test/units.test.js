@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nairaToKobo, quote, platformFee, formatNaira } from '../src/lib/money.js';
+import { nairaToKobo, quote, platformFee, splitCharges, formatNaira } from '../src/lib/money.js';
 import { namesMatch } from '../src/lib/names.js';
 import { encrypt, decrypt, signLink, verifyLink, safeEqual } from '../src/lib/crypto.js';
 import { parseMonnifyDate } from '../src/providers/identity/monnify.js';
@@ -72,4 +72,13 @@ test('signed links verify, expire and resist tampering', async () => {
   assert.equal(await verifyLink('k', token, new Date(now.getTime() + 7_200_000)), null);
   assert.ok(safeEqual('abc', 'abc'));
   assert.ok(!safeEqual('abc', 'abd'));
+});
+
+test('a 50/50 split never shows kobo and the halves add up', () => {
+  for (const amount of [322_500, 322_550, 105_700, 99]) {
+    const q = splitCharges({ itemPrice: 4_500_000, deliveryFee: amount, deliveryPayer: 'split', feePayer: 'split', platformFee: 67_500, processingFee: amount });
+    assert.equal(q.buyerDelivery % 100, 0);
+    assert.equal(q.buyerProcessingShare % 100, 0);
+    assert.equal(q.buyerDelivery + q.sellerDelivery, amount);
+  }
 });

@@ -29,20 +29,21 @@ describe('happy path', () => {
     const seller = await onboardSeller(t);
     const deal = await createDeal(t, seller);
     assert.equal(deal.price.platformFee, 67_500); // TrustGap fee 1.5%
-    assert.equal(deal.price.processingFee, 106_300); // Flutterwave costs, grossed up
-    assert.equal(deal.price.buyerTotal, 5_023_800);
+    assert.equal(deal.pickup_state, 'Lagos');
     assert.equal(deal.price.sellerPayout, 4_500_000);
 
     // Step 1: the buyer sees the whole deal but never the pickup address.
     const view = await t.get(`/api/deals/${deal.token}`);
-    assert.equal(view.data.deal.price.total, 5_023_800);
+    assert.equal(view.data.deal.price.item, 4_500_000);
     assert.equal(view.data.deal.price.platform_fee, 67_500);
-    assert.equal(view.data.deal.price.processing_fee, 106_300);
+    assert.equal(view.data.deal.ships_from, 'Lagos');
     assert.equal(view.data.deal.seller.identity_verified, true);
     assert.doesNotMatch(JSON.stringify(view.data), /Allen Avenue/);
 
     const { trackToken, track } = await buyerPays(t, deal.token);
     assert.equal(track.order.status, 'paid');
+    // Lagos → Lagos: ₦3,000 + 7.5% VAT delivery, processing recalculated on the real total.
+    assert.deepEqual(track.order.price, { item: 4_500_000, delivery: 322_500, platform_fee: 67_500, processing_fee: 105_700, total: 4_995_700 });
     assert.match(track.order.pin, /^\d{4}$/);
     assert.equal((await t.get(`/api/deals/${deal.token}`)).data.deal.status, 'paid');
 
@@ -63,7 +64,7 @@ describe('happy path', () => {
     await t.post(`/api/track/${trackToken}/accept`);
     assert.equal((await lastOrder(t)).status, 'completed');
     let l = await ledgerOf(t, order.id);
-    assert.equal(l.collected.amount, 5_023_800);
+    assert.equal(l.collected.amount, 4_995_700);
     assert.equal(l.seller_payout.amount, 4_500_000);
     // Flutterwave settles T+1, so the payout waits for the buyer's money to arrive in the wallet.
     assert.equal(l.seller_payout.status, 'pending');
@@ -72,8 +73,8 @@ describe('happy path', () => {
     l = await ledgerOf(t, order.id);
     assert.equal(l.seller_payout.status, 'success');
     assert.equal(l.platform_fee.amount, 67_500);
-    assert.equal(l.processing_fee.amount, 106_300);
-    assert.equal(l.delivery_cost.amount, 350_000);
+    assert.equal(l.processing_fee.amount, 105_700);
+    assert.equal(l.delivery_cost.amount, 322_500);
 
     const sms = (await t.db('SELECT sms FROM outbox')).map((m) => m.sms).join('\n');
     assert.match(sms, /Your TrustGap code is \d{6}/);
@@ -255,12 +256,12 @@ describe('disputes', () => {
 
     const admin = await adminToken(t);
     const tooMuch = await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
-      { buyer_refund: '50238', seller_payout: '1', seller_charge: '0', note: 'Testing the limit check here' }, admin);
+      { buyer_refund: '49957', seller_payout: '1', seller_charge: '0', note: 'Testing the limit check here' }, admin);
     assert.match(tooMuch.data.error, /cannot exceed/);
     await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
-      { buyer_refund: '50238', seller_payout: '0', seller_charge: '7000', note: 'Rider photo shows size 40. Seller sent the wrong size.' }, admin);
+      { buyer_refund: '49957', seller_payout: '0', seller_charge: '7000', note: 'Rider photo shows size 40. Seller sent the wrong size.' }, admin);
     assert.equal((await lastOrder(t)).status, 'refunded');
-    assert.equal((await ledgerOf(t, order.id)).buyer_refund.amount, 5_023_800);
+    assert.equal((await ledgerOf(t, order.id)).buyer_refund.amount, 4_995_700);
     assert.equal((await t.one('SELECT amount_owed FROM sellers')).amount_owed, 700_000);
 
     const blocked = await t.post('/api/seller/deals', DEAL, seller);
@@ -319,5 +320,26 @@ describe('access control', () => {
     await t.post('/api/auth/logout', {}, seller);
     assert.equal((await t.get('/api/seller/me', seller)).status, 401);
     assert.ok(await login(t));
+  });
+});
+
+describe('addresses', () => {
+  test('a doubled slash from a trailing slash in config.js still reaches the API', async () => {
+    const t = boot();
+    const res = await t.call('POST', 'https://api.test//api/admin/login', { password: 'test-admin-password' });
+    assert.equal(res.status, 200);
+    assert.ok(res.data.token);
+  });
+});
+
+describe('health check', () => {
+  test('reports the database state', async () => {
+    const t = boot();
+    assert.deepEqual((await t.get('/api/health')).data, { ok: true, database: 'connected' });
+    await t.env.DB.prepare('DROP TABLE meta').run();
+    assert.match((await t.get('/api/health')).data.database, /Tables missing: meta/);
+    const noDb = boot();
+    delete noDb.env.DB;
+    assert.match((await noDb.get('/api/health')).data.database, /No D1 binding called DB/);
   });
 });

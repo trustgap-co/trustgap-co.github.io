@@ -72,8 +72,11 @@ export const DEAL = {
   quantity: 1,
   item_price: '45,000',
   pickup_address: '12 Allen Avenue, Ikeja, Lagos',
-  pickup_zone: 'ikeja',
-  delivery_zone: 'lekki',
+  pickup_state: 'Lagos',
+  delivery_address: '5 Admiralty Way, Lekki Phase 1, Lagos',
+  delivery_landmark: 'Opposite the filling station',
+  delivery_state: 'Lagos',
+  weight_kg: 1,
   delivery_days: 2,
   delivery_payer: 'buyer',
   fee_payer: 'buyer',
@@ -84,9 +87,6 @@ export const BUYER = {
   buyer_name: 'Chioma Okafor',
   buyer_phone: '08091234567',
   buyer_email: 'chioma@example.com',
-  delivery_address: '5 Admiralty Way, Lekki Phase 1, Lagos',
-  delivery_landmark: 'Opposite the filling station',
-  confirm_area: true,
   refund_bank_code: '058',
   refund_account_number: '0000000002',
 };
@@ -113,11 +113,12 @@ export async function createDeal(t, token, deal = DEAL) {
   return { ...r.data.deal, token: new URL(r.data.deal.link).searchParams.get('d') };
 }
 
-// Buyer reviews, enters details and reaches the payment page. Returns the payment URL.
+// Buyer confirms the deal (step 1), enters their details (step 2) and reaches the payment page.
 export async function buyerCheckout(t, dealToken, buyer = BUYER) {
   const accept = await t.post(`/api/deals/${dealToken}/accept`);
   if (accept.status !== 200) return accept;
-  return t.post(`/api/deals/${dealToken}/pay`, { ...buyer, checkout_id: accept.data.checkout_id });
+  const total = (await t.get(`/api/deals/${dealToken}`)).data.deal.price.total;
+  return t.post(`/api/deals/${dealToken}/pay`, { ...buyer, checkout_id: accept.data.checkout_id, expected_total: total });
 }
 
 // Completes the simulated payment page and follows the redirect back. Returns the tracking token.

@@ -71,7 +71,8 @@ describe('Google Sheets copy', () => {
     assert.deepEqual(JSON.parse(add.init.body).requests.map((r) => r.addSheet.properties.title), ['Summary', 'Sellers', 'Disputes', 'Ledger']);
     const orders = written.data.find((d) => d.range === 'Orders!A1').values;
     assert.equal(orders[1][1], 'paid');
-    assert.equal(orders[1][7], 50238);
+    assert.equal(orders[1][7], 49957);
+    assert.equal(orders[1][6], 'Lagos');
     const everything = JSON.stringify(written);
     assert.doesNotMatch(everything, /0000000002|Admiralty|11111111111/);
     assert.ok(calls.every((c) => !c.init.headers?.Authorization || c.init.headers.Authorization === 'Bearer tok'));
