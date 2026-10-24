@@ -14,7 +14,7 @@ const UNAVAILABLE = {
   replaced: 'The seller changed this deal and sent a newer link. Ask them for the latest one.',
 };
 
-// Analytics description of this deal (no address, names or token — see analytics.js).
+// Analytics description of this deal (no address, names or token; see analytics.js).
 const ecommerce = (d) => ({
   currency: 'NGN',
   value: naira(d.price.total),
@@ -36,7 +36,7 @@ function breakdown(d) {
     <tr><td>Item price${d.quantity > 1 ? ` (×${d.quantity})` : ''}</td><td>${money(p.item)}</td></tr>
     <tr><td>Delivery ${d.ships_from} → ${d.delivery.state}${half(d.delivery_payer)}</td><td>${p.delivery ? money(p.delivery) : paidBySeller}</td></tr>
     <tr><td>TrustGap fee (${config.fee.percent}%)${half(d.fee_payer)}</td><td>${p.platform_fee ? money(p.platform_fee) : paidBySeller}</td></tr>
-    <tr><td>Payment processing${half(d.fee_payer)} <small class="muted">— Flutterwave’s charges, passed on at cost</small></td>
+    <tr><td>Payment processing${half(d.fee_payer)} <small class="muted">(Flutterwave’s charges, passed on at cost)</small></td>
       <td>${p.processing_fee ? money(p.processing_fee) : paidBySeller}</td></tr>
     <tr class="total"><td>You pay</td><td>${money(p.total)}</td></tr>
   </table>`;
@@ -52,7 +52,7 @@ function review(d, rules) {
     <div class="callout info">
       <strong>Delivering to</strong><br>${d.delivery.address}<br><span class="small">${d.delivery.state === 'FCT' ? 'FCT (Abuja)' : `${d.delivery.state} State`}</span>
       ${d.delivery.landmark ? html`<br><span class="small">Near ${d.delivery.landmark}</span>` : ''}
-      <br><span class="small muted">Not your address? Don’t continue — ask the seller to send a corrected link.</span>
+      <br><span class="small muted">Not your address? Don’t continue. Ask the seller to send a corrected link.</span>
     </div>
     ${breakdown(d)}
     <ul class="facts">
@@ -61,8 +61,8 @@ function review(d, rules) {
       <li>⏰ This link expires <strong>${date(d.expires_at)}</strong></li>
     </ul>
     <details class="rules" open><summary>How your money is protected</summary><ol>${rules.map((r) => html`<li>${r}</li>`)}</ol></details>
-    <form id="accept"><button class="btn btn-block">The item, address and price are right — continue</button></form>
-    <p class="muted small center">Something wrong? Don’t continue. Tell the seller — they can send you a corrected link.</p>
+    <form id="accept"><button class="btn btn-block">The item, address and price are right. Continue</button></form>
+    <p class="muted small center">Something wrong? Don’t continue. Tell the seller, who can send you a corrected link.</p>
   </section>`);
   onSubmit($('#accept'), async () => {
     track('begin_checkout', ecommerce(d));
@@ -92,7 +92,7 @@ async function details(d, checkoutId) {
         ${testAccountsHint(config)}
       </fieldset>
       <button class="btn btn-block">Pay ${money(d.price.total)} securely</button>
-      <p class="muted small center">Your payment is secured under the deal rules — the seller is not paid until delivery and inspection.</p>
+      <p class="muted small center">Your payment is secured under the deal rules. The seller is not paid until delivery and inspection.</p>
     </form>
   </section>`);
   $('#back').addEventListener('click', () => { track('deal_review_again'); load(); });

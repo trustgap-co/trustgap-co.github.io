@@ -31,14 +31,14 @@ try {
       </fieldset>
       ${statesList(config.states)}
       <fieldset><legend>Pickup (you)</legend>
-        <label>Your pickup address <small>street, area and city — private, only the courier sees it</small>
+        <label>Your pickup address <small>street, area and city. Private: only the courier sees it</small>
           <textarea name="pickup_address" required rows="2" maxlength="300" placeholder="12 Allen Avenue, Ikeja, Lagos">${v.pickup_address || ''}</textarea></label>
         <div class="grid2">
           <label>State you ship from ${stateInput('pickup_state', v.pickup_state)}</label>
           <label>Parcel weight (kg) <small>packed, roughly</small>
             <input name="weight_kg" type="number" min="1" max="100" step="1" value="${v.weight_kg || 1}" required></label>
         </div>
-        <label class="choice"><input type="checkbox" name="fragile" value="yes" ${v.fragile ? 'checked' : ''}> Fragile — handle with care</label>
+        <label class="choice"><input type="checkbox" name="fragile" value="yes" ${v.fragile ? 'checked' : ''}> Fragile, handle with care</label>
       </fieldset>
       <fieldset><legend>Delivery (the buyer)</legend>
         <p class="muted small">Ask the buyer to send their delivery address in the chat and copy it here. They will see it on the link and confirm it before paying.</p>
@@ -83,9 +83,9 @@ try {
       if (key !== last) return;
       show('#preview', html`<table class="breakdown">
         <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
-        <tr><td>Delivery to ${delivery_state} — ${payerLabel[d.delivery_payer]}</td><td>${money(p.deliveryFee)}</td></tr>
-        <tr><td>TrustGap fee (${fee.percent}%) — ${payerLabel[d.fee_payer]}</td><td>${money(p.platformFee)}</td></tr>
-        <tr><td>Payment processing — ${payerLabel[d.fee_payer]}</td><td>${money(p.processingFee)}</td></tr>
+        <tr><td>Delivery to ${delivery_state} (${payerLabel[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
+        <tr><td>TrustGap fee ${fee.percent}% (${payerLabel[d.fee_payer]})</td><td>${money(p.platformFee)}</td></tr>
+        <tr><td>Payment processing (${payerLabel[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
         <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
         <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
       </table>`);

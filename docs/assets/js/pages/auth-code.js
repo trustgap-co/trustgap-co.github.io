@@ -5,7 +5,7 @@ export function codeStep(phone, sent, { next, flow }) {
   show('#app', html`<section class="card narrow">
     <h1>Enter your code</h1>
     <p class="muted">We sent a 6-digit code by SMS to <strong>${phone}</strong>. It expires in 10 minutes.</p>
-    ${sent.dev_code ? html`<p class="devcode">Test mode — no SMS is sent. Your code is <strong>${sent.dev_code}</strong></p>` : ''}
+    ${sent.dev_code ? html`<p class="devcode">Test mode: no SMS is sent. Your code is <strong>${sent.dev_code}</strong></p>` : ''}
     <form class="form" id="code">
       <label>Code <input name="code" class="codeinput" required inputmode="numeric" autocomplete="one-time-code" pattern="\\d{6}" maxlength="6"></label>
       <button class="btn btn-block">Continue</button>

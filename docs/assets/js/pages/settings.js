@@ -22,12 +22,12 @@ async function render() {
       : s.id_attempts_left === 0
         ? html`<div class="callout warn">You have used all your verification attempts. Contact TrustGap support to finish verification.</div>`
         : html`<p class="muted">We check your NIN (National Identification Number) with Monnify. The name and date of birth on it must match your account. We only keep the last 4 digits.</p>
-        <p class="small muted">${s.id_attempts_left} attempt${s.id_attempts_left > 1 ? 's' : ''} left — please double-check before submitting.</p>
+        <p class="small muted">${s.id_attempts_left} attempt${s.id_attempts_left > 1 ? 's' : ''} left. Please double-check before submitting.</p>
         <form class="form" id="identity">
           <label>NIN <input name="nin" required inputmode="numeric" pattern="\\d{11}" maxlength="11" placeholder="11 digits"></label>
           <label>Date of birth <input name="dob" type="date" required></label>
           ${config.test_mode ? html`<details class="hint"><summary>Test mode: use a test NIN</summary>
-            <p>11111111111 — Adebayo Oluwaseun John, born 1990-01-15</p></details>` : ''}
+            <p>11111111111: Adebayo Oluwaseun John, born 1990-01-15</p></details>` : ''}
           <button class="btn">Verify my identity</button>
         </form>`}
   </section>`);

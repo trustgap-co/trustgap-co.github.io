@@ -20,9 +20,9 @@ async function render() {
     <h2>Money</h2>
     <table class="breakdown">
       <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
-      <tr><td>Delivery ${d.pickup_state} → ${d.delivery_state} — paid by ${who[d.delivery_payer]}</td><td>${money(p.deliveryFee)}</td></tr>
-      <tr><td>TrustGap fee (${config.fee.percent}%) — paid by ${who[d.fee_payer]}</td><td>${money(p.platformFee)}</td></tr>
-      <tr><td>Payment processing (Flutterwave’s charges) — paid by ${who[d.fee_payer]}</td><td>${money(p.processingFee)}</td></tr>
+      <tr><td>Delivery ${d.pickup_state} → ${d.delivery_state} (paid by ${who[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
+      <tr><td>TrustGap fee ${config.fee.percent}% (paid by ${who[d.fee_payer]})</td><td>${money(p.platformFee)}</td></tr>
+      <tr><td>Payment processing, Flutterwave’s charges (paid by ${who[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
       <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
       <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
     </table>

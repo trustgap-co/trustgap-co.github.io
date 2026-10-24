@@ -51,7 +51,7 @@ Sent to GA4 always; the **Meta** column shows what Meta receives.
 |---|---|---|---|
 | `view_item` | Buyer opens a deal link | value, item name & condition, states, who pays, seller verified | ViewContent |
 | `deal_unavailable` | Link is paid / expired / cancelled / replaced | deal_status | – |
-| `begin_checkout` | "The item, address and price are right — continue" | same as view_item | InitiateCheckout |
+| `begin_checkout` | "The item, address and price are right. Continue" | same as view_item | InitiateCheckout |
 | `deal_review_again` | Buyer goes back to review the deal | – | – |
 | `add_payment_info` | Details accepted, going to the payment page | same as view_item | AddPaymentInfo |
 | `purchase` | First time the tracking page shows a paid order (once per order per device) | transaction_id (order ref), value, shipping, trustgap_fee | Purchase (event ID = order ref) |

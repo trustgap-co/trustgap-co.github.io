@@ -16,7 +16,7 @@ Steps 1–7 set up the server and partners; steps 8–9 the website's content an
 ## 1. Cloudflare Worker and D1 database (from the Cloudflare dashboard)
 
 The same way as CEA: create the Worker, paste the code, set the keys. The code is ready-made in
-`worker/dashboard/worker.js` — the whole Worker in **one file**. You don't need the D1 console:
+`worker/dashboard/worker.js`: the whole Worker in **one file**. You don't need the D1 console:
 the Worker creates its database tables by itself the first time it runs.
 
 **a. Create the database**
@@ -33,11 +33,11 @@ Leave it empty.
 **trustgap-api → Settings → Bindings → Add → D1 database**: Variable name `DB` (exactly, in
 capitals), database `trustgap` → **Deploy/Save**.
 
-**d. Add the settings** — **Settings → Variables and Secrets → Add**:
+**d. Add the settings:** **Settings → Variables and Secrets → Add**:
 
 | Name | Type | Value |
 |---|---|---|
-| `APP_SECRET` | **Secret** | a long random string (50+ characters) — **save a copy in a password manager** |
+| `APP_SECRET` | **Secret** | a long random string (50+ characters). **Save a copy in a password manager** |
 | `ADMIN_PASSWORD` | **Secret** | a long password only you know (for `/admin/`) |
 | `TEST_MODE` | Text | `true` (until you go live) |
 | `SITE_URL` | Text | `https://trustgap-co.github.io` |
@@ -55,15 +55,15 @@ To make a random `APP_SECRET` without a terminal: a password manager's generator
 letters and numbers) is fine. `APP_SECRET` encrypts buyers' refund account numbers and delivery
 PINs and signs rider links: **never change it after launch**, or those become unreadable.
 
-**e. Turn on the timers** — **Settings → Triggers → Cron Triggers → Add**: `*/5 * * * *`
+**e. Turn on the timers:** **Settings → Triggers → Cron Triggers → Add**: `*/5 * * * *`
 (every 5 minutes). This expires links, releases payments after inspection, sends payouts and
 retries SMS. Google Sheets is copied on every third run.
 
-**f. Check it works** — open `https://trustgap-api.<you>.workers.dev/api/health` in your browser.
+**f. Check it works:** open `https://trustgap-api.<you>.workers.dev/api/health` in your browser.
 You should see `{"ok":true,"database":"connected"}`. The first visit also creates the tables
 (D1 → trustgap → Tables then lists 12). If it says something else, the message tells you what to fix.
 
-**g. Tell the website where the Worker is** — `docs/assets/js/config.js` already points to
+**g. Tell the website where the Worker is:** `docs/assets/js/config.js` already points to
 `https://trustgap-api.trustgap-co.workers.dev`. If your Worker's address is different, change it there
 **and** in the `preconnect` line near the top of each page (search the `docs/` folder for
 `trustgap-api.trustgap-co.workers.dev` and replace every match). Commit.
@@ -217,7 +217,7 @@ Still to ask Flutterwave (their integrations team offered a walkthrough):
 ## 7. Fez Delivery
 
 Until Fez is switched on, `LOGISTICS_PROVIDER = "manual"`: delivery is priced from a simple table
-(₦3,000 within the same state, ₦6,000 to another state, + 7.5% VAT — change with
+(₦3,000 within the same state, ₦6,000 to another state, + 7.5% VAT; change with
 `DELIVERY_SAME_STATE_NAIRA` / `DELIVERY_OTHER_STATE_NAIRA`), and when a seller books pickup the admin
 order page shows a **rider link** (signed, 14 days) for your own rider, who enters the buyer's PIN.
 
@@ -264,7 +264,7 @@ governing law. Anything still in `[brackets]` shows on the site as a yellow high
 see at a glance what's missing.
 
 Two switches in the same file:
-- `policiesApproved: true` removes the “Draft — under legal review” notice from the policy pages.
+- `policiesApproved: true` removes the “Draft: under legal review” notice from the policy pages.
   Set it **only after your lawyer approves** the policies (`docs/legal/`). Lines written for the
   lawyer (e.g. “[LAWYER TO DRAFT THE SPECIFIC LIMITATION…]”) must be replaced before then.
 - `partnerNamesApproved: true` shows “Payment powered by Flutterwave. Delivery coordinated with Fez
@@ -277,8 +277,9 @@ directly in those HTML files. `legal/cookies.html` also has a cookie register li
 the site stores. Keep it up to date if you add tools.
 
 **Photos: `docs/assets/images/`.** Add the files listed in that folder's `README.md`, using exactly
-those names. Landscape 1200×900 WebP, under ~150 KB each (compress at squoosh.app), plus
-`og-image.jpg` (1200×630) for link previews on WhatsApp/X. Until a photo is there, its spot shows a
+those names. All images are PNG: landscape 1200×900, shrunk at tinypng.com to under ~400 KB each, plus
+`og-image.png` (1200×630) for link previews on WhatsApp/X. The browser-tab icon is
+`docs/assets/favicon.png` (192×192). Until a photo is there, its spot shows a
 labelled placeholder. Photos load only when they scroll into view, so they don't slow the first screen.
 
 ## 9. Analytics: Google Analytics 4 and Meta Pixel

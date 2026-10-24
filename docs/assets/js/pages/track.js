@@ -31,7 +31,7 @@ async function render() {
     ${o.can_confirm
       ? html`<div class="callout info">Delivered ${date(o.delivered_at)}. If everything is fine, release the payment to the seller.
           If not, report it before <strong>${date(o.inspection_ends_at)}</strong>.
-          <form id="accept"><button class="btn">Everything is fine — pay the seller</button></form></div>`
+          <form id="accept"><button class="btn">Everything is fine, pay the seller</button></form></div>`
       : ''}
     ${o.status === 'completed' && !dispute ? html`<div class="callout ok">Complete. The seller has been paid.</div>` : ''}
     ${dispute

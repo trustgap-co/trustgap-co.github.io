@@ -34,7 +34,7 @@ const root = $('#fee-calc');
 show(root, html`<div class="calc">
   <form class="form tile" id="calc-form">
     <label>Item price (₦)<input name="price" inputmode="numeric" value="45,000"></label>
-    <label>Delivery fee (₦) <small>estimate — the real courier price is shown when the seller creates the link</small>
+    <label>Delivery fee (₦) <small>estimate; the real courier price is shown when the seller creates the link</small>
       <input name="delivery" inputmode="numeric" value="3,500"></label>
     <fieldset><legend>Who pays delivery?</legend>${radios('deliveryPayer', 'buyer')}</fieldset>
     <fieldset><legend>Who pays the fees?</legend>${radios('feePayer', 'buyer')}</fieldset>

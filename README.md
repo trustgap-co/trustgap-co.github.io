@@ -33,10 +33,10 @@ Live site: https://trustgap-co.github.io/
    days, who pays delivery and who pays the fees (buyer, seller or 50/50), and expiry time. A live
    preview shows the courier's delivery fee, both fees, what the buyer pays and what the seller
    receives before the link is created. Links can't be edited; a change makes a new link.
-3. **Buyer, step 1 — review**: the item, the delivery address (read-only), the exact price
+3. **Buyer, step 1: review**: the item, the delivery address (read-only), the exact price
    breakdown and the protection rules. Confirming saves a hashed copy of exactly what they agreed to.
    A wrong detail means asking the seller for a corrected link.
-4. **Buyer, step 2 — details & pay**: name, phone, email, and a refund account in the buyer's own
+4. **Buyer, step 2: details & pay**: name, phone, email, and a refund account in the buyer's own
    name (encrypted, never shown to the seller). Then payment of exactly the total from step 1.
 5. **Money held**: the buyer gets a 4-digit delivery PIN by SMS and on their tracking page.
 6. **Seller books pickup** with a packing note (evidence). TrustGap creates the Fez order with the
@@ -64,7 +64,7 @@ acting at the same moment can't pay twice.
 | `buyers.html`, `sellers.html` | One page for each side; sellers get a payout calculator |
 | `fees.html` | Fees, calculator (same maths as the Worker), who pays and what is refundable |
 | `faq.html` | Questions, including safety and privacy |
-| `legal/` | 10 policy pages from the Legal Content Pack, marked “Draft — under legal review” |
+| `legal/` | 10 policy pages from the Legal Content Pack, marked “Draft: under legal review” |
 | `pay.html`, `track.html` | The buyer's deal link and private tracking page |
 | `seller/`, `admin/`, `rider.html` | Seller app, staff admin, courier-rider page |
 

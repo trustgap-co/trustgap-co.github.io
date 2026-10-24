@@ -24,7 +24,7 @@ async function render() {
         <p class="small">Item ${money(d.item_price)} · delivery ${money(o.delivery_fee)} to ${o.delivery_state} (${d.delivery_payer}) · TrustGap fee ${money(o.platform_fee)} + processing ${money(o.processing_fee)} (${d.fee_payer})<br>
           Parcel ${d.weight_kg} kg${d.fragile ? ', fragile' : ''}<br>
           Buyer paid <strong>${money(o.amount)}</strong> · seller gets <strong>${money(o.seller_payout)}</strong></p>
-        <p class="small">Packing note: ${o.packing_note || '—'}</p></div>
+        <p class="small">Packing note: ${o.packing_note || 'none'}</p></div>
       <div><h2>Seller</h2>
         <p>${s.business_name} (${s.full_name}) ${s.identity_verified ? '✓ ID' : '✗ ID'}<br>${s.phone} · ${s.email}<br>
           Pickup: ${d.pickup_address}, ${d.pickup_state}<br>Payout: ${s.payout_bank_name} ${s.payout_account_number}
@@ -42,7 +42,7 @@ async function render() {
       ${o.courier === 'fez' && o.status === 'shipping' ? html`<button class="linklike" id="sync">check with Fez now</button>` : ''}</p>
   </section>
   ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''}">
-    <h2>Dispute #${x.id} — ${x.category_label} (${x.status})</h2>
+    <h2>Dispute #${x.id}: ${x.category_label} (${x.status})</h2>
     <p class="small muted">Opened by ${x.opened_by} · ${date(x.created_at)}</p>
     <p class="pre">${x.description}</p>
     ${x.status === 'resolved'
@@ -56,7 +56,7 @@ async function render() {
             <label>Pay seller (₦) <input name="seller_payout" inputmode="decimal" value="0"></label>
             <label>Charge seller (₦) <small>added to what they owe</small><input name="seller_charge" inputmode="decimal" value="0"></label>
           </div>
-          <label>Decision note <small>sent to both parties — explain the evidence and the amounts</small><textarea name="note" required rows="3"></textarea></label>
+          <label>Decision note <small>sent to both parties; explain the evidence and the amounts</small><textarea name="note" required rows="3"></textarea></label>
           <button class="btn">Decide and move money</button>
         </form>`}
   </section>`)}

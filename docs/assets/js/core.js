@@ -116,17 +116,17 @@ export const date = (d) =>
 
 const ORDER_STATUS = {
   awaiting_payment: ['Awaiting payment', 'muted'],
-  paid: ['Paid — money held', 'info'],
+  paid: ['Paid, money held', 'info'],
   shipping: ['On the way', 'info'],
-  delivered: ['Delivered — inspection period', 'info'],
+  delivered: ['Delivered, inspection period', 'info'],
   disputed: ['Under review', 'warn'],
   completed: ['Completed', 'ok'],
   refunded: ['Refunded', 'muted'],
   cancelled: ['Cancelled', 'muted'],
-  duplicate_refunded: ['Duplicate payment — refunded', 'muted'],
+  duplicate_refunded: ['Duplicate payment, refunded', 'muted'],
 };
 const DEAL_STATUS = {
-  open: ['Open — waiting for buyer', 'info'],
+  open: ['Open, waiting for buyer', 'info'],
   paid: ['Paid', 'ok'],
   expired: ['Expired', 'muted'],
   cancelled: ['Cancelled', 'muted'],
@@ -139,7 +139,7 @@ export const dealBadge = (s) => badge(DEAL_STATUS[s] || [s, 'muted']);
 const EVENT_LABELS = {
   terms_accepted: 'Buyer reviewed and accepted the deal terms',
   payment_failed: 'Payment attempt failed',
-  payment_mismatch: 'Payment amount did not match — flagged',
+  payment_mismatch: 'Payment amount did not match, flagged',
   payment_received: 'Payment received and held by TrustGap',
   duplicate_payment_refunded: 'Duplicate payment refunded',
   pickup_booked: 'Seller packed the item and booked pickup',
@@ -149,13 +149,13 @@ const EVENT_LABELS = {
   delivery_refused: 'Buyer refused the parcel at the door',
   delivery_returned: 'Parcel returned to seller',
   wrong_pin: 'Wrong delivery PIN entered',
-  delivered_with_pin: 'Delivered — buyer gave the delivery PIN',
-  dispute_opened: 'Problem reported — money held for review',
+  delivered_with_pin: 'Delivered: buyer gave the delivery PIN',
+  dispute_opened: 'Problem reported, money held for review',
   dispute_resolved: 'Dispute decided',
   buyer_confirmed: 'Buyer confirmed everything is fine',
-  auto_released: 'Inspection period ended — payment released',
+  auto_released: 'Inspection period ended, payment released',
   checkout_abandoned: 'Checkout expired without payment',
-  transfer_failed: 'A bank transfer failed — will be retried',
+  transfer_failed: 'A bank transfer failed and will be retried',
 };
 export const timeline = (events, { detail = false } = {}) => html`<ol class="timeline">${events.map(
   (e) => html`<li><span class="t-time">${date(e.created_at)}</span><span class="t-label">${EVENT_LABELS[e.type] || e.type}</span>
@@ -207,9 +207,9 @@ export const bankOptions = (banks, selected) =>
 export const testAccountsHint = (config) =>
   config.test_mode && config.payment_provider === 'mock'
     ? html`<details class="hint"><summary>Test mode: use a test account number</summary><ul>
-        <li>0000000001 — Adebayo Oluwaseun John</li><li>0000000002 — Chioma Ngozi Okafor</li>
-        <li>0000000003 — Musa Ibrahim Bello</li><li>0000000004 — Funmilayo Grace Adeyemi</li>
-        <li>0000000005 — Emeka Peter Nwosu</li></ul><p>Pick any bank. The name must match.</p></details>`
+        <li>0000000001: Adebayo Oluwaseun John</li><li>0000000002: Chioma Ngozi Okafor</li>
+        <li>0000000003: Musa Ibrahim Bello</li><li>0000000004: Funmilayo Grace Adeyemi</li>
+        <li>0000000005: Emeka Peter Nwosu</li></ul><p>Pick any bank. The name must match.</p></details>`
     : '';
 
 // ---------------------------------------------------------------- page shell
@@ -235,7 +235,7 @@ function fillSiteInfo() {
   if (SITE.partnerNamesApproved) $$('.needs-partner-approval').forEach((el) => el.classList.remove('needs-partner-approval'));
 }
 
-// <figure class="img-slot" data-src="assets/images/x.webp" data-alt="…" data-hint="…" data-size="1200×900">
+// <figure class="img-slot" data-src="assets/images/x.png" data-alt="…" data-hint="…" data-size="1200×900">
 // shows the photo once you add the file, or a labelled placeholder until then. Photos load only when
 // they come near the screen, so phones don't download images nobody scrolls to.
 function loadImages() {
@@ -340,7 +340,7 @@ export async function shell(area) {
   initAnalytics(area);
   const config = await configReady;
   if (config.test_mode) {
-    document.body.insertAdjacentHTML('beforeend', '<div class="testbar" role="note">TEST MODE — a demonstration. No real money moves; payments and couriers are simulated.</div>');
+    document.body.insertAdjacentHTML('beforeend', '<div class="testbar" role="note">TEST MODE: a demonstration. No real money moves; payments and couriers are simulated.</div>');
     document.body.classList.add('has-testbar');
   }
   return config;

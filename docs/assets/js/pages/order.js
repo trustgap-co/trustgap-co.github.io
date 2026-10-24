@@ -11,9 +11,9 @@ async function render() {
     ${o.status === 'paid'
       ? html`<div class="callout info"><strong>The buyer’s money is secured.</strong> Pack the item and book pickup before ${date(o.ship_by)}, or the buyer is refunded.
           <form class="form" id="book">
-            <label>Packing note <small>serial/IMEI, colour, size, what’s in the box — your evidence if there is a dispute</small>
+            <label>Packing note <small>serial/IMEI, colour, size, what’s in the box. This is your evidence if there is a dispute</small>
               <textarea name="packing_note" required rows="3" maxlength="500"></textarea></label>
-            <button class="btn">Item is packed — book pickup</button>
+            <button class="btn">Item is packed, book pickup</button>
           </form></div>`
       : ''}
     ${o.status === 'shipping' ? html`<p>Parcel status: <strong>${o.delivery_label}</strong>${o.courier_status ? html` <span class="muted">(courier: ${o.courier_status})</span>` : ''}</p>` : ''}

@@ -1,4 +1,4 @@
-// Home page: shared shell plus the hero animation, which tells what TrustGap stands for — closing
+// Home page: shared shell plus the hero animation, which tells what TrustGap stands for: closing
 // the trust gap between a buyer and a seller in five steps: Agree, Secure, Deliver, Inspect, Release.
 import { shell, track, $, $$ } from '../core.js';
 
@@ -6,7 +6,7 @@ shell('public'); // not awaited: this page doesn't need the server settings to d
 
 const STEPS = [
   ['Agree', 'Buyer and seller agree in the chat. The seller turns it into one TrustGap deal link.'],
-  ['Secure', 'The buyer pays through the link. The money is held under the deal rules — not sent to the seller yet.'],
+  ['Secure', 'The buyer pays through the link. The money is held under the deal rules, not sent to the seller yet.'],
   ['Deliver', 'Payment is secured, so the seller dispatches. The courier carries the parcel to the buyer.'],
   ['Inspect', 'The buyer checks the item, then gives the rider their private delivery PIN.'],
   ['Release', 'After the inspection window, the seller is paid. Both sides knew what would happen next.'],
