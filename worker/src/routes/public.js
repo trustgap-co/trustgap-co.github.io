@@ -5,7 +5,7 @@ import { formatNaira, buyerPart } from '../lib/money.js';
 import { STATES } from '../lib/states.js';
 import { RULES } from '../lib/terms.js';
 import { CONDITIONS, EXPIRY_OPTIONS, BUYER_DISPUTE_CATEGORIES, getDeal, getSeller } from '../core/common.js';
-import { refreshDeal, publicDealView } from '../core/deals.js';
+import { refreshDeal, publicDealView, dealPhotos } from '../core/deals.js';
 import {
   startCheckout,
   placeOrder,
@@ -37,7 +37,7 @@ export function publicRoutes(r) {
   // Also reports whether the database is connected and has all its tables, so setup problems
   // (missing D1 binding, tables that could not be created) show up here, not as login errors.
   r.get('/api/health', async ({ ctx }) => {
-    const expected = ['sellers', 'sessions', 'otps', 'deals', 'checkouts', 'orders', 'order_events', 'disputes', 'ledger', 'outbox', 'mock_transactions', 'meta'];
+    const expected = ['sellers', 'sessions', 'otps', 'deals', 'checkouts', 'orders', 'order_events', 'disputes', 'ledger', 'outbox', 'mock_transactions', 'meta', 'deal_photos'];
     if (!ctx.env.DB) return { ok: false, database: 'No D1 binding called DB. Add it under Settings → Bindings.' };
     try {
       await ensureSchema(ctx.env);
@@ -46,6 +46,7 @@ export function publicRoutes(r) {
       if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(', ')}. The Worker could not create them. Check Logs.` };
       const columns = (await all(ctx.env, 'PRAGMA table_info(deals)')).map((c) => c.name);
       if (!columns.includes('processing_fee')) return { ok: false, database: 'Database update 0002 not applied. Check Logs.' };
+      if (!columns.includes('photo_count')) return { ok: false, database: 'Database update 0005 (item photos) not applied. Check Logs.' };
       return { ok: true, database: 'connected' };
     } catch (err) {
       return { ok: false, database: `Database error: ${err.message}` };
@@ -74,6 +75,16 @@ export function publicRoutes(r) {
   r.get('/api/deals/:token', async ({ ctx, params }) => {
     const deal = await loadDeal(ctx, params.token);
     return { deal: await publicDealView(ctx, deal), rules: RULES(deal) };
+  });
+
+  // The item photos. Kept after the link is paid: they are part of what the buyer agreed to.
+  r.get('/api/deals/:token/photos/:n', async ({ ctx, params }) => {
+    const deal = await first(ctx.env, 'SELECT id FROM deals WHERE token = ?', params.token);
+    const photo = deal && (await first(ctx.env, 'SELECT mime, data FROM deal_photos WHERE deal_id = ? AND position = ?', deal.id, Number(params.n)));
+    if (!photo) throw notFound('Photo not found.');
+    return new Response(new Uint8Array(photo.data), {
+      headers: { 'Content-Type': photo.mime, 'Cache-Control': 'public, max-age=31536000, immutable', 'Content-Security-Policy': "default-src 'none'" },
+    });
   });
 
   r.post('/api/deals/:token/accept', async ({ ctx, params }) => startCheckout(ctx, await loadDeal(ctx, params.token)));
@@ -148,6 +159,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         status: o.status,
         amount: o.amount,
         item_title: deal.item_title,
+        photos: await dealPhotos(ctx, deal),
         seller_name: seller.business_name,
         seller_phone: seller.phone,
         delivery_state: o.delivery_state,

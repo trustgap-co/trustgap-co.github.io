@@ -775,6 +775,10 @@ CREATE INDEX orders_delivery_ref ON orders(delivery_ref);
   {
     "name": "0004_seller_sets_delivery_address.sql",
     "sql": "-- The seller puts the buyer's delivery address on the link (from the chat), so the delivery fee is\n-- known and shown to both sides before anyone pays. The buyer confirms it read-only in step 1.\nALTER TABLE deals ADD COLUMN delivery_address TEXT;\nALTER TABLE deals ADD COLUMN delivery_landmark TEXT;\nALTER TABLE deals ADD COLUMN delivery_state TEXT;\n"
+  },
+  {
+    "name": "0005_item_photos.sql",
+    "sql": "-- Photos of the item, added by the seller with the link. The buyer sees them before paying, their\n-- fingerprints are part of the terms the buyer accepts, and they stay with the order as evidence.\nCREATE TABLE IF NOT EXISTS deal_photos (\n  id INTEGER PRIMARY KEY,\n  deal_id INTEGER NOT NULL REFERENCES deals(id),\n  position INTEGER NOT NULL,\n  mime TEXT NOT NULL,\n  data BLOB NOT NULL,\n  sha256 TEXT NOT NULL,\n  bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  UNIQUE (deal_id, position)\n);\nALTER TABLE deals ADD COLUMN photo_count INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];
 
@@ -931,7 +935,7 @@ var RULES = /* @__PURE__ */ __name((deal) => [
   "If you refuse a correct item, the cost of delivery and return may be deducted from your refund. Every deduction is shown to you in writing.",
   "Disputes are decided by TrustGap staff using evidence from both sides and the courier. You can appeal once by replying to the decision."
 ], "RULES");
-async function snapshotTerms(deal, seller) {
+async function snapshotTerms(deal, seller, photoHashes = []) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -940,7 +944,8 @@ async function snapshotTerms(deal, seller) {
       title: deal.item_title,
       description: deal.item_description,
       condition: deal.item_condition,
-      quantity: deal.quantity
+      quantity: deal.quantity,
+      photos_sha256: photoHashes
     },
     money: {
       item_price: deal.item_price,
@@ -1070,6 +1075,65 @@ function fmtDate(d) {
 }
 __name(fmtDate, "fmtDate");
 
+// src/lib/photos.js
+var MAX_PHOTOS = 4;
+var MAX_PHOTO_BYTES = 600 * 1024;
+async function parsePhotos(input) {
+  const list = Array.isArray(input) ? input : input ? [input] : [];
+  if (list.length > MAX_PHOTOS) throw new UserError(`Add up to ${MAX_PHOTOS} photos.`);
+  const photos = [];
+  for (const item of list) {
+    const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(item));
+    if (!m) throw new UserError("Each photo must be a JPEG image. Try adding it again.");
+    let bytes;
+    try {
+      bytes = Uint8Array.from(atob(m[1]), (c) => c.charCodeAt(0));
+    } catch {
+      throw new UserError("A photo could not be read. Try adding it again.");
+    }
+    if (bytes.length > MAX_PHOTO_BYTES) throw new UserError("A photo is too large. Try a smaller one.");
+    const clean = stripJpegMetadata(bytes);
+    photos.push({ mime: "image/jpeg", data: clean, bytes: clean.length, sha256: await sha256Bytes(clean) });
+  }
+  return photos;
+}
+__name(parsePhotos, "parsePhotos");
+function stripJpegMetadata(b) {
+  if (b[0] !== 255 || b[1] !== 216) throw new UserError("Each photo must be a JPEG image. Try adding it again.");
+  const out = [b.subarray(0, 2)];
+  let i = 2;
+  let imageData = false;
+  while (i + 4 <= b.length) {
+    if (b[i] !== 255) throw new UserError("A photo is damaged. Try adding it again.");
+    const marker = b[i + 1];
+    if (marker === 218) {
+      out.push(b.subarray(i));
+      imageData = true;
+      break;
+    }
+    const len = b[i + 2] << 8 | b[i + 3];
+    if (len < 2 || i + 2 + len > b.length) throw new UserError("A photo is damaged. Try adding it again.");
+    if (marker !== 225 && marker !== 237 && marker !== 254) out.push(b.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  if (!imageData) throw new UserError("A photo is damaged. Try adding it again.");
+  const size = out.reduce((n, p) => n + p.length, 0);
+  const clean = new Uint8Array(size);
+  let at = 0;
+  for (const p of out) {
+    clean.set(p, at);
+    at += p.length;
+  }
+  return clean;
+}
+__name(stripJpegMetadata, "stripJpegMetadata");
+async function sha256Bytes(bytes) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...digest].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+__name(sha256Bytes, "sha256Bytes");
+var photoUrls = /* @__PURE__ */ __name((ctx, deal, rows) => rows.map((p) => `${ctx.config.apiUrl}/api/deals/${encodeURIComponent(deal.token)}/photos/${p.position}?v=${p.sha256.slice(0, 10)}`), "photoUrls");
+
 // src/core/deals.js
 var PAYERS = ["buyer", "seller", "split"];
 function pricingInput(ctx, input) {
@@ -1139,18 +1203,21 @@ async function createDeal(ctx, seller, input) {
   if (!Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > 7) throw new UserError("Ship-within must be 1 to 7 days.");
   const expiresHours = Number(input.expires_hours || 24);
   if (!EXPIRY_OPTIONS.includes(expiresHours)) throw new UserError("Choose when the link expires.");
+  const photos = await parsePhotos(input.photos);
+  const old = input.replaces ? await first(ctx.env, "SELECT * FROM deals WHERE id = ? AND seller_id = ?", Number(input.replaces), seller.id) : null;
+  const replaced = old && old.status === "open" ? old : null;
+  const copyPhotosFrom = !photos.length && replaced?.photo_count ? replaced : null;
+  const photoCount = photos.length || copyPhotosFrom?.photo_count || 0;
+  if (!photoCount) throw new UserError("Add at least one photo of the item, so the buyer can see what they are paying for.");
   const p = pricingInput(ctx, input);
   const q = await priceDeal(ctx, p);
   const now = ctx.now();
   const token = randomToken(12);
   const statements = [];
   let replacesId = null;
-  if (input.replaces) {
-    const old = await first(ctx.env, "SELECT * FROM deals WHERE id = ? AND seller_id = ?", Number(input.replaces), seller.id);
-    if (old && old.status === "open") {
-      replacesId = old.id;
-      statements.push(stmt(ctx.env, "UPDATE deals SET status = 'replaced' WHERE id = ? AND status = 'open'", old.id));
-    }
+  if (replaced) {
+    replacesId = replaced.id;
+    statements.push(stmt(ctx.env, "UPDATE deals SET status = 'replaced' WHERE id = ? AND status = 'open'", replaced.id));
   }
   statements.push(
     insertStmt(ctx.env, "deals", {
@@ -1182,12 +1249,35 @@ async function createDeal(ctx, seller, input) {
       seller_payout: q.sellerPayout,
       delivery_days: deliveryDays,
       inspection_hours: ctx.config.inspectionHours,
+      photo_count: photoCount,
       status: "open",
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now)
     }),
     updateStmt(ctx.env, "sellers", seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState })
   );
+  const newDealId = "(SELECT id FROM deals WHERE token = ?)";
+  photos.forEach((ph, i) => statements.push(stmt(
+    ctx.env,
+    `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at) VALUES (${newDealId}, ?, ?, ?, ?, ?, ?)`,
+    token,
+    i + 1,
+    ph.mime,
+    ph.data,
+    ph.sha256,
+    ph.bytes,
+    iso(now)
+  )));
+  if (copyPhotosFrom) {
+    statements.push(stmt(
+      ctx.env,
+      `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at)
+       SELECT ${newDealId}, position, mime, data, sha256, bytes, ? FROM deal_photos WHERE deal_id = ?`,
+      token,
+      iso(now),
+      copyPhotosFrom.id
+    ));
+  }
   await ctx.env.DB.batch(statements);
   return first(ctx.env, "SELECT * FROM deals WHERE token = ?", token);
 }
@@ -1216,6 +1306,9 @@ function priceBreakdown(deal) {
   });
 }
 __name(priceBreakdown, "priceBreakdown");
+var photoRows = /* @__PURE__ */ __name((ctx, deal) => all(ctx.env, "SELECT position, sha256 FROM deal_photos WHERE deal_id = ? ORDER BY position", deal.id), "photoRows");
+var dealPhotos = /* @__PURE__ */ __name(async (ctx, deal) => photoUrls(ctx, deal, await photoRows(ctx, deal)), "dealPhotos");
+var dealPhotoHashes = /* @__PURE__ */ __name(async (ctx, deal) => (await photoRows(ctx, deal)).map((p) => p.sha256), "dealPhotoHashes");
 async function publicDealView(ctx, deal) {
   const seller = await getSeller(ctx, deal.seller_id);
   const q = priceBreakdown(deal);
@@ -1227,6 +1320,7 @@ async function publicDealView(ctx, deal) {
     item_description: deal.item_description,
     item_condition: deal.item_condition,
     quantity: deal.quantity,
+    photos: await dealPhotos(ctx, deal),
     ships_from: deal.pickup_state,
     delivery: { address: deal.delivery_address, landmark: deal.delivery_landmark, state: deal.delivery_state },
     delivery_payer: deal.delivery_payer,
@@ -1261,7 +1355,7 @@ __name(namesMatch, "namesMatch");
 async function startCheckout(ctx, deal) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
-  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id));
+  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal));
   const id = randomToken(15);
   await insert(ctx.env, "checkouts", { id, deal_id: deal.id, terms_json: json2, terms_hash: hash, created_at: iso(ctx.now()) });
   return { checkout_id: id, terms_hash: hash };
@@ -1811,7 +1905,7 @@ async function loadOrderByBuyerToken(ctx, token) {
 __name(loadOrderByBuyerToken, "loadOrderByBuyerToken");
 function publicRoutes(r) {
   r.get("/api/health", async ({ ctx }) => {
-    const expected = ["sellers", "sessions", "otps", "deals", "checkouts", "orders", "order_events", "disputes", "ledger", "outbox", "mock_transactions", "meta"];
+    const expected = ["sellers", "sessions", "otps", "deals", "checkouts", "orders", "order_events", "disputes", "ledger", "outbox", "mock_transactions", "meta", "deal_photos"];
     if (!ctx.env.DB) return { ok: false, database: "No D1 binding called DB. Add it under Settings \u2192 Bindings." };
     try {
       await ensureSchema(ctx.env);
@@ -1820,6 +1914,7 @@ function publicRoutes(r) {
       if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(", ")}. The Worker could not create them. Check Logs.` };
       const columns = (await all(ctx.env, "PRAGMA table_info(deals)")).map((c) => c.name);
       if (!columns.includes("processing_fee")) return { ok: false, database: "Database update 0002 not applied. Check Logs." };
+      if (!columns.includes("photo_count")) return { ok: false, database: "Database update 0005 (item photos) not applied. Check Logs." };
       return { ok: true, database: "connected" };
     } catch (err) {
       return { ok: false, database: `Database error: ${err.message}` };
@@ -1843,6 +1938,14 @@ function publicRoutes(r) {
   r.get("/api/deals/:token", async ({ ctx, params }) => {
     const deal = await loadDeal(ctx, params.token);
     return { deal: await publicDealView(ctx, deal), rules: RULES(deal) };
+  });
+  r.get("/api/deals/:token/photos/:n", async ({ ctx, params }) => {
+    const deal = await first(ctx.env, "SELECT id FROM deals WHERE token = ?", params.token);
+    const photo = deal && await first(ctx.env, "SELECT mime, data FROM deal_photos WHERE deal_id = ? AND position = ?", deal.id, Number(params.n));
+    if (!photo) throw notFound("Photo not found.");
+    return new Response(new Uint8Array(photo.data), {
+      headers: { "Content-Type": photo.mime, "Cache-Control": "public, max-age=31536000, immutable", "Content-Security-Policy": "default-src 'none'" }
+    });
   });
   r.post("/api/deals/:token/accept", async ({ ctx, params }) => startCheckout(ctx, await loadDeal(ctx, params.token)));
   r.post("/api/deals/:token/pay", async ({ ctx, params, body }) => {
@@ -1904,6 +2007,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         status: o.status,
         amount: o.amount,
         item_title: deal.item_title,
+        photos: await dealPhotos(ctx, deal),
         seller_name: seller.business_name,
         seller_phone: seller.phone,
         delivery_state: o.delivery_state,
@@ -2223,14 +2327,14 @@ function sellerRoutes(r) {
   });
   r.post("/api/seller/deals", async ({ ctx, request, body }) => {
     const deal = await createDeal(ctx, (await requireSeller(ctx, request)).seller, body);
-    return { deal: dealView(ctx, deal) };
+    return { deal: { ...dealView(ctx, deal), photos: await dealPhotos(ctx, deal) } };
   });
   r.get("/api/seller/deals/:id", async ({ ctx, request, params }) => {
     const { seller } = await requireSeller(ctx, request);
     const d = await first(ctx.env, "SELECT * FROM deals WHERE id = ? AND seller_id = ?", Number(params.id), seller.id);
     if (!d) throw notFound("Link not found.");
     const order = await first(ctx.env, "SELECT id FROM orders WHERE deal_id = ? AND status NOT IN ('awaiting_payment','cancelled','duplicate_refunded')", d.id);
-    return { deal: dealView(ctx, await refreshDeal(ctx, d)), order_id: order?.id || null };
+    return { deal: { ...dealView(ctx, await refreshDeal(ctx, d)), photos: await dealPhotos(ctx, d) }, order_id: order?.id || null };
   });
   r.post("/api/seller/deals/:id/cancel", async ({ ctx, request, params }) => {
     await cancelDeal(ctx, (await requireSeller(ctx, request)).seller, Number(params.id));
@@ -2248,6 +2352,7 @@ function sellerRoutes(r) {
         ref: o.ref,
         status: o.status,
         item_title: d.item_title,
+        photos: await dealPhotos(ctx, d),
         seller_payout: o.seller_payout,
         delivery_fee: o.delivery_fee,
         delivery_payer: d.delivery_payer,
@@ -2277,6 +2382,10 @@ async function runJobs(ctx) {
   const now = iso(ctx.now());
   const result = { expired: 0, cancelled: 0, released: 0, notShipped: 0, couriersChecked: 0, transfersSent: 0, transfersChecked: 0, resent: 0 };
   result.expired = (await run(ctx.env, "UPDATE deals SET status = 'expired' WHERE status = 'open' AND expires_at <= ?", now)).meta.changes;
+  const photoCutoff = iso(new Date(ctx.now().getTime() - 30 * 24 * 36e5));
+  result.photosDeleted = (await run(ctx.env, `DELETE FROM deal_photos WHERE deal_id IN (
+    SELECT d.id FROM deals d WHERE d.status IN ('expired', 'cancelled', 'replaced') AND d.created_at <= ?
+      AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deal_id = d.id AND o.status NOT IN ('awaiting_payment', 'cancelled')))`, photoCutoff)).meta.changes;
   const staleBefore = iso(new Date(ctx.now().getTime() - ctx.config.paymentTimeoutMinutes * 2 * 6e4));
   for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'awaiting_payment' AND created_at <= ? LIMIT 50", staleBefore)) {
     const fresh = await confirmPayment(ctx, o.tx_ref, "system");
@@ -2561,6 +2670,7 @@ function adminRoutes(r) {
         track_url: trackUrl(ctx, o)
       },
       deal: d,
+      photos: await dealPhotos(ctx, d),
       seller: {
         id: s.id,
         business_name: s.business_name,

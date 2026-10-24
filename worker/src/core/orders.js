@@ -3,7 +3,7 @@ import { randomToken, humanRef, randomDigits, encrypt, decrypt, safeEqual } from
 import { nairaToKobo, formatNaira } from '../lib/money.js';
 import { namesMatch } from '../lib/names.js';
 import { snapshotTerms } from '../lib/terms.js';
-import { refreshDeal } from './deals.js';
+import { refreshDeal, dealPhotoHashes } from './deals.js';
 import {
   UserError,
   DISPUTE_CATEGORIES,
@@ -30,7 +30,7 @@ import {
 export async function startCheckout(ctx, deal) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== 'open') throw new UserError('This link is no longer available.', 410);
-  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id));
+  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal));
   const id = randomToken(15);
   await insert(ctx.env, 'checkouts', { id, deal_id: deal.id, terms_json: json, terms_hash: hash, created_at: iso(ctx.now()) });
   return { checkout_id: id, terms_hash: hash };

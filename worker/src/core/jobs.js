@@ -10,6 +10,13 @@ export async function runJobs(ctx) {
 
   result.expired = (await run(ctx.env, "UPDATE deals SET status = 'expired' WHERE status = 'open' AND expires_at <= ?", now)).meta.changes;
 
+  // Photos of links nobody paid are deleted 30 days after the link was made, to keep the database
+  // small. Paid deals keep theirs: they are evidence. (A revised link already has its own copy.)
+  const photoCutoff = iso(new Date(ctx.now().getTime() - 30 * 24 * 3600_000));
+  result.photosDeleted = (await run(ctx.env, `DELETE FROM deal_photos WHERE deal_id IN (
+    SELECT d.id FROM deals d WHERE d.status IN ('expired', 'cancelled', 'replaced') AND d.created_at <= ?
+      AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.deal_id = d.id AND o.status NOT IN ('awaiting_payment', 'cancelled')))`, photoCutoff)).meta.changes;
+
   // Abandoned checkouts: check with the provider one last time (they may have paid late), then cancel.
   const staleBefore = iso(new Date(ctx.now().getTime() - ctx.config.paymentTimeoutMinutes * 2 * 60_000));
   for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'awaiting_payment' AND created_at <= ? LIMIT 50", staleBefore)) {

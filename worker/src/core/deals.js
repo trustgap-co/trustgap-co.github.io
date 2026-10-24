@@ -1,4 +1,5 @@
-import { first, insertStmt, updateStmt, stmt } from '../lib/db.js';
+import { first, all, insertStmt, updateStmt, stmt } from '../lib/db.js';
+import { parsePhotos, photoUrls } from '../lib/photos.js';
 import { randomToken } from '../lib/crypto.js';
 import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira } from '../lib/money.js';
 import { normaliseState } from '../lib/states.js';
@@ -80,6 +81,13 @@ export async function createDeal(ctx, seller, input) {
   if (!Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > 7) throw new UserError('Ship-within must be 1 to 7 days.');
   const expiresHours = Number(input.expires_hours || 24);
   if (!EXPIRY_OPTIONS.includes(expiresHours)) throw new UserError('Choose when the link expires.');
+  // Photos: new ones, or (when revising a link without adding new ones) the old link's photos.
+  const photos = await parsePhotos(input.photos);
+  const old = input.replaces ? await first(ctx.env, 'SELECT * FROM deals WHERE id = ? AND seller_id = ?', Number(input.replaces), seller.id) : null;
+  const replaced = old && old.status === 'open' ? old : null;
+  const copyPhotosFrom = !photos.length && replaced?.photo_count ? replaced : null;
+  const photoCount = photos.length || copyPhotosFrom?.photo_count || 0;
+  if (!photoCount) throw new UserError('Add at least one photo of the item, so the buyer can see what they are paying for.');
   const p = pricingInput(ctx, input);
   const q = await priceDeal(ctx, p);
 
@@ -87,12 +95,9 @@ export async function createDeal(ctx, seller, input) {
   const token = randomToken(12);
   const statements = [];
   let replacesId = null;
-  if (input.replaces) {
-    const old = await first(ctx.env, 'SELECT * FROM deals WHERE id = ? AND seller_id = ?', Number(input.replaces), seller.id);
-    if (old && old.status === 'open') {
-      replacesId = old.id;
-      statements.push(stmt(ctx.env, "UPDATE deals SET status = 'replaced' WHERE id = ? AND status = 'open'", old.id));
-    }
+  if (replaced) {
+    replacesId = replaced.id;
+    statements.push(stmt(ctx.env, "UPDATE deals SET status = 'replaced' WHERE id = ? AND status = 'open'", replaced.id));
   }
   statements.push(
     insertStmt(ctx.env, 'deals', {
@@ -122,12 +127,24 @@ export async function createDeal(ctx, seller, input) {
       seller_payout: q.sellerPayout,
       delivery_days: deliveryDays,
       inspection_hours: ctx.config.inspectionHours,
+      photo_count: photoCount,
       status: 'open',
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now),
     }),
     updateStmt(ctx.env, 'sellers', seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState }),
   );
+  // Same batch as the deal, so a link never exists without its photos.
+  const newDealId = '(SELECT id FROM deals WHERE token = ?)';
+  photos.forEach((ph, i) => statements.push(stmt(ctx.env,
+    `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at) VALUES (${newDealId}, ?, ?, ?, ?, ?, ?)`,
+    token, i + 1, ph.mime, ph.data, ph.sha256, ph.bytes, iso(now))));
+  if (copyPhotosFrom) {
+    statements.push(stmt(ctx.env,
+      `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at)
+       SELECT ${newDealId}, position, mime, data, sha256, bytes, ? FROM deal_photos WHERE deal_id = ?`,
+      token, iso(now), copyPhotosFrom.id));
+  }
   await ctx.env.DB.batch(statements);
   return first(ctx.env, 'SELECT * FROM deals WHERE token = ?', token);
 }
@@ -158,6 +175,14 @@ export function priceBreakdown(deal) {
   });
 }
 
+const photoRows = (ctx, deal) => all(ctx.env, 'SELECT position, sha256 FROM deal_photos WHERE deal_id = ? ORDER BY position', deal.id);
+
+/** Addresses of the deal's photos, in order. */
+export const dealPhotos = async (ctx, deal) => photoUrls(ctx, deal, await photoRows(ctx, deal));
+
+/** Fingerprints of the deal's photos, saved in the terms the buyer accepts. */
+export const dealPhotoHashes = async (ctx, deal) => (await photoRows(ctx, deal)).map((p) => p.sha256);
+
 // What the buyer may see: the whole deal, including the delivery address the seller entered (so
 // they can check it), but never the seller's pickup address or contact details.
 export async function publicDealView(ctx, deal) {
@@ -171,6 +196,7 @@ export async function publicDealView(ctx, deal) {
     item_description: deal.item_description,
     item_condition: deal.item_condition,
     quantity: deal.quantity,
+    photos: await dealPhotos(ctx, deal),
     ships_from: deal.pickup_state,
     delivery: { address: deal.delivery_address, landmark: deal.delivery_landmark, state: deal.delivery_state },
     delivery_payer: deal.delivery_payer,

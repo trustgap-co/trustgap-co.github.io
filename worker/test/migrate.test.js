@@ -6,7 +6,7 @@ import { D1Shim } from './d1-shim.js';
 import { MIGRATIONS } from '../src/schema.js';
 import { ensureSchema, splitStatements } from '../src/lib/migrate.js';
 
-const TABLES = ['checkouts', 'deals', 'disputes', 'ledger', 'meta', 'mock_transactions', 'order_events', 'orders', 'otps', 'outbox', 'sellers', 'sessions'];
+const TABLES = ['checkouts', 'deal_photos', 'deals', 'disputes', 'ledger', 'meta', 'mock_transactions', 'order_events', 'orders', 'otps', 'outbox', 'sellers', 'sessions'];
 const tables = async (db) =>
   (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name").all()).results.map((r) => r.name);
 

@@ -5,6 +5,7 @@ import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso } from 
 import { adminLogin, authenticate } from '../core/sellers.js';
 import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
+import { dealPhotos } from '../core/deals.js';
 import { syncSheets } from '../providers/sheets.js';
 
 async function requireAdmin(ctx, request) {
@@ -86,6 +87,7 @@ export function adminRoutes(r) {
         track_url: trackUrl(ctx, o),
       },
       deal: d,
+      photos: await dealPhotos(ctx, d),
       seller: {
         id: s.id, business_name: s.business_name, full_name: s.full_name, phone: s.phone, email: s.email,
         payout_bank_name: s.payout_bank_name, payout_account_number: s.payout_account_number,

@@ -2,7 +2,7 @@ import { first, all } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
 import { getSeller, payUrl, HELD_STATUSES } from '../core/common.js';
 import { signup, requestLogin, verifyCode, authenticate, logout, sellerView, setPayoutAccount, verifyIdentity } from '../core/sellers.js';
-import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown } from '../core/deals.js';
+import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown, dealPhotos } from '../core/deals.js';
 import { bookPickup, DELIVERY_LABELS } from '../core/orders.js';
 
 export async function requireSeller(ctx, request) {
@@ -89,7 +89,7 @@ export function sellerRoutes(r) {
 
   r.post('/api/seller/deals', async ({ ctx, request, body }) => {
     const deal = await createDeal(ctx, (await requireSeller(ctx, request)).seller, body);
-    return { deal: dealView(ctx, deal) };
+    return { deal: { ...dealView(ctx, deal), photos: await dealPhotos(ctx, deal) } };
   });
 
   r.get('/api/seller/deals/:id', async ({ ctx, request, params }) => {
@@ -97,7 +97,7 @@ export function sellerRoutes(r) {
     const d = await first(ctx.env, 'SELECT * FROM deals WHERE id = ? AND seller_id = ?', Number(params.id), seller.id);
     if (!d) throw notFound('Link not found.');
     const order = await first(ctx.env, "SELECT id FROM orders WHERE deal_id = ? AND status NOT IN ('awaiting_payment','cancelled','duplicate_refunded')", d.id);
-    return { deal: dealView(ctx, await refreshDeal(ctx, d)), order_id: order?.id || null };
+    return { deal: { ...dealView(ctx, await refreshDeal(ctx, d)), photos: await dealPhotos(ctx, d) }, order_id: order?.id || null };
   });
 
   r.post('/api/seller/deals/:id/cancel', async ({ ctx, request, params }) => {
@@ -118,6 +118,7 @@ export function sellerRoutes(r) {
         ref: o.ref,
         status: o.status,
         item_title: d.item_title,
+        photos: await dealPhotos(ctx, d),
         seller_payout: o.seller_payout,
         delivery_fee: o.delivery_fee,
         delivery_payer: d.delivery_payer,

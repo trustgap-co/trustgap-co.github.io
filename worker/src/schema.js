@@ -15,5 +15,9 @@ export const MIGRATIONS = [
   {
     "name": "0004_seller_sets_delivery_address.sql",
     "sql": "-- The seller puts the buyer's delivery address on the link (from the chat), so the delivery fee is\n-- known and shown to both sides before anyone pays. The buyer confirms it read-only in step 1.\nALTER TABLE deals ADD COLUMN delivery_address TEXT;\nALTER TABLE deals ADD COLUMN delivery_landmark TEXT;\nALTER TABLE deals ADD COLUMN delivery_state TEXT;\n"
+  },
+  {
+    "name": "0005_item_photos.sql",
+    "sql": "-- Photos of the item, added by the seller with the link. The buyer sees them before paying, their\n-- fingerprints are part of the terms the buyer accepts, and they stay with the order as evidence.\nCREATE TABLE IF NOT EXISTS deal_photos (\n  id INTEGER PRIMARY KEY,\n  deal_id INTEGER NOT NULL REFERENCES deals(id),\n  position INTEGER NOT NULL,\n  mime TEXT NOT NULL,\n  data BLOB NOT NULL,\n  sha256 TEXT NOT NULL,\n  bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  UNIQUE (deal_id, position)\n);\nALTER TABLE deals ADD COLUMN photo_count INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];

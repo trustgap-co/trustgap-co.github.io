@@ -13,7 +13,7 @@ export const RULES = (deal) => [
 ];
 
 // The exact deal and rules the buyer sees and accepts. Stored with the order, hashed, never changed.
-export async function snapshotTerms(deal, seller) {
+export async function snapshotTerms(deal, seller, photoHashes = []) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -23,6 +23,7 @@ export async function snapshotTerms(deal, seller) {
       description: deal.item_description,
       condition: deal.item_condition,
       quantity: deal.quantity,
+      photos_sha256: photoHashes,
     },
     money: {
       item_price: deal.item_price,

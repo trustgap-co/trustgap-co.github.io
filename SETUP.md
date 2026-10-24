@@ -282,6 +282,17 @@ those names. All images are PNG: landscape 1200×900, shrunk at tinypng.com to u
 `docs/assets/favicon.png` (192×192). Until a photo is there, its spot shows a
 labelled placeholder. Photos load only when they scroll into view, so they don't slow the first screen.
 
+**Item photos (uploaded by sellers).** Sellers add 1 to 4 photos to every link; the buyer sees them
+on step 1 before paying, and they stay with the order as evidence. Nothing to set up: the photos are
+stored in your D1 database (the Worker creates the `deal_photos` table itself on its next request).
+- The seller's phone shrinks each photo to a JPEG of at most 1280px (about 150–400 KB) before
+  uploading, and the Worker removes hidden camera details such as GPS location. (Seller photos are
+  JPEG, not PNG: a PNG photo is several MB and too large to store this way.)
+- Photos of links that were never paid are deleted after 30 days. Paid deals keep theirs.
+- Storage: the D1 free plan allows a 500 MB database, roughly 1,000–2,000 paid deals with photos.
+  When you get close (Cloudflare → D1 → trustgap shows the size), move to the
+  Workers Paid plan ($5/month, 10 GB per database), or ask for the photos to be moved to Cloudflare R2.
+
 ## 9. Analytics: Google Analytics 4 and Meta Pixel
 
 Full list of events and reports: **[TRACKING.md](TRACKING.md)**.
@@ -357,7 +368,7 @@ npm run db:migrate:local
 npm run dev                                   # API on http://localhost:8787
 # in another terminal:
 cd docs && python3 -m http.server 8080        # site on http://localhost:8080
-npm test                                      # (in worker/) 61 tests, no Cloudflare account needed
+npm test                                      # (in worker/) 67 tests, no Cloudflare account needed
 ```
 
 Admin locally: http://localhost:8080/admin/ with the password from `.dev.vars`.

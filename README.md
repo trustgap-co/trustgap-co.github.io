@@ -28,12 +28,12 @@ Live site: https://trustgap-co.github.io/
 
 1. **Seller signs up with an SMS code** (no passwords), verifies a payout account in their own
    name, and verifies their identity with their NIN.
-2. **Seller creates a link**: item, condition, price, private pickup address and state, the
+2. **Seller creates a link**: item, 1 to 4 photos of the actual item, condition, price, private pickup address and state, the
    buyer's delivery address and state (from the chat), parcel weight, fragile or not, ship-within
    days, who pays delivery and who pays the fees (buyer, seller or 50/50), and expiry time. A live
    preview shows the courier's delivery fee, both fees, what the buyer pays and what the seller
    receives before the link is created. Links can't be edited; a change makes a new link.
-3. **Buyer, step 1: review**: the item, the delivery address (read-only), the exact price
+3. **Buyer, step 1: review**: the item and its photos, the delivery address (read-only), the exact price
    breakdown and the protection rules. Confirming saves a hashed copy of exactly what they agreed to.
    A wrong detail means asking the seller for a corrected link.
 4. **Buyer, step 2: details & pay**: name, phone, email, and a refund account in the buyer's own
@@ -89,8 +89,8 @@ Copy guardrails (from the trust report): don't say “escrow”, “guaranteed�
 | `worker/src/routes/` | API endpoints for the website, riders, admin and webhooks |
 | `worker/src/providers/` | Flutterwave, Monnify, Fez, Make.com and Google Sheets connections (+ simulated versions) |
 | `worker/src/lib/` | Money maths, Nigerian states, buyer rules, encryption, signed links, automatic database setup |
-| `worker/migrations/` | Database tables |
-| `worker/test/` | 61 tests: full journeys, race conditions, pricing, payouts, Monnify, Fez, Make.com and Sheets |
+| `worker/migrations/` | Database tables (item photos are stored in D1 too, in `deal_photos`) |
+| `worker/test/` | 67 tests: full journeys, race conditions, pricing, payouts, Monnify, Fez, Make.com and Sheets |
 | `worker/dashboard/worker.js` | The whole Worker in one file, to paste into Cloudflare's **Edit code** |
 | `docs/assets/js/core.js` | Shared website code: API calls, safe HTML, header/footer, image slots, private-link handling |
 | `docs/assets/js/analytics.js` | GA4 + Meta Pixel, cookie banner, automatic and funnel events, speed measurements |
