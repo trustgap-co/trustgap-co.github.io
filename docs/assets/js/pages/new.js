@@ -65,6 +65,8 @@ try {
         <p class="label">TrustGap fee (${fee.percent}%) + payment processing</p>
         <p class="muted small">Payment processing passes Flutterwave’s charges on at cost (about ${config.processing.percent}% plus a small payout fee), so together it comes to roughly ${(fee.percent + config.processing.percent + 0.4).toFixed(1)}% of the price. Both lines are shown to the buyer separately.</p>
         <div class="choices">${radio('fee_payer', 'buyer', 'Buyer pays')}${radio('fee_payer', 'seller', 'I pay')}${radio('fee_payer', 'split', 'Split 50/50')}</div>
+        <label>Early-access code <small>optional. Removes the TrustGap fee from this link (once per seller)</small>
+          <input name="promo_code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. EARLYGAP" value="${v.promo_code || ''}" class="code-input"></label>
       </fieldset>
       <label>Link expires if not paid within
         <select name="expires_hours">${config.expiry_options.map((h) => html`<option value="${h}" ${h === Number(v.expires_hours) ? 'selected' : ''}>${h < 24 ? `${h} hour${h > 1 ? 's' : ''}` : `${h / 24} day${h > 24 ? 's' : ''}`}</option>`)}</select></label>
@@ -114,25 +116,28 @@ try {
   const payerLabel = { buyer: 'paid by buyer', seller: 'paid by you', split: 'split 50/50' };
   let timer;
   let started = false;
+  let promoTracked = false;
   let last = '';
   async function preview() {
     const d = formData(form);
     if (!d.item_price || !d.pickup_state || !d.delivery_state || !d.delivery_payer || !d.fee_payer) return;
-    const key = JSON.stringify([d.item_price, d.pickup_state, d.delivery_state, d.weight_kg, d.delivery_payer, d.fee_payer]);
+    const key = JSON.stringify([d.item_price, d.pickup_state, d.delivery_state, d.weight_kg, d.delivery_payer, d.fee_payer, d.promo_code?.trim()]);
     if (key === last) return;
     last = key;
     show('#preview', html`<p class="muted small">Calculating…</p>`);
     try {
-      const { price: p, delivery_state } = await api('/api/seller/quote', { method: 'POST', body: d, as: 'seller' });
+      const { price: p, delivery_state, promo } = await api('/api/seller/quote', { method: 'POST', body: d, as: 'seller' });
       if (key !== last) return;
       show('#preview', html`<table class="breakdown">
         <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
         <tr><td>Delivery to ${delivery_state} (${payerLabel[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
-        <tr><td>TrustGap fee ${fee.percent}% (${payerLabel[d.fee_payer]})</td><td>${money(p.platformFee)}</td></tr>
+        <tr><td>TrustGap fee ${fee.percent}% ${promo ? '(early-access code)' : `(${payerLabel[d.fee_payer]})`}</td>
+          <td>${promo ? html`<s class="muted">${money(promo.saving)}</s> ${money(0)}` : money(p.platformFee)}</td></tr>
         <tr><td>Payment processing (${payerLabel[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
         <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
         <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
-      </table>`);
+      </table>${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`);
+      if (promo && !promoTracked) { promoTracked = true; track('promo_applied', { side: 'seller', discount: promo.saving / 100 }); }
     } catch (err) {
       if (key === last) show('#preview', html`<div class="error">${err.message}</div>`);
       last = '';

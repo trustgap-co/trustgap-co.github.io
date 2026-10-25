@@ -460,3 +460,82 @@ body:not(.site) > main { min-height: calc(100vh - 64px); min-height: calc(100svh
 .photo-add { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .photo-add:focus-within { outline: 2px solid var(--link); outline-offset: 2px; }
 .photo-field .label small { display: block; font-weight: 400; color: var(--muted); font-size: .85rem; margin-top: 2px; }
+
+/* ---- Step 1: confirm card ---- */
+.confirm-box { border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-top: 20px; background: var(--card); }
+.confirm-box h2 { margin: 0 0 8px; font-size: 1.15rem; }
+.confirm-box > p { margin: 0 0 10px; }
+.confirm-inner { background: var(--info-soft); border-radius: 12px; padding: 16px; margin-top: 14px; display: grid; justify-items: center; gap: 4px; text-align: center; }
+.confirm-inner form { width: 100%; margin-top: 10px; }
+.confirm-icon { color: var(--navy); }
+.btn-confirm { font-size: 1.02rem; padding: 14px 16px; }
+@media (prefers-color-scheme: dark) { .confirm-icon { color: var(--white); } }
+.promo-box { margin: 12px 0 0; }
+.promo-box summary { cursor: pointer; color: var(--link); font-weight: 500; }
+.promo-row { display: flex; gap: 8px; margin-top: 10px; align-items: stretch; }
+.promo-row input { flex: 1; text-transform: uppercase; letter-spacing: .05em; }
+.promo-row .form-error { flex-basis: 100%; }
+.promo-row { flex-wrap: wrap; }
+.breakdown tr.discount td { color: var(--ok); }
+.ok-text { color: var(--ok); margin: 6px 0 0; }
+.code-input { text-transform: uppercase; letter-spacing: .05em; }
+
+/* ---- Launch switch (site-info.js → launched) ---- */
+body:not(.is-live) .when-live { display: none !important; }
+body.is-live .when-prelaunch { display: none !important; }
+
+/* ---- Pre-launch campaign ---- */
+.launch-pill { display: inline-block; margin: 0 0 14px; padding: 5px 12px; border-radius: 999px; background: rgba(157,185,245,.16);
+  color: #C9D8FA; font-size: .85rem; font-weight: 600; border: 1px solid rgba(157,185,245,.35); }
+.campaign { background: var(--info-soft); }
+.campaign-in { display: grid; gap: 28px; align-items: center; }
+@media (min-width: 860px) { .campaign-in { grid-template-columns: 1.2fr 1fr; } }
+.campaign h2 { margin-top: 0; }
+.campaign-cards { display: grid; gap: 12px; }
+.campaign-card { display: grid; gap: 2px; padding: 18px 20px; border-radius: 14px; background: var(--card); border: 1px solid var(--line);
+  text-decoration: none; color: var(--text); box-shadow: 0 10px 24px -18px rgba(11,27,61,.5); position: relative; padding-right: 44px; }
+.campaign-card::after { content: "→"; position: absolute; right: 18px; top: 50%; transform: translateY(-50%); font-size: 1.3rem; color: var(--link); }
+.campaign-card strong { font-size: 1.05rem; }
+.campaign-card span { color: var(--muted); font-size: .92rem; }
+.campaign-card.alt { background: var(--navy); color: var(--white); border-color: var(--navy); }
+.campaign-card.alt span { color: #C9D3EA; }
+.campaign-card.alt::after { color: var(--white); }
+.campaign-card:hover { border-color: var(--link); }
+
+/* ---- Survey and early access ---- */
+.page-hero-sm { padding: 44px 0 40px; }
+.sv-section { padding-top: 28px; }
+.sv-wrap { max-width: 640px; }
+.sv-card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px 20px 18px; box-shadow: 0 20px 40px -30px rgba(11,27,61,.45); }
+.sv-card h1 { font-size: 1.45rem; line-height: 1.25; margin: 4px 0 12px; }
+.sv-card h2 { font-size: 1.2rem; line-height: 1.3; margin: 0 0 14px; }
+.sv-progress { height: 6px; border-radius: 999px; background: var(--brand-soft); overflow: hidden; margin-bottom: 18px; }
+.sv-progress span { display: block; height: 100%; background: var(--link); transition: width .3s; }
+.sv-count { color: var(--muted); font-size: .85rem; margin: 0 0 6px; }
+.sv-q { border: 0; padding: 0; margin: 0; }
+.sv-q legend { padding: 0; outline: none; }
+.sv-options { display: grid; gap: 8px; margin-bottom: 10px; }
+.sv-two { grid-template-columns: 1fr 1fr; }
+.sv-opt { text-align: left; padding: 13px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--bg); color: var(--text);
+  font: inherit; font-size: .98rem; cursor: pointer; min-height: 48px; }
+.sv-opt:hover { border-color: var(--link); }
+.sv-opt.on { border-color: var(--navy); background: var(--navy); color: var(--white); }
+@media (prefers-color-scheme: dark) { .sv-opt.on { background: var(--white); color: var(--navy); } }
+.sv-other, .sv-select, .sv-text { width: 100%; box-sizing: border-box; font: inherit; padding: 12px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--card); color: var(--text); margin-bottom: 10px; }
+.sv-err { color: var(--danger); min-height: 1.2em; margin: 4px 0 8px; font-size: .92rem; }
+.sv-back { display: block; margin: 12px auto 0; }
+.sv-restart, .sv-again { display: block; margin: 12px auto 0; text-align: center; }
+.sv-facts { padding-left: 18px; margin: 0 0 18px; }
+.sv-facts li { margin-bottom: 6px; }
+.sv-warn { background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: .88rem; margin: 0 0 14px; }
+.sv-note { background: var(--info-soft); border-radius: 10px; padding: 10px 12px; font-size: .9rem; }
+.sv-contact { margin-top: 6px; }
+.sv-done { text-align: center; display: grid; gap: 12px; }
+.sv-done p { margin: 0; }
+.sv-tick { width: 56px; height: 56px; margin: 0 auto; border-radius: 50%; background: var(--ok-soft); color: var(--ok); display: grid; place-items: center; font-size: 1.6rem; font-weight: 700; }
+.sv-code { border: 2px dashed var(--link); border-radius: 14px; padding: 14px; display: grid; gap: 4px; background: var(--info-soft); }
+.sv-code p { font-size: .85rem; color: var(--muted); }
+.sv-code strong { font-size: 1.6rem; letter-spacing: .12em; }
+.sv-code span { font-size: .88rem; color: var(--muted); }
+.ea-form { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px 20px; }
+.hp { position: absolute; left: -5000px; width: 1px; height: 1px; overflow: hidden; }

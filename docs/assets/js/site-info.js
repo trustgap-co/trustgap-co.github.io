@@ -2,36 +2,54 @@
 // page updates. Anything left as "[...]" shows on the site as a highlighted placeholder.
 // (From the TrustGap Legal Content Pack: "Required placeholders before publication".)
 export const SITE = {
-  legalName: 'Tubalcain Ads Enterprise',
-  rcNumber: '9568185',
-  registeredAddress: '11, Ojighvwre street, Ugborikoko, Effurun, Delta State, Nigeria',
-  operatingAddress: 'lagos Nigeria',
-  supportEmail: 'trustgap.co@gmail.com',
-  privacyEmail: 'trustgap.co@gmail.com',
-  complaintsEmail: 'trustgap.co@gmail.com',
-  complianceEmail: 'trustgap.co@gmail.com',
+  // ---- Launch switch -------------------------------------------------------------------------
+  // false (before launch): the home page and menus promote "Get early access" and the survey; the
+  //   "Start a protected deal" / seller sign-up buttons are hidden (the pages still work for testing).
+  // true (launch day): the deal buttons come back everywhere and the early-access promotion goes.
+  launched: false,
+  launchDate: 'Monday, 23 November 2026',
+
+  // ---- Survey and early access ---------------------------------------------------------------
+  // Both forms post to this Make.com webhook, which adds a row to your Google Sheet.
+  // Until you paste the real URL, the forms show a "not connected" warning and save nothing.
+  leadsWebhookUrl: '[MAKE WEBHOOK URL]',
+  // The early-access code shown after sign-up. MUST match PROMO_CODE in the Worker's settings.
+  earlyAccessCode: 'EARLYGAP',
+  earlyAccessCodeEnds: '31 January 2027', // keep in step with PROMO_ENDS in the Worker
+  // Under-18s can take the survey anonymously. Their phone/email is only collected if your lawyer
+  // approves it (children's data needs parental consent under the NDPA): then set this to true.
+  allowUnder18Contact: false,
+
+  legalName: 'Tubalcain Ads Enterprise', // TrustGap is a trading name of this business
+  rcNumber: '[RC NUMBER]',
+  registeredAddress: '[FULL REGISTERED ADDRESS]',
+  operatingAddress: '[OPERATING ADDRESS, IF DIFFERENT]',
+  supportEmail: '[SUPPORT EMAIL]',
+  privacyEmail: '[PRIVACY OR DPO EMAIL]',
+  complaintsEmail: '[COMPLAINTS EMAIL]',
+  complianceEmail: '[COMPLIANCE EMAIL]',
   supportPhone: '[SUPPORT NUMBER]',
-  supportHours: '24 hours',
+  supportHours: '[OPERATING HOURS]',
   dpo: '[DATA PROTECTION OFFICER NAME OR ROLE]',
-  effectiveDate: 'October 24th, 2026',
-  lastUpdated: 'October 24th, 2026',
-  minimumAge: '18',
+  effectiveDate: '[DATE]',
+  lastUpdated: '[DATE]',
+  minimumAge: '[18, OR LAWYER-CONFIRMED AGE]',
   inspectionWindow: '24 hours',
-  disputeAckTime: '24 to 48 hours',
-  sellerResponseTime: '24 hours',
-  refundTime: 'card refund takes 3–15 business days, while bank account refund takes 24–48 business hours',
+  disputeAckTime: '[TIMEFRAME]',
+  sellerResponseTime: '[TIMEFRAME]',
+  refundTime: '[TIMEFRAME OR RANGE]',
   payoutTiming: 'the next working day after the buyer’s payment settles, once the release condition is met',
-  deliveryCoverage: 'across the 36 states of Nigeria',
+  deliveryCoverage: '[CITIES/AREAS COVERED]',
   governingLaw: '[JURISDICTION TO BE CONFIRMED BY LAWYER]',
   // Website analytics. Paste your IDs here (leave the placeholders to keep tracking off):
   //  - ga4Id: GA4 → Admin → Data streams → your web stream → "Measurement ID" (looks like G-AB12CD34EF)
   //  - metaPixelId: Meta Events Manager → Data sources → your pixel → the number under its name
-  // requireConsent: show a cookie banner and load the trackers only after the visitor accepts.
-  // Keep it true unless your lawyer confirms consent isn't needed (see the Cookie Policy).
+  // requireConsent: false = trackers load on every visit (no banner); visitors can switch them off
+  // with "Cookie settings" in the footer. true = they load only after a visitor taps Accept.
   tracking: {
     ga4Id: 'G-XXXXXXXXXX',
     metaPixelId: '000000000000000',
-    requireConsent: true,
+    requireConsent: false,
   },
   // Set to true only after your lawyer approves the policy pages: removes the "draft" notice.
   policiesApproved: false,

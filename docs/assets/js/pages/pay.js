@@ -1,6 +1,6 @@
 // The link the seller sends. Step 1: confirm the whole deal, including the delivery address the
 // seller entered (read-only) and the exact total. Step 2: contact details and refund account, pay.
-import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, gallery, track, trackThenGo, naira, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, $ } from '../core.js';
 
 const config = await shell('buyer');
 const token = params.get('d') || '';
@@ -31,19 +31,27 @@ const ecommerce = (d) => ({
 const paidBySeller = html`<span class="muted">Paid by seller</span>`;
 const half = (payer) => (payer === 'split' ? ' (your half)' : '');
 
-function breakdown(d) {
+// `promo`: the buyer's early-access code once applied ({ code, discount, checkoutId, total }).
+function breakdown(d, promo) {
   const p = d.price;
+  const feeCell = d.promo_applied ? html`<span class="muted">Waived (early-access code)</span>`
+    : p.platform_fee ? money(p.platform_fee) : paidBySeller;
   return html`<table class="breakdown">
     <tr><td>Item price${d.quantity > 1 ? ` (×${d.quantity})` : ''}</td><td>${money(p.item)}</td></tr>
     <tr><td>Delivery ${d.ships_from} → ${d.delivery.state}${half(d.delivery_payer)}</td><td>${p.delivery ? money(p.delivery) : paidBySeller}</td></tr>
-    <tr><td>TrustGap fee (${config.fee.percent}%)${half(d.fee_payer)}</td><td>${p.platform_fee ? money(p.platform_fee) : paidBySeller}</td></tr>
+    <tr><td>TrustGap fee (${config.fee.percent}%)${half(d.fee_payer)}</td><td>${feeCell}</td></tr>
     <tr><td>Payment processing${half(d.fee_payer)} <small class="muted">(Flutterwave’s charges, passed on at cost)</small></td>
       <td>${p.processing_fee ? money(p.processing_fee) : paidBySeller}</td></tr>
-    <tr class="total"><td>You pay</td><td>${money(p.total)}</td></tr>
+    ${promo ? html`<tr class="discount"><td>Early-access code ${promo.code} <small class="muted">(TrustGap fee removed)</small></td><td>−${money(promo.discount)}</td></tr>` : ''}
+    <tr class="total"><td>You pay</td><td>${money(promo ? promo.total : p.total)}</td></tr>
   </table>`;
 }
 
-function review(d, rules) {
+const shieldIcon = raw('<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>');
+
+function review(d, rules, promo = null) {
+  // A buyer code can only remove the buyer's own share of the TrustGap fee.
+  const canUseCode = !d.promo_applied && d.price.platform_fee > 0;
   show('#app', html`${steps(1)}<section class="card">
     <p class="seller-line">Seller: <strong>${d.seller.business_name}</strong>
       ${d.seller.identity_verified ? html`<span class="badge badge-ok">✓ Identity verified</span>` : html`<span class="badge badge-muted">Identity not yet verified</span>`}</p>
@@ -57,29 +65,61 @@ function review(d, rules) {
       ${d.delivery.landmark ? html`<br><span class="small">Near ${d.delivery.landmark}</span>` : ''}
       <br><span class="small muted">Not your address? Don’t continue. Ask the seller to send a corrected link.</span>
     </div>
-    ${breakdown(d)}
+    ${breakdown(d, promo)}
     <ul class="facts">
       <li>📦 Seller hands it to the courier within <strong>${d.delivery_days} day(s)</strong> of payment</li>
       <li>🔍 You get <strong>${d.inspection_hours} hours</strong> after delivery to report a problem</li>
       <li>⏰ This link expires <strong>${date(d.expires_at)}</strong></li>
     </ul>
     <details class="rules" open><summary>How your money is protected</summary><ol>${rules.map((r) => html`<li>${r}</li>`)}</ol></details>
-    <form id="accept"><button class="btn btn-block">The item, address and price are right. Continue</button></form>
-    <p class="muted small center">Something wrong? Don’t continue. Tell the seller, who can send you a corrected link.</p>
+
+    <div class="confirm-box">
+      <h2>Confirm your order details</h2>
+      <p>Please confirm that the item, delivery address and price shown above are correct.</p>
+      <p>Once you confirm, you’ll go to the <strong>secure payment step</strong>. Your payment is secured under the deal rules until the agreed delivery and inspection steps are complete.</p>
+      ${canUseCode ? html`<details class="promo-box" ${promo ? raw('open') : ''}><summary>Have an early-access code?</summary>
+        <form id="promo-form" class="promo-row">
+          <label class="visually-hidden" for="promo-code">Early-access code</label>
+          <input id="promo-code" name="promo_code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. EARLYGAP" value="${promo?.code || ''}" ${promo ? raw('readonly') : ''}>
+          ${promo ? html`<button type="button" class="btn btn-small btn-secondary" id="promo-remove">Remove</button>` : html`<button class="btn btn-small btn-secondary">Apply</button>`}
+        </form>
+        ${promo ? html`<p class="small ok-text">Code applied: you save ${money(promo.discount)}.</p>` : ''}</details>` : ''}
+      <div class="confirm-inner">
+        <span class="confirm-icon">${shieldIcon}</span>
+        <strong>Ready to proceed?</strong>
+        <span class="muted small">Review your details before moving to payment.</span>
+        <form id="accept"><button class="btn btn-block btn-confirm">Confirm Details &amp; Proceed to Payment →</button></form>
+      </div>
+      <p class="muted small center">Something wrong? Don’t continue. Tell the seller, who can send you a corrected link.</p>
+    </div>
   </section>`);
+
+  if ($('#promo-form') && !promo) {
+    onSubmit($('#promo-form'), async ({ promo_code }) => {
+      if (!promo_code.trim()) throw new Error('Type your early-access code first.');
+      const r = await api(`/api/deals/${encodeURIComponent(token)}/accept`, { method: 'POST', body: { promo_code } });
+      track('promo_applied', { side: 'buyer', discount: naira(r.promo.discount) });
+      review(d, rules, { code: r.promo.code, discount: r.promo.discount, checkoutId: r.checkout_id, total: r.total });
+      $('.confirm-box').scrollIntoView({ block: 'center' });
+    });
+  }
+  $('#promo-remove')?.addEventListener('click', () => review(d, rules));
+
   onSubmit($('#accept'), async () => {
-    track('begin_checkout', ecommerce(d));
-    const { checkout_id } = await api(`/api/deals/${encodeURIComponent(token)}/accept`, { method: 'POST', body: {} });
-    await details(d, checkout_id);
+    track('begin_checkout', { ...ecommerce(d), ...(promo ? { coupon: promo.code, value: naira(promo.total) } : {}) });
+    const checkout = promo
+      ? { checkout_id: promo.checkoutId, total: promo.total }
+      : await api(`/api/deals/${encodeURIComponent(token)}/accept`, { method: 'POST', body: {} });
+    await details(d, checkout.checkout_id, checkout.total ?? d.price.total);
     scrollTo(0, 0);
   });
 }
 
-async function details(d, checkoutId) {
+async function details(d, checkoutId, total) {
   const banks = await getBanks();
   show('#app', html`${steps(2)}<section class="card">
     <h1>Your details</h1>
-    <p class="muted">${d.item_title} → ${d.delivery.state} · <strong>${money(d.price.total)}</strong> · <button class="linklike" id="back">review the deal again</button></p>
+    <p class="muted">${d.item_title} → ${d.delivery.state} · <strong>${money(total)}</strong> · <button class="linklike" id="back">review the deal again</button></p>
     <form class="form" id="pay">
       <label>Full name <small>as on your bank account</small><input name="buyer_name" required autocomplete="name"></label>
       <div class="grid2">
@@ -94,7 +134,7 @@ async function details(d, checkoutId) {
         </div>
         ${testAccountsHint(config)}
       </fieldset>
-      <button class="btn btn-block">Pay ${money(d.price.total)} securely</button>
+      <button class="btn btn-block">Pay ${money(total)} securely</button>
       <p class="muted small center">Your payment is secured under the deal rules. The seller is not paid until delivery and inspection.</p>
     </form>
   </section>`);
@@ -102,9 +142,9 @@ async function details(d, checkoutId) {
   onSubmit($('#pay'), async (data) => {
     const res = await api(`/api/deals/${encodeURIComponent(token)}/pay`, {
       method: 'POST',
-      body: { ...data, checkout_id: checkoutId, expected_total: d.price.total },
+      body: { ...data, checkout_id: checkoutId, expected_total: total },
     });
-    trackThenGo('add_payment_info', { ...ecommerce(d), payment_type: 'payment_page' }, res.payment_url);
+    trackThenGo('add_payment_info', { ...ecommerce(d), value: naira(total), payment_type: 'payment_page' }, res.payment_url);
   });
 }
 

@@ -307,27 +307,27 @@ Full list of events and reports: **[TRACKING.md](TRACKING.md)**.
    tracking: {
      ga4Id: 'G-AB12CD34EF',
      metaPixelId: '123456789012345',
-     requireConsent: true,
+     requireConsent: false,
    },
    ```
 
    Upload the file. While the placeholders (`G-XXXXXXXXXX`, `000000000000000`) are there, nothing
    loads.
-4. **Check it:** open `https://trustgap-co.github.io/?debug_tracking=1`, accept cookies, and click
-   around. Events appear in the browser console and in **GA4 → Admin → DebugView** within seconds;
+4. **Check it:** open `https://trustgap-co.github.io/?debug_tracking=1` and click around. Events appear in the browser console and in **GA4 → Admin → DebugView** within seconds;
    use Meta's **Test events** tab or the Meta Pixel Helper extension for the pixel.
    `?debug_tracking=0` turns debugging off again.
-5. **In GA4, once:** mark `sign_up`, `deal_link_created`, `begin_checkout` and `purchase` as **key
-   events**, and register the custom dimensions listed in TRACKING.md.
-6. **In Meta:** use `CompleteRegistration` (seller sign-ups) or `Purchase` (buyer payments) as the
-   ad optimisation event.
+5. **In GA4, once:** mark `early_access_signup`, `survey_complete`, `sign_up`, `deal_link_created`,
+   `begin_checkout` and `purchase` as **key events**, and register the custom dimensions listed in TRACKING.md.
+6. **In Meta:** before launch, use `Lead` (early-access sign-ups) as the ad optimisation event; after
+   launch, `CompleteRegistration` (seller sign-ups) or `Purchase` (buyer payments).
 
 How it behaves:
-- **Cookie banner:** with `requireConsent: true` the trackers load only after a visitor taps
-  **Accept**. Visitors can change their mind with **Cookie settings** in the footer. This matches
-  the draft Cookie Policy. Only set `requireConsent: false` if your lawyer confirms consent isn't
-  needed. Visitors who tap “No thanks” are not counted, so expect GA4 numbers to be lower than real
-  traffic.
+- **On by default:** with `requireConsent: false` (the current setting) GA4 and the Meta Pixel load
+  on every visit, with no banner. Anyone can switch them off with **Cookie settings** in the footer
+  (that choice is remembered on their phone). The cookie register in `legal/cookies.html` says this.
+  **Ask your lawyer** whether Nigerian law (the NDPA and the NDPC's guidance) requires consent first
+  for analytics and advertising cookies; if it does, set `requireConsent: true` and a banner will ask
+  before anything loads.
 - **Never tracked:** admin pages and the rider page.
 - **Private links stay private:** the buyer's deal and tracking links contain a secret code (and
   the tracking page shows the delivery PIN). Before Google or Meta load, the code is swapped in the
@@ -340,7 +340,115 @@ How it behaves:
   order per device, with the order reference as the ID, so Meta can de-duplicate if you add
   server-side events later.
 
-## 10. Going live checklist
+## 10. Pre-launch campaign: survey, early access, launch switch and early-access code
+
+### a. Survey and early-access answers → Google Sheets (through Make)
+
+The survey (`survey.html`) and the early-access form (`early-access.html`) send each response
+straight from the visitor's browser to **one Make.com webhook**. The Worker isn't involved.
+
+1. **Google Sheet:** create a sheet called e.g. `TrustGap leads` with two tabs, **Survey** and
+   **Early access**. Put these headings in row 1 (any order; Make maps them by name):
+   - **Survey:** `submitted_at_lagos, source, medium, campaign, role, b_frequency, b_channels,
+     b_channels_other, b_scammed, b_what_happened, b_what_happened_other, b_hesitation, b_payment,
+     b_payment_other, b_protection, b_likely, b_trust, b_trust_other, s_category, s_category_other,
+     s_channels, s_channels_other, s_orders, s_payment, s_payment_other, s_problem, s_problem_other,
+     s_lost_money, s_would_use, s_would_use_other, s_stop, s_stop_other, s_fee, state, age_range,
+     under_18, safer_change, early_access, name, business_name, phone, email, channel, seller_pilot,
+     research_contact, promo_code, seconds_taken, device, survey_version, submission_id`
+   - **Early access:** `submitted_at_lagos, source, medium, campaign, role, name, business_name,
+     category, phone, email, channel, state, age_range, consent, promo_code, device, submission_id`
+2. **Make:** create a new scenario. Add **Webhooks → Custom webhook**, create a webhook (e.g.
+   "TrustGap leads") and copy its URL (it starts with `https://hook.` and ends in `.make.com/…`).
+3. Paste the URL into `docs/assets/js/site-info.js` → `leadsWebhookUrl`, and upload the file.
+   (Until you do, both forms show a yellow "not connected" warning and save nothing.)
+4. In Make, click **Redetermine data structure**, then fill in the survey once on the live site
+   (use "Yes, contact me"), and the early-access form once. Make now knows every field.
+5. After the webhook, add a **Router** with two routes:
+   - Route 1, filter **form = survey** → **Google Sheets → Add a row** to the **Survey** tab, mapping
+     each column to the field of the same name.
+   - Route 2, filter **form = early_access** → **Add a row** to the **Early access** tab.
+   - Optional: on route 2 (and on route 1 when `early_access = yes`), send a WhatsApp/SMS through your
+     KudiSMS module: "Welcome to TrustGap early access! Your code {{promo_code}} removes the TrustGap
+     fee from your first deal after launch."
+6. Turn the scenario **on** (immediately).
+
+What's sent, and what isn't:
+- Every completed survey is sent, including anonymous ones ("No, submit anonymously") and those from
+  under-18s. Under-18s are never asked for contact details (`under_18 = yes`); change
+  `allowUnder18Contact` in site-info.js only if your lawyer approves (children's data needs a
+  parent's consent under the NDPA).
+- No NIN, bank details, card PIN, OTP or passwords are ever asked for.
+- `source` comes from the link people arrived on: add `?source=instagram`, `?source=whatsapp`,
+  `?source=tiktok` etc. to every link you post (or utm_source / utm_medium / utm_campaign). It's
+  remembered from the first page they land on.
+- `submission_id` is unique per response: if a slow connection ever sends one twice, delete the
+  duplicate row.
+- If the phone is offline, the response waits on the phone and is sent when it's back online.
+- The webhook address is visible in the website's code, so someone could post junk to it. The forms
+  have a hidden spam trap, and you can delete junk rows; if it becomes a problem, add a Make filter
+  or move the forms behind the Worker.
+- Survey answers are personal data: Make and Google act for TrustGap here. Keep the sheet private,
+  share it only with the people who need it, and delete responses when the research is done.
+
+### b. The launch switch
+
+In `docs/assets/js/site-info.js`:
+
+```js
+launched: false,
+launchDate: 'Monday, 23 November 2026',
+```
+
+- **`launched: false` (now):** the home page shows **Get early access** and **Take the 2-minute
+  survey**, a "Launching Monday, 23 November 2026" badge, and a "Have you ever been scammed while
+  shopping online?" section with buyer and seller survey links. The header button is **Get early
+  access** and the menu shows **Take the survey**. Every "Start a protected deal" / seller sign-up
+  button on the site is replaced by **Get early access**. The seller pages, deal links and admin
+  still work (for your testing) if you go to them directly.
+- **`launched: true` (launch day):** change that one word, upload site-info.js, and the deal buttons,
+  "Seller login" and "Sell with payment secured" come back everywhere; the campaign section and
+  early-access buttons disappear. The survey and early-access pages stay online at their addresses.
+
+On the page, anything marked `class="when-live"` shows only after launch, and `class="when-prelaunch"`
+only before. Use those classes if you add more buttons.
+
+### c. The early-access code (EARLYGAP)
+
+**What it gives:** no TrustGap fee (1.5%) on one deal. TrustGap only ever gives away its own fee:
+Flutterwave's processing and the courier are still paid in full, so a deal with the code earns
+TrustGap ₦0, never less.
+
+- **Sellers** enter it in **Early-access code** when creating a link. The live preview shows the fee
+  crossed out. The link has no TrustGap fee at all, whoever was paying it (buyer, seller or both).
+  Once per seller account. If that link expires or is cancelled unpaid, they can use it again.
+- **Buyers** tap **Have an early-access code?** on step 1 of a link. Their share of the TrustGap fee is
+  removed from their total (all of it if they pay the fee, half on a 50/50 deal). The seller's payout
+  doesn't change. Once per buyer phone number. If the seller pays the whole fee, or the link already
+  has no fee, there's nothing for a buyer's code to remove, and they're told to keep it.
+- The discount is part of the terms the buyer accepts, and shows on their tracking page.
+
+**Settings** (Worker → Settings → Variables, all optional; defaults shown):
+
+| Name | Default | Meaning |
+|---|---|---|
+| `PROMO_CODE` | `EARLYGAP` | The code (not case-sensitive). Set it to empty to switch the offer off. |
+| `PROMO_ENDS` | `2027-01-31` | Last day it works (Lagos time). |
+| `PROMO_MAX_USES` | `1000` | Total links + orders it can be used on, to cap what it can cost. |
+
+If you change the code or the end date, change `earlyAccessCode` / `earlyAccessCodeEnds` in
+site-info.js too (that's what the thank-you screens show).
+
+It's one shared code, so it can be passed around. That's limited by once-per-seller and
+once-per-phone, the end date and the cap, and the most it can cost is your fee on those deals.
+
+### d. Launch-day steps
+
+1. `launched: true` in site-info.js; upload.
+2. Worker: `TEST_MODE = "false"` and the live provider settings (see the checklist below).
+3. Check the home page, a real test deal (with and without the code), and the survey still saving.
+
+## 11. Going live checklist
 
 - [ ] Lawyer advises on holding customer funds (Flutterwave confirmed TrustGap is the custodian)
 - [ ] Lawyer reviews the policy pages in `docs/legal/` and the buyer rules in `worker/src/lib/terms.js`;
@@ -348,8 +456,10 @@ How it behaves:
 - [ ] Company details filled in `site-info.js` (no yellow `[placeholders]` left anywhere on the site)
 - [ ] Flutterwave and Fez approve how they're named before setting `partnerNamesApproved: true`
 - [ ] Photos added to `docs/assets/images/`
-- [ ] GA4 and Meta Pixel IDs set; events checked with `?debug_tracking=1`; cookie banner wording
-      confirmed by the lawyer
+- [ ] GA4 and Meta Pixel IDs set; events checked with `?debug_tracking=1`; lawyer confirms
+      whether analytics may be on by default (`requireConsent`)
+- [ ] Make webhook URL in site-info.js; a test survey and early-access row arrive in the sheet
+- [ ] `launched: true` in site-info.js on launch day
 - [ ] Merchant agreement checked: reserves, chargebacks, prohibited items, whether the 2% is capped
 - [ ] Monnify wallet funded for NIN checks (₦60 each)
 - [ ] `TEST_MODE = "false"` (stops showing login codes on screen and the test banner)
@@ -368,7 +478,7 @@ npm run db:migrate:local
 npm run dev                                   # API on http://localhost:8787
 # in another terminal:
 cd docs && python3 -m http.server 8080        # site on http://localhost:8080
-npm test                                      # (in worker/) 67 tests, no Cloudflare account needed
+npm test                                      # (in worker/) 72 tests, no Cloudflare account needed
 ```
 
 Admin locally: http://localhost:8080/admin/ with the password from `.dev.vars`.

@@ -22,6 +22,8 @@ const META = {
   purchase: 'Purchase',
   contact_click: 'Contact',
   otp_requested: { custom: 'SignupStarted', only: (p) => p.flow === 'signup' },
+  early_access_signup: 'Lead',
+  survey_complete: { custom: 'SurveyCompleted' },
   deal_link_created: { custom: 'DealLinkCreated' },
   fee_calculator_used: { custom: 'FeeCalculatorUsed' },
 };
@@ -39,7 +41,8 @@ let publicPage = false; // marketing pages: link texts and headings are safe to 
 let loaded = false;
 let queue = [];
 
-const consent = () => (CFG.requireConsent === false ? 'granted' : store.get(CONSENT_KEY));
+// A visitor's own choice always wins. Without one: on by default unless requireConsent is true.
+const consent = () => store.get(CONSENT_KEY) || (CFG.requireConsent === false ? 'granted' : null);
 
 // ---------------------------------------------------------------- sending
 // Last line of defence against personal data: quoted text (e.g. an account holder's name in an
@@ -164,16 +167,14 @@ function banner() {
     store.set(CONSENT_KEY, choice);
     el.remove();
     if (choice === 'granted') load();
+    else if (loaded) location.reload(); // already running: reload so they stop
     else queue = [];
   });
   document.body.appendChild(el);
 }
 
-/** Lets visitors change their answer (footer → "Cookie settings"). Reload applies a withdrawal. */
+/** Lets visitors change their answer (footer → "Cookie settings"). */
 export function openCookieSettings() {
-  const was = store.get(CONSENT_KEY);
-  try { localStorage.removeItem(CONSENT_KEY); } catch { /* ignore */ }
-  if (was === 'granted' && loaded) { location.reload(); return; }
   banner();
 }
 

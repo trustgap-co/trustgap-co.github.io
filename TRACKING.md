@@ -10,11 +10,11 @@ In `docs/assets/js/site-info.js` → `tracking`:
 tracking: {
   ga4Id: 'G-XXXXXXXXXX',          // GA4 → Admin → Data streams → Web → Measurement ID
   metaPixelId: '000000000000000', // Meta Events Manager → Data sources → your pixel's ID
-  requireConsent: true,           // cookie banner; trackers load only after "Accept"
+  requireConsent: false,          // on by default; true = a banner asks first
 },
 ```
 
-While the placeholders are there, nothing loads and no banner shows. You can add one ID without the other.
+While the placeholders are there, nothing loads. You can add one ID without the other.
 
 ## 2. Check it works
 
@@ -73,6 +73,19 @@ Sent to GA4 always; the **Meta** column shows what Meta receives.
 | `share` | Link copied or "Share on WhatsApp" | method = copy / whatsapp | – |
 | `pickup_booked` | Seller books the courier | – | – |
 
+### Pre-launch campaign
+| Event | When | Main details | Meta |
+|---|---|---|---|
+| `survey_start` | Role chosen (or arrived on a buyer/seller survey link) | role | – |
+| `survey_step` | Each question answered | question, step | – |
+| `survey_complete` | Survey sent | role, early_access, source, under_18 | SurveyCompleted |
+| `early_access_signup` | Early-access sign-up (form, or "Yes, contact me" in the survey) | role, via | **Lead** |
+| `early_access_under_18` | Under-18 tried to join early access (nothing saved) | – | – |
+| `promo_applied` | A seller's or buyer's early-access code is accepted | side, discount | – |
+
+Survey answers and contact details are never sent to Google or Meta; they go only to your Google
+Sheet through Make. `begin_checkout` carries `coupon` when a buyer used the code.
+
 ### Everyone (automatic)
 | Event | When | Main details |
 |---|---|---|
@@ -90,8 +103,8 @@ Sent to GA4 always; the **Meta** column shows what Meta receives.
 
 ## Privacy rules built in
 
-- Nothing loads before the visitor accepts cookies (while `requireConsent` is true). "Cookie
-  settings" in the footer lets them change their mind.
+- Trackers are on by default (`requireConsent: false`); anyone can switch them off with "Cookie
+  settings" in the footer, and that choice is remembered. Set `requireConsent: true` to ask first.
 - Never tracked: admin pages and the rider page.
 - The secret code in buyers' links (`pay.html?d=…`, `track.html?t=…`) is swapped for a short local
   key before Google or Meta load, so they never see it. The page still works when reloaded or

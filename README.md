@@ -64,9 +64,15 @@ acting at the same moment can't pay twice.
 | `buyers.html`, `sellers.html` | One page for each side; sellers get a payout calculator |
 | `fees.html` | Fees, calculator (same maths as the Worker), who pays and what is refundable |
 | `faq.html` | Questions, including safety and privacy |
+| `survey.html`, `early-access.html` | Pre-launch campaign: buyer/seller survey and early-access sign-up, sent to Google Sheets through Make |
 | `legal/` | 10 policy pages from the Legal Content Pack, marked “Draft: under legal review” |
 | `pay.html`, `track.html` | The buyer's deal link and private tracking page |
 | `seller/`, `admin/`, `rider.html` | Seller app, staff admin, courier-rider page |
+
+**Launch switch:** `launched: false` in `docs/assets/js/site-info.js` makes the site promote early
+access and the survey; set it to `true` on launch day and the deal buttons come back (SETUP.md §10).
+
+**Early-access code** `EARLYGAP`: no TrustGap fee on one deal per seller and one order per buyer phone.
 
 Things you edit by hand:
 - **`docs/assets/js/site-info.js`**: company name, RC number, addresses, emails, phone, dates and
@@ -90,7 +96,7 @@ Copy guardrails (from the trust report): don't say “escrow”, “guaranteed�
 | `worker/src/providers/` | Flutterwave, Monnify, Fez, Make.com and Google Sheets connections (+ simulated versions) |
 | `worker/src/lib/` | Money maths, Nigerian states, buyer rules, encryption, signed links, automatic database setup |
 | `worker/migrations/` | Database tables (item photos are stored in D1 too, in `deal_photos`) |
-| `worker/test/` | 67 tests: full journeys, race conditions, pricing, payouts, Monnify, Fez, Make.com and Sheets |
+| `worker/test/` | 72 tests: full journeys, race conditions, pricing, payouts, Monnify, Fez, Make.com and Sheets |
 | `worker/dashboard/worker.js` | The whole Worker in one file, to paste into Cloudflare's **Edit code** |
 | `docs/assets/js/core.js` | Shared website code: API calls, safe HTML, header/footer, image slots, private-link handling |
 | `docs/assets/js/analytics.js` | GA4 + Meta Pixel, cookie banner, automatic and funnel events, speed measurements |

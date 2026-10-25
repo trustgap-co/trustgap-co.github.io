@@ -27,13 +27,20 @@
     <div class="hero-grid">
       <div>
         <p class="eyebrow">Safer social commerce in Nigeria</p>
+        <p class="launch-pill when-prelaunch">Launching <span data-site="launchDate"></span></p>
         <h1>Buy from social sellers without the <em>trust wahala.</em></h1>
         <p class="hero-sub">TrustGap secures the payment, gets the item delivered, and releases the money only after the agreed handover and inspection steps. One link for safer WhatsApp and Instagram deals.</p>
-        <div class="cta-row">
+        <div class="cta-row when-live">
           <a class="btn btn-lg btn-light" href="seller/signup.html">Start a protected deal</a>
           <a class="btn btn-lg btn-outline-light" href="how.html">See how TrustGap works</a>
         </div>
-        <p class="hero-note">Buying? Ask your seller to send you a TrustGap link. <a href="buyers.html" style="color:#9DB9F5">How it protects you →</a></p>
+        <p class="hero-note when-live">Buying? Ask your seller to send you a TrustGap link. <a href="buyers.html" style="color:#9DB9F5">How it protects you →</a></p>
+        <!-- Before launch (site-info.js → launched: false) -->
+        <div class="cta-row when-prelaunch">
+          <a class="btn btn-lg btn-light" href="early-access.html">Get early access</a>
+          <a class="btn btn-lg btn-outline-light" href="survey.html">Take the 2-minute survey</a>
+        </div>
+        <p class="hero-note when-prelaunch">Early-access members pay no TrustGap fee on their first deal. <a href="how.html" style="color:#9DB9F5">See how TrustGap works →</a></p>
         <!-- Shown only once both partners approve how they are named (site-info.js → partnerNamesApproved). -->
         <p class="hero-note needs-partner-approval">Payment powered by Flutterwave. Delivery coordinated with Fez Delivery.</p>
         <div class="hero-mech" aria-label="Agree. Secure. Deliver. Inspect. Release.">
@@ -126,6 +133,24 @@
           <g class="closed"><text x="280" y="340" text-anchor="middle" style="fill:#4CC38A;font:800 14px Roboto,sans-serif">Trust gap closed ✓</text></g>
         </svg>
         <div class="caption" id="anim-caption" aria-live="polite"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ CAMPAIGN (before launch only) -->
+  <section class="section campaign when-prelaunch" id="survey">
+    <div class="container campaign-in">
+      <div>
+        <p class="eyebrow">Help shape safer online shopping in Nigeria</p>
+        <h2>Have you ever been scammed while shopping online?</h2>
+        <p class="lead">Maybe the item never arrived. Maybe it was fake, damaged, or different from the picture. Maybe you’re a seller who sent an item and the buyer refused to pay.</p>
+        <p>We’re researching the trust problems in Nigerian online shopping, and building a safer way to complete social-commerce deals. Tell us what happened.</p>
+      </div>
+      <div class="campaign-cards">
+        <a class="campaign-card" href="survey.html?role=buyer"><strong>I buy online</strong><span>Take the buyer survey · 2 minutes</span></a>
+        <a class="campaign-card" href="survey.html?role=seller"><strong>I sell online</strong><span>Take the seller survey · 2 minutes</span></a>
+        <a class="campaign-card alt" href="early-access.html"><strong>Get early access</strong><span>Be first in, with no TrustGap fee on your first deal</span></a>
+        <p class="small muted">No NIN, bank details, card PIN or OTP needed. <a href="legal/privacy.html">Privacy</a></p>
       </div>
     </div>
   </section>
@@ -281,7 +306,7 @@
       <h2>Turn “send your account details” into a safer way to trade.</h2>
       <p>Create a TrustGap deal link and give your buyer one clear path from agreement to delivery.</p>
       <div class="cta-row" style="justify-content:center">
-        <a class="btn btn-lg btn-light" href="seller/signup.html">Create a free seller account</a>
+        <a class="btn btn-lg btn-light when-live" href="seller/signup.html">Create a free seller account</a><a class="btn btn-lg btn-light when-prelaunch" href="early-access.html">Get early access</a>
         <a class="btn btn-lg btn-outline-light" href="how.html">See how it works</a>
       </div>
     </div>

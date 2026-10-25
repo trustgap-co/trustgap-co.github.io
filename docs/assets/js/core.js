@@ -274,6 +274,16 @@ function loadImage(slot) {
   }
 }
 
+// Which campaign link brought this visitor (?source=instagram, utm_source, or the referring site),
+// remembered from the page they land on so the survey and early-access forms can record it.
+function rememberSource() {
+  const q = new URLSearchParams(location.search);
+  const tagged = q.get('source') || q.get('utm_source');
+  const ref = document.referrer && new URL(document.referrer).hostname;
+  if (tagged) local.set('tg_source', JSON.stringify({ source: tagged, medium: q.get('utm_medium') || '', campaign: q.get('utm_campaign') || '' }));
+  else if (ref && ref !== location.hostname && !local.get('tg_source')) local.set('tg_source', JSON.stringify({ source: ref, medium: 'referral', campaign: '' }));
+}
+
 // Draws the header and footer straight away (no waiting for the API), then adds the test-mode bar
 // when the settings arrive. Returns the settings.
 export async function shell(area) {
@@ -291,8 +301,11 @@ export async function shell(area) {
     public: html`<button class="menu-btn" id="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span><span></span><span></span></button>
       <nav class="nav site-nav" id="site-nav">
         ${PUBLIC_NAV.map(([href, label]) => html`<a href="${link(href)}" class="${here === href ? 'on' : ''}">${label}</a>`)}
-        <a href="${link('seller/login.html')}">Seller login</a>
-        <a class="btn btn-small btn-light" href="${link('seller/signup.html')}">Sell with payment secured</a>
+        ${SITE.launched
+          ? html`<a href="${link('seller/login.html')}">Seller login</a>
+            <a class="btn btn-small btn-light" href="${link('seller/signup.html')}">Sell with payment secured</a>`
+          : html`<a href="${link('survey.html')}" class="${here === 'survey.html' ? 'on' : ''}">Take the survey</a>
+            <a class="btn btn-small btn-light" href="${link('early-access.html')}">Get early access</a>`}
       </nav>`,
   }[area];
   document.body.insertAdjacentHTML('afterbegin', String(html`
@@ -302,7 +315,8 @@ export async function shell(area) {
     <div class="foot-brand"><a class="logo" href="${link('index.html')}">Trust<span>Gap</span></a>
       <p>The safe completion layer for social commerce in Nigeria: payment secured, item delivered, both sides know what happens next.</p></div>
     <div><h4>Product</h4>${PUBLIC_NAV.map(([href, label]) => html`<a href="${link(href)}">${label}</a>`)}
-      <a href="${link('seller/signup.html')}">Create a seller account</a></div>
+      ${SITE.launched ? html`<a href="${link('seller/signup.html')}">Create a seller account</a>`
+        : html`<a href="${link('early-access.html')}">Get early access</a><a href="${link('survey.html')}">Take the survey</a>`}</div>
     <div><h4>Policies</h4>
       <a href="${link('legal/terms.html')}">Terms of Service</a><a href="${link('legal/privacy.html')}">Privacy Policy</a>
       <a href="${link('legal/data-protection.html')}">Data protection &amp; your rights</a><a href="${link('legal/delivery.html')}">Delivery Policy</a>
@@ -312,10 +326,13 @@ export async function shell(area) {
     <div><h4>Contact</h4><p>
       <span data-site="supportEmail"></span><br><span data-site="supportPhone"></span><br><span data-site="supportHours"></span><br>
       <span data-site="registeredAddress"></span></p></div>
-  </div><div class="container foot-bottom">© ${new Date().getFullYear()} <span data-site="legalName"></span>, trading as TrustGap · RC <span data-site="rcNumber"></span>.
+  </div><div class="container foot-bottom">© ${new Date().getFullYear()} TrustGap, a trading name of <span data-site="legalName"></span> · RC <span data-site="rcNumber"></span>.
     TrustGap is not a bank and does not guarantee items or sellers. See the <a href="${link('legal/terms.html')}">Terms</a>.
     ${trackingConfigured && area !== 'admin' ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div></footer>`));
+  rememberSource();
   document.body.classList.add('has-shell');
+  // Launch switch (site-info.js → launched): pages mark buttons .when-live / .when-prelaunch.
+  document.body.classList.toggle('is-live', Boolean(SITE.launched));
   $('#cookie-settings')?.addEventListener('click', openCookieSettings);
   fillSiteInfo();
   loadImages();
