@@ -34,6 +34,14 @@ export function loadConfig(env) {
       otherStateKobo: num(env.DELIVERY_OTHER_STATE_NAIRA, 6000) * 100,
       vatPercent: num(env.DELIVERY_VAT_PERCENT, 7.5),
     },
+    // Early-access code: removes the TrustGap fee from one deal per seller account and one order per
+    // buyer phone number, until the end date (inclusive, Lagos time) or until it has been used
+    // PROMO_MAX_USES times. Leave PROMO_CODE empty to switch the offer off.
+    promo: {
+      code: String(env.PROMO_CODE ?? 'EARLYGAP').trim().toUpperCase(),
+      endsAt: env.PROMO_ENDS === '' ? null : new Date(`${env.PROMO_ENDS || '2027-01-31'}T23:59:59+01:00`),
+      maxUses: num(env.PROMO_MAX_USES, 1000),
+    },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,

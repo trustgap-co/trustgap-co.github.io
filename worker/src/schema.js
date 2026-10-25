@@ -19,5 +19,9 @@ export const MIGRATIONS = [
   {
     "name": "0005_item_photos.sql",
     "sql": "-- Photos of the item, added by the seller with the link. The buyer sees them before paying, their\n-- fingerprints are part of the terms the buyer accepts, and they stay with the order as evidence.\nCREATE TABLE IF NOT EXISTS deal_photos (\n  id INTEGER PRIMARY KEY,\n  deal_id INTEGER NOT NULL REFERENCES deals(id),\n  position INTEGER NOT NULL,\n  mime TEXT NOT NULL,\n  data BLOB NOT NULL,\n  sha256 TEXT NOT NULL,\n  bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  UNIQUE (deal_id, position)\n);\nALTER TABLE deals ADD COLUMN photo_count INTEGER NOT NULL DEFAULT 0;\n"
+  },
+  {
+    "name": "0006_early_access_code.sql",
+    "sql": "-- Early-access code: removes the TrustGap fee (1.5%) from one deal. A seller can use it on one link\n-- (the whole fee is removed); a buyer can use it on one order (their share of the fee is removed).\nALTER TABLE deals ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_discount INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];

@@ -43,7 +43,7 @@ describe('happy path', () => {
     const { trackToken, track } = await buyerPays(t, deal.token);
     assert.equal(track.order.status, 'paid');
     // Lagos → Lagos: ₦3,000 + 7.5% VAT delivery, processing recalculated on the real total.
-    assert.deepEqual(track.order.price, { item: 4_500_000, delivery: 322_500, platform_fee: 67_500, processing_fee: 105_700, total: 4_995_700 });
+    assert.deepEqual(track.order.price, { item: 4_500_000, delivery: 322_500, platform_fee: 67_500, processing_fee: 105_700, promo_discount: 0, total: 4_995_700 });
     assert.match(track.order.pin, /^\d{4}$/);
     assert.equal((await t.get(`/api/deals/${deal.token}`)).data.deal.status, 'paid');
 

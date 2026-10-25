@@ -87,7 +87,7 @@ export function publicRoutes(r) {
     });
   });
 
-  r.post('/api/deals/:token/accept', async ({ ctx, params }) => startCheckout(ctx, await loadDeal(ctx, params.token)));
+  r.post('/api/deals/:token/accept', async ({ ctx, params, body }) => startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code));
 
   r.post('/api/deals/:token/pay', async ({ ctx, params, body }) => {
     const deal = await loadDeal(ctx, params.token);
@@ -175,7 +175,8 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         price: {
           item: deal.item_price,
           delivery: buyerPart(deal.delivery_payer, o.delivery_fee),
-          platform_fee: buyerPart(deal.fee_payer, o.platform_fee),
+          platform_fee: buyerPart(deal.fee_payer, o.platform_fee + o.promo_discount) - o.promo_discount,
+          promo_discount: o.promo_discount,
           processing_fee: buyerPart(deal.fee_payer, o.processing_fee),
           total: o.amount,
         },

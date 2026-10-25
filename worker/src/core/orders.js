@@ -1,9 +1,10 @@
 import { first, all, run, insert, update, stmt } from '../lib/db.js';
 import { randomToken, humanRef, randomDigits, encrypt, decrypt, safeEqual } from '../lib/crypto.js';
-import { nairaToKobo, formatNaira } from '../lib/money.js';
+import { nairaToKobo, formatNaira, buyerPart } from '../lib/money.js';
 import { namesMatch } from '../lib/names.js';
 import { snapshotTerms } from '../lib/terms.js';
 import { refreshDeal, dealPhotoHashes } from './deals.js';
+import { checkPromo, buyerUsedPromo } from './promo.js';
 import {
   UserError,
   DISPUTE_CATEGORIES,
@@ -27,13 +28,24 @@ import {
 
 // ---------------------------------------------------------------- buyer checkout
 
-export async function startCheckout(ctx, deal) {
+export async function startCheckout(ctx, deal, promoInput) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== 'open') throw new UserError('This link is no longer available.', 410);
-  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal));
+  const promo = await buyerPromo(ctx, deal, promoInput);
+  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo);
   const id = randomToken(15);
   await insert(ctx.env, 'checkouts', { id, deal_id: deal.id, terms_json: json, terms_hash: hash, created_at: iso(ctx.now()) });
-  return { checkout_id: id, terms_hash: hash };
+  return { checkout_id: id, terms_hash: hash, total: JSON.parse(json).money.buyer_total, promo };
+}
+
+// A buyer's early-access code removes their share of the TrustGap fee on this deal.
+async function buyerPromo(ctx, deal, input) {
+  const code = await checkPromo(ctx, input);
+  if (!code) return null;
+  if (deal.promo_code) throw new UserError('This link already has no TrustGap fee. Keep your code for another deal.');
+  const discount = buyerPart(deal.fee_payer, deal.platform_fee);
+  if (!discount) throw new UserError('The seller pays the TrustGap fee on this deal, so your code has nothing to remove. Keep it for another deal.');
+  return { code, discount };
 }
 
 async function getCheckout(ctx, deal, checkoutId) {
@@ -70,8 +82,15 @@ export async function placeOrder(ctx, { deal, input }) {
 
   // The address and every amount come from the link the buyer confirmed in step 1, never from
   // this request. A mismatch means the page is out of date.
-  if (input.expected_total !== undefined && Number(input.expected_total) !== deal.buyer_total) {
-    throw new UserError(`This deal now costs ${formatNaira(deal.buyer_total)}. Please go back to step 1 and check it again.`, 409);
+  const money = JSON.parse(checkout.terms_json).money;
+  const discount = money.promo_discount || 0;
+  const total = deal.buyer_total - discount;
+  if (input.expected_total !== undefined && Number(input.expected_total) !== total) {
+    throw new UserError(`This deal now costs ${formatNaira(total)}. Please go back to step 1 and check it again.`, 409);
+  }
+  const promoCode = discount ? await checkPromo(ctx, money.promo_code) : deal.promo_code || null;
+  if (discount && (await buyerUsedPromo(ctx, buyerPhone, promoCode))) {
+    throw new UserError('This phone number has already used the early-access code. Go back to step 1 and remove it to continue.', 409);
   }
 
   const fresh = await refreshDeal(ctx, await getDeal(ctx, deal.id));
@@ -88,9 +107,11 @@ export async function placeOrder(ctx, { deal, input }) {
     delivery_landmark: deal.delivery_landmark,
     delivery_state: deal.delivery_state,
     delivery_fee: deal.delivery_fee,
-    platform_fee: deal.platform_fee,
+    platform_fee: deal.platform_fee - discount,
     processing_fee: deal.processing_fee,
     seller_payout: deal.seller_payout,
+    promo_code: promoCode,
+    promo_discount: discount,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
     refund_account_enc: await encrypt(accountNumber, ctx.config.appSecret),
@@ -99,7 +120,7 @@ export async function placeOrder(ctx, { deal, input }) {
     terms_json: checkout.terms_json,
     terms_hash: checkout.terms_hash,
     terms_accepted_at: checkout.created_at,
-    amount: deal.buyer_total,
+    amount: total,
     status: 'awaiting_payment',
     tx_ref: 'TGTX-' + randomToken(12),
     created_at: iso(ctx.now()),

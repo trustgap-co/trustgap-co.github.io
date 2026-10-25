@@ -1,5 +1,6 @@
 import { first, all, insertStmt, updateStmt, stmt } from '../lib/db.js';
 import { parsePhotos, photoUrls } from '../lib/photos.js';
+import { checkSellerPromo } from './promo.js';
 import { randomToken } from '../lib/crypto.js';
 import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira } from '../lib/money.js';
 import { normaliseState } from '../lib/states.js';
@@ -30,15 +31,15 @@ function pricingInput(ctx, input) {
 }
 
 // Delivery price from the courier (Fez /order/cost, or the manual table), the TrustGap fee, and
-// payment processing grossed up on the real total.
-async function priceDeal(ctx, p) {
+// payment processing grossed up on the real total. With an early-access code there is no TrustGap fee.
+async function priceDeal(ctx, p, { promo = false } = {}) {
   let deliveryFee;
   try {
     ({ feeKobo: deliveryFee } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
   } catch (err) {
     throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
   }
-  const pf = platformFee(p.itemPrice, ctx.config.fee);
+  const pf = promo ? 0 : platformFee(p.itemPrice, ctx.config.fee);
   const buyerShare = p.feePayer === 'buyer' ? 1 : p.feePayer === 'split' ? 0.5 : 0;
   const pr = processingFee(
     { itemPrice: p.itemPrice, buyerDelivery: buyerPart(p.deliveryPayer, deliveryFee), platform: pf, buyerShare },
@@ -52,9 +53,15 @@ async function priceDeal(ctx, p) {
 }
 
 // "Calculate price" on the seller's form.
-export async function previewDeal(ctx, input) {
+export async function previewDeal(ctx, input, seller) {
   const p = pricingInput(ctx, input);
-  return { pickup_state: p.pickupState, delivery_state: p.deliveryState, price: await priceDeal(ctx, p) };
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
+  return {
+    pickup_state: p.pickupState,
+    delivery_state: p.deliveryState,
+    price: await priceDeal(ctx, p, { promo: Boolean(promo) }),
+    promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) },
+  };
 }
 
 export async function createDeal(ctx, seller, input) {
@@ -89,7 +96,8 @@ export async function createDeal(ctx, seller, input) {
   const photoCount = photos.length || copyPhotosFrom?.photo_count || 0;
   if (!photoCount) throw new UserError('Add at least one photo of the item, so the buyer can see what they are paying for.');
   const p = pricingInput(ctx, input);
-  const q = await priceDeal(ctx, p);
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
+  const q = await priceDeal(ctx, p, { promo: Boolean(promo) });
 
   const now = ctx.now();
   const token = randomToken(12);
@@ -128,6 +136,7 @@ export async function createDeal(ctx, seller, input) {
       delivery_days: deliveryDays,
       inspection_hours: ctx.config.inspectionHours,
       photo_count: photoCount,
+      promo_code: promo,
       status: 'open',
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now),
@@ -204,6 +213,7 @@ export async function publicDealView(ctx, deal) {
     inspection_hours: deal.inspection_hours,
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
+    promo_applied: Boolean(deal.promo_code),
     price: {
       item: q.itemPrice,
       delivery: q.buyerDelivery,

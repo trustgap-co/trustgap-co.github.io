@@ -107,6 +107,14 @@ function loadConfig(env) {
       otherStateKobo: num(env.DELIVERY_OTHER_STATE_NAIRA, 6e3) * 100,
       vatPercent: num(env.DELIVERY_VAT_PERCENT, 7.5)
     },
+    // Early-access code: removes the TrustGap fee from one deal per seller account and one order per
+    // buyer phone number, until the end date (inclusive, Lagos time) or until it has been used
+    // PROMO_MAX_USES times. Leave PROMO_CODE empty to switch the offer off.
+    promo: {
+      code: String(env.PROMO_CODE ?? "EARLYGAP").trim().toUpperCase(),
+      endsAt: env.PROMO_ENDS === "" ? null : /* @__PURE__ */ new Date(`${env.PROMO_ENDS || "2027-01-31"}T23:59:59+01:00`),
+      maxUses: num(env.PROMO_MAX_USES, 1e3)
+    },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,
@@ -779,6 +787,10 @@ CREATE INDEX orders_delivery_ref ON orders(delivery_ref);
   {
     "name": "0005_item_photos.sql",
     "sql": "-- Photos of the item, added by the seller with the link. The buyer sees them before paying, their\n-- fingerprints are part of the terms the buyer accepts, and they stay with the order as evidence.\nCREATE TABLE IF NOT EXISTS deal_photos (\n  id INTEGER PRIMARY KEY,\n  deal_id INTEGER NOT NULL REFERENCES deals(id),\n  position INTEGER NOT NULL,\n  mime TEXT NOT NULL,\n  data BLOB NOT NULL,\n  sha256 TEXT NOT NULL,\n  bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  UNIQUE (deal_id, position)\n);\nALTER TABLE deals ADD COLUMN photo_count INTEGER NOT NULL DEFAULT 0;\n"
+  },
+  {
+    "name": "0006_early_access_code.sql",
+    "sql": "-- Early-access code: removes the TrustGap fee (1.5%) from one deal. A seller can use it on one link\n-- (the whole fee is removed); a buyer can use it on one order (their share of the fee is removed).\nALTER TABLE deals ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_discount INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];
 
@@ -935,7 +947,7 @@ var RULES = /* @__PURE__ */ __name((deal) => [
   "If you refuse a correct item, the cost of delivery and return may be deducted from your refund. Every deduction is shown to you in writing.",
   "Disputes are decided by TrustGap staff using evidence from both sides and the courier. You can appeal once by replying to the decision."
 ], "RULES");
-async function snapshotTerms(deal, seller, photoHashes = []) {
+async function snapshotTerms(deal, seller, photoHashes = [], promo = null) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -954,7 +966,9 @@ async function snapshotTerms(deal, seller, photoHashes = []) {
       platform_fee: deal.platform_fee,
       processing_fee: deal.processing_fee,
       fee_payer: deal.fee_payer,
-      buyer_total: deal.buyer_total
+      promo_code: promo?.code || deal.promo_code || null,
+      promo_discount: promo?.discount || 0,
+      buyer_total: deal.buyer_total - (promo?.discount || 0)
     },
     delivery: {
       address: deal.delivery_address,
@@ -1134,6 +1148,45 @@ async function sha256Bytes(bytes) {
 __name(sha256Bytes, "sha256Bytes");
 var photoUrls = /* @__PURE__ */ __name((ctx, deal, rows) => rows.map((p) => `${ctx.config.apiUrl}/api/deals/${encodeURIComponent(deal.token)}/photos/${p.position}?v=${p.sha256.slice(0, 10)}`), "photoUrls");
 
+// src/core/promo.js
+var normaliseCode = /* @__PURE__ */ __name((v) => String(v ?? "").trim().toUpperCase().replace(/\s+/g, ""), "normaliseCode");
+async function checkPromo(ctx, input) {
+  const code = normaliseCode(input);
+  if (!code) return null;
+  const p = ctx.config.promo;
+  if (!p.code || code !== p.code) throw new UserError("That code isn\u2019t valid. Check it and try again.");
+  if (p.endsAt && ctx.now() > p.endsAt) throw new UserError("This early-access code has expired.");
+  const used = await first(ctx.env, `SELECT
+      (SELECT COUNT(*) FROM deals WHERE promo_code = ? AND status NOT IN ('expired', 'cancelled', 'replaced'))
+    + (SELECT COUNT(*) FROM orders WHERE promo_code = ? AND status NOT IN ('awaiting_payment', 'cancelled')) AS n`, code, code);
+  if (used.n >= p.maxUses) throw new UserError("This early-access offer has been fully used.");
+  return code;
+}
+__name(checkPromo, "checkPromo");
+async function checkSellerPromo(ctx, seller, input, revising = null) {
+  const code = await checkPromo(ctx, input);
+  if (!code) return null;
+  const used = await first(
+    ctx.env,
+    "SELECT id FROM deals WHERE seller_id = ? AND promo_code = ? AND status NOT IN ('expired', 'cancelled', 'replaced') AND id IS NOT ?",
+    seller.id,
+    code,
+    revising
+  );
+  if (used) throw new UserError("You have already used your early-access code on another link.");
+  return code;
+}
+__name(checkSellerPromo, "checkSellerPromo");
+async function buyerUsedPromo(ctx, phone, code) {
+  return Boolean(await first(
+    ctx.env,
+    "SELECT id FROM orders WHERE buyer_phone = ? AND promo_code = ? AND status NOT IN ('awaiting_payment', 'cancelled')",
+    phone,
+    code
+  ));
+}
+__name(buyerUsedPromo, "buyerUsedPromo");
+
 // src/core/deals.js
 var PAYERS = ["buyer", "seller", "split"];
 function pricingInput(ctx, input) {
@@ -1155,14 +1208,14 @@ function pricingInput(ctx, input) {
   return { itemPrice, pickupState, deliveryState, weightKg, deliveryPayer, feePayer };
 }
 __name(pricingInput, "pricingInput");
-async function priceDeal(ctx, p) {
+async function priceDeal(ctx, p, { promo = false } = {}) {
   let deliveryFee;
   try {
     ({ feeKobo: deliveryFee } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
   } catch (err) {
     throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
   }
-  const pf = platformFee(p.itemPrice, ctx.config.fee);
+  const pf = promo ? 0 : platformFee(p.itemPrice, ctx.config.fee);
   const buyerShare = p.feePayer === "buyer" ? 1 : p.feePayer === "split" ? 0.5 : 0;
   const pr = processingFee(
     { itemPrice: p.itemPrice, buyerDelivery: buyerPart(p.deliveryPayer, deliveryFee), platform: pf, buyerShare },
@@ -1175,9 +1228,15 @@ async function priceDeal(ctx, p) {
   return q;
 }
 __name(priceDeal, "priceDeal");
-async function previewDeal(ctx, input) {
+async function previewDeal(ctx, input, seller) {
   const p = pricingInput(ctx, input);
-  return { pickup_state: p.pickupState, delivery_state: p.deliveryState, price: await priceDeal(ctx, p) };
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
+  return {
+    pickup_state: p.pickupState,
+    delivery_state: p.deliveryState,
+    price: await priceDeal(ctx, p, { promo: Boolean(promo) }),
+    promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) }
+  };
 }
 __name(previewDeal, "previewDeal");
 async function createDeal(ctx, seller, input) {
@@ -1210,7 +1269,8 @@ async function createDeal(ctx, seller, input) {
   const photoCount = photos.length || copyPhotosFrom?.photo_count || 0;
   if (!photoCount) throw new UserError("Add at least one photo of the item, so the buyer can see what they are paying for.");
   const p = pricingInput(ctx, input);
-  const q = await priceDeal(ctx, p);
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
+  const q = await priceDeal(ctx, p, { promo: Boolean(promo) });
   const now = ctx.now();
   const token = randomToken(12);
   const statements = [];
@@ -1250,6 +1310,7 @@ async function createDeal(ctx, seller, input) {
       delivery_days: deliveryDays,
       inspection_hours: ctx.config.inspectionHours,
       photo_count: photoCount,
+      promo_code: promo,
       status: "open",
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now)
@@ -1328,6 +1389,7 @@ async function publicDealView(ctx, deal) {
     inspection_hours: deal.inspection_hours,
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
+    promo_applied: Boolean(deal.promo_code),
     price: {
       item: q.itemPrice,
       delivery: q.buyerDelivery,
@@ -1352,15 +1414,25 @@ function namesMatch(typedName, accountName) {
 __name(namesMatch, "namesMatch");
 
 // src/core/orders.js
-async function startCheckout(ctx, deal) {
+async function startCheckout(ctx, deal, promoInput) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
-  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal));
+  const promo = await buyerPromo(ctx, deal, promoInput);
+  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo);
   const id = randomToken(15);
   await insert(ctx.env, "checkouts", { id, deal_id: deal.id, terms_json: json2, terms_hash: hash, created_at: iso(ctx.now()) });
-  return { checkout_id: id, terms_hash: hash };
+  return { checkout_id: id, terms_hash: hash, total: JSON.parse(json2).money.buyer_total, promo };
 }
 __name(startCheckout, "startCheckout");
+async function buyerPromo(ctx, deal, input) {
+  const code = await checkPromo(ctx, input);
+  if (!code) return null;
+  if (deal.promo_code) throw new UserError("This link already has no TrustGap fee. Keep your code for another deal.");
+  const discount = buyerPart(deal.fee_payer, deal.platform_fee);
+  if (!discount) throw new UserError("The seller pays the TrustGap fee on this deal, so your code has nothing to remove. Keep it for another deal.");
+  return { code, discount };
+}
+__name(buyerPromo, "buyerPromo");
 async function getCheckout(ctx, deal, checkoutId) {
   const c = await first(ctx.env, "SELECT * FROM checkouts WHERE id = ? AND deal_id = ?", str(checkoutId), deal.id);
   if (!c || new Date(c.created_at) < addHours(ctx.now(), -2)) {
@@ -1391,8 +1463,15 @@ async function placeOrder(ctx, { deal, input }) {
       `The refund account belongs to "${accountName}". Refunds can only go to an account in your own name. Use your own account, or enter your name exactly as your bank has it.`
     );
   }
-  if (input.expected_total !== void 0 && Number(input.expected_total) !== deal.buyer_total) {
-    throw new UserError(`This deal now costs ${formatNaira(deal.buyer_total)}. Please go back to step 1 and check it again.`, 409);
+  const money = JSON.parse(checkout.terms_json).money;
+  const discount = money.promo_discount || 0;
+  const total = deal.buyer_total - discount;
+  if (input.expected_total !== void 0 && Number(input.expected_total) !== total) {
+    throw new UserError(`This deal now costs ${formatNaira(total)}. Please go back to step 1 and check it again.`, 409);
+  }
+  const promoCode = discount ? await checkPromo(ctx, money.promo_code) : deal.promo_code || null;
+  if (discount && await buyerUsedPromo(ctx, buyerPhone, promoCode)) {
+    throw new UserError("This phone number has already used the early-access code. Go back to step 1 and remove it to continue.", 409);
   }
   const fresh = await refreshDeal(ctx, await getDeal(ctx, deal.id));
   if (fresh.status !== "open") throw new UserError("This link is no longer available.", 410);
@@ -1408,9 +1487,11 @@ async function placeOrder(ctx, { deal, input }) {
     delivery_landmark: deal.delivery_landmark,
     delivery_state: deal.delivery_state,
     delivery_fee: deal.delivery_fee,
-    platform_fee: deal.platform_fee,
+    platform_fee: deal.platform_fee - discount,
     processing_fee: deal.processing_fee,
     seller_payout: deal.seller_payout,
+    promo_code: promoCode,
+    promo_discount: discount,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
     refund_account_enc: await encrypt(accountNumber, ctx.config.appSecret),
@@ -1419,7 +1500,7 @@ async function placeOrder(ctx, { deal, input }) {
     terms_json: checkout.terms_json,
     terms_hash: checkout.terms_hash,
     terms_accepted_at: checkout.created_at,
-    amount: deal.buyer_total,
+    amount: total,
     status: "awaiting_payment",
     tx_ref: "TGTX-" + randomToken(12),
     created_at: iso(ctx.now())
@@ -1947,7 +2028,7 @@ function publicRoutes(r) {
       headers: { "Content-Type": photo.mime, "Cache-Control": "public, max-age=31536000, immutable", "Content-Security-Policy": "default-src 'none'" }
     });
   });
-  r.post("/api/deals/:token/accept", async ({ ctx, params }) => startCheckout(ctx, await loadDeal(ctx, params.token)));
+  r.post("/api/deals/:token/accept", async ({ ctx, params, body }) => startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code));
   r.post("/api/deals/:token/pay", async ({ ctx, params, body }) => {
     const deal = await loadDeal(ctx, params.token);
     if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
@@ -2023,7 +2104,8 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         price: {
           item: deal.item_price,
           delivery: buyerPart(deal.delivery_payer, o.delivery_fee),
-          platform_fee: buyerPart(deal.fee_payer, o.platform_fee),
+          platform_fee: buyerPart(deal.fee_payer, o.platform_fee + o.promo_discount) - o.promo_discount,
+          promo_discount: o.promo_discount,
           processing_fee: buyerPart(deal.fee_payer, o.processing_fee),
           total: o.amount
         },
@@ -2279,7 +2361,8 @@ var dealView = /* @__PURE__ */ __name((ctx, d) => ({
   delivery_days: d.delivery_days,
   expires_at: d.expires_at,
   created_at: d.created_at,
-  price: priceBreakdown(d)
+  price: priceBreakdown(d),
+  promo_code: d.promo_code || null
 }), "dealView");
 function sellerRoutes(r) {
   r.post("/api/auth/signup", ({ ctx, body }) => signup(ctx, body));
@@ -2322,8 +2405,7 @@ function sellerRoutes(r) {
     };
   });
   r.post("/api/seller/quote", async ({ ctx, request, body }) => {
-    await requireSeller(ctx, request);
-    return previewDeal(ctx, body);
+    return previewDeal(ctx, body, (await requireSeller(ctx, request)).seller);
   });
   r.post("/api/seller/deals", async ({ ctx, request, body }) => {
     const deal = await createDeal(ctx, (await requireSeller(ctx, request)).seller, body);

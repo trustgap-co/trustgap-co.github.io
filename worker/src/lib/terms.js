@@ -13,7 +13,7 @@ export const RULES = (deal) => [
 ];
 
 // The exact deal and rules the buyer sees and accepts. Stored with the order, hashed, never changed.
-export async function snapshotTerms(deal, seller, photoHashes = []) {
+export async function snapshotTerms(deal, seller, photoHashes = [], promo = null) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -32,7 +32,9 @@ export async function snapshotTerms(deal, seller, photoHashes = []) {
       platform_fee: deal.platform_fee,
       processing_fee: deal.processing_fee,
       fee_payer: deal.fee_payer,
-      buyer_total: deal.buyer_total,
+      promo_code: promo?.code || deal.promo_code || null,
+      promo_discount: promo?.discount || 0,
+      buyer_total: deal.buyer_total - (promo?.discount || 0),
     },
     delivery: {
       address: deal.delivery_address,

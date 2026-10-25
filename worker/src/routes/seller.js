@@ -34,6 +34,7 @@ const dealView = (ctx, d) => ({
   expires_at: d.expires_at,
   created_at: d.created_at,
   price: priceBreakdown(d),
+  promo_code: d.promo_code || null,
 });
 
 export function sellerRoutes(r) {
@@ -83,8 +84,7 @@ export function sellerRoutes(r) {
 
   // "Calculate price": the exact delivery fee, fees, buyer total and payout, before creating the link.
   r.post('/api/seller/quote', async ({ ctx, request, body }) => {
-    await requireSeller(ctx, request);
-    return previewDeal(ctx, body);
+    return previewDeal(ctx, body, (await requireSeller(ctx, request)).seller);
   });
 
   r.post('/api/seller/deals', async ({ ctx, request, body }) => {
