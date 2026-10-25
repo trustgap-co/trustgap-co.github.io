@@ -27,26 +27,26 @@ function show(n) {
 }
 
 // Runs only while the hero is on screen and the tab is visible (saves battery on phones).
+// Phones set to reduce motion (Android battery saver or "Remove animations", iPhone "Reduce
+// Motion") still get the story: scenes cross-fade instead of sliding (see styles.css), a bit slower.
+const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 let visible = true;
 function play() {
   clearInterval(timer);
-  if (visible && !document.hidden) timer = setInterval(() => show((step + 1) % STEPS.length), 3200);
+  if (visible && !document.hidden) timer = setInterval(() => show((step + 1) % STEPS.length), calm ? 4200 : 3200);
 }
 
 if (svg) {
-  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  show(still ? 5 : 0);
-  if (!still) {
-    play();
-    new IntersectionObserver(([e]) => { visible = e.isIntersecting; play(); }).observe(svg);
-    document.addEventListener('visibilitychange', play);
-  }
+  show(0);
+  play();
+  new IntersectionObserver(([e]) => { visible = e.isIntersecting; play(); }).observe(svg);
+  document.addEventListener('visibilitychange', play);
   // Tap a step word to see that moment; the loop carries on from there.
   words.forEach((w, i) => {
     w.addEventListener('click', () => {
       track('hero_step_click', { step: STEPS[i][0] });
       show(i);
-      if (!still) play();
+      play();
     });
   });
 }

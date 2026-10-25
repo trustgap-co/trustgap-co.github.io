@@ -373,7 +373,8 @@ body.site main { max-width: none; padding: 0; }
 .anim [data-step="5"] .closed { opacity: 1; }
 .anim [data-step="1"] .gap-label, .anim [data-step="2"] .gap-label, .anim [data-step="3"] .gap-label, .anim [data-step="4"] .gap-label, .anim [data-step="5"] .gap-label { opacity: 0; }
 .anim [data-step="5"] .bridge-fill { fill: #9DB9F5; }
-@media (prefers-reduced-motion: reduce) { .anim svg * { transition: none; } }
+/* Reduce motion: nothing slides or grows; each scene simply fades into the next. */
+@media (prefers-reduced-motion: reduce) { .anim svg * { transition-property: opacity !important; transition-duration: .5s !important; } }
 
 /* ---- Inner marketing pages ---- */
 .seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
