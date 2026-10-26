@@ -12,7 +12,7 @@ export const SITE = {
   // ---- Survey and early access ---------------------------------------------------------------
   // Both forms post to this Make.com webhook, which adds a row to your Google Sheet.
   // Until you paste the real URL, the forms show a "not connected" warning and save nothing.
-  leadsWebhookUrl: '[MAKE WEBHOOK URL]',
+  leadsWebhookUrl: 'https://hook.eu1.make.com/2r1nkn59506ke3rpt5672h8thmu5yzwp',
   // The early-access code shown after sign-up. MUST match PROMO_CODE in the Worker's settings.
   earlyAccessCode: 'EARLYGAP',
   earlyAccessCodeEnds: '31 January 2027', // keep in step with PROMO_ENDS in the Worker
