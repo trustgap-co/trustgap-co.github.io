@@ -23,5 +23,13 @@ export const MIGRATIONS = [
   {
     "name": "0006_early_access_code.sql",
     "sql": "-- Early-access code: removes the TrustGap fee (1.5%) from one deal. A seller can use it on one link\n-- (the whole fee is removed); a buyer can use it on one order (their share of the fee is removed).\nALTER TABLE deals ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_discount INTEGER NOT NULL DEFAULT 0;\n"
+  },
+  {
+    "name": "0007_dispute_photos.sql",
+    "sql": "-- Photos the buyer attaches when reporting a problem (up to 2). Private evidence: only TrustGap staff\n-- and the buyer can open them, through signed links that expire.\nCREATE TABLE IF NOT EXISTS dispute_photos (\n  id INTEGER PRIMARY KEY,\n  dispute_id INTEGER NOT NULL REFERENCES disputes(id),\n  position INTEGER NOT NULL,\n  mime TEXT NOT NULL,\n  data BLOB NOT NULL,\n  sha256 TEXT NOT NULL,\n  bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  UNIQUE (dispute_id, position)\n);\n"
+  },
+  {
+    "name": "0008_debt_payments_consents_marketing.sql",
+    "sql": "-- Sellers can pay a dispute charge straight away through the payment page, instead of only having it\n-- taken from a later payout.\nCREATE TABLE IF NOT EXISTS debt_payments (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  amount INTEGER NOT NULL,\n  tx_ref TEXT NOT NULL UNIQUE,\n  status TEXT NOT NULL,\n  confirm_nonce TEXT,\n  provider_tx_id TEXT,\n  created_at TEXT NOT NULL,\n  paid_at TEXT\n);\n-- What each side confirmed before the deal: the seller's condition pledge (exact wording) and the time\n-- the buyer accepted the change-of-mind notice (its wording is in the order's accepted terms).\nALTER TABLE deals ADD COLUMN condition_confirmed_at TEXT;\nALTER TABLE deals ADD COLUMN condition_pledge TEXT;\nALTER TABLE orders ADD COLUMN buyer_ack_at TEXT;\n-- Opt-ins for TrustGap news and offers (separate from the messages needed to run a deal).\nALTER TABLE sellers ADD COLUMN marketing_opt_in_at TEXT;\nALTER TABLE orders ADD COLUMN buyer_marketing_opt_in_at TEXT;\n"
   }
 ];

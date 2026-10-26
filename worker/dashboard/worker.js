@@ -791,6 +791,14 @@ CREATE INDEX orders_delivery_ref ON orders(delivery_ref);
   {
     "name": "0006_early_access_code.sql",
     "sql": "-- Early-access code: removes the TrustGap fee (1.5%) from one deal. A seller can use it on one link\n-- (the whole fee is removed); a buyer can use it on one order (their share of the fee is removed).\nALTER TABLE deals ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_code TEXT;\nALTER TABLE orders ADD COLUMN promo_discount INTEGER NOT NULL DEFAULT 0;\n"
+  },
+  {
+    "name": "0007_dispute_photos.sql",
+    "sql": "-- Photos the buyer attaches when reporting a problem (up to 2). Private evidence: only TrustGap staff\n-- and the buyer can open them, through signed links that expire.\nCREATE TABLE IF NOT EXISTS dispute_photos (\n  id INTEGER PRIMARY KEY,\n  dispute_id INTEGER NOT NULL REFERENCES disputes(id),\n  position INTEGER NOT NULL,\n  mime TEXT NOT NULL,\n  data BLOB NOT NULL,\n  sha256 TEXT NOT NULL,\n  bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  UNIQUE (dispute_id, position)\n);\n"
+  },
+  {
+    "name": "0008_debt_payments_consents_marketing.sql",
+    "sql": "-- Sellers can pay a dispute charge straight away through the payment page, instead of only having it\n-- taken from a later payout.\nCREATE TABLE IF NOT EXISTS debt_payments (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  amount INTEGER NOT NULL,\n  tx_ref TEXT NOT NULL UNIQUE,\n  status TEXT NOT NULL,\n  confirm_nonce TEXT,\n  provider_tx_id TEXT,\n  created_at TEXT NOT NULL,\n  paid_at TEXT\n);\n-- What each side confirmed before the deal: the seller's condition pledge (exact wording) and the time\n-- the buyer accepted the change-of-mind notice (its wording is in the order's accepted terms).\nALTER TABLE deals ADD COLUMN condition_confirmed_at TEXT;\nALTER TABLE deals ADD COLUMN condition_pledge TEXT;\nALTER TABLE orders ADD COLUMN buyer_ack_at TEXT;\n-- Opt-ins for TrustGap news and offers (separate from the messages needed to run a deal).\nALTER TABLE sellers ADD COLUMN marketing_opt_in_at TEXT;\nALTER TABLE orders ADD COLUMN buyer_marketing_opt_in_at TEXT;\n"
   }
 ];
 
@@ -947,7 +955,7 @@ var RULES = /* @__PURE__ */ __name((deal) => [
   "If you refuse a correct item, the cost of delivery and return may be deducted from your refund. Every deduction is shown to you in writing.",
   "Disputes are decided by TrustGap staff using evidence from both sides and the courier. You can appeal once by replying to the decision."
 ], "RULES");
-async function snapshotTerms(deal, seller, photoHashes = [], promo = null) {
+async function snapshotTerms(deal, seller, photoHashes = [], promo = null, acknowledgedAt = null) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -979,12 +987,27 @@ async function snapshotTerms(deal, seller, photoHashes = [], promo = null) {
       weight_kg: deal.weight_kg
     },
     inspection_hours: deal.inspection_hours,
-    rules: RULES(deal)
+    rules: RULES(deal),
+    // The change-of-mind notice the buyer accepted in a pop-up before continuing (exact wording).
+    buyer_acknowledgement: acknowledgedAt && { text: fillConsent("buyer", deal.delivery_fee), at: acknowledgedAt }
   };
   const json2 = JSON.stringify(terms);
   return { json: json2, hash: await sha256Hex(json2) };
 }
 __name(snapshotTerms, "snapshotTerms");
+var CONSENTS = {
+  seller: {
+    title: "Is the item in good condition, exactly as agreed with the buyer?",
+    body: "If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer\u2019s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}).",
+    confirm: "The item is in good condition as agreed"
+  },
+  buyer: {
+    title: "Before you pay: changing your mind has a cost",
+    body: "Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}). If the item is wrong, damaged, fake or not as described, you get a full refund.",
+    confirm: "I understand. Continue"
+  }
+};
+var fillConsent = /* @__PURE__ */ __name((who, deliveryFeeKobo) => `${CONSENTS[who].title} ${CONSENTS[who].body.replace("{fee}", formatNaira(2 * deliveryFeeKobo))}`, "fillConsent");
 
 // src/core/common.js
 var CONDITIONS = ["Brand new (sealed)", "Brand new (open box)", "Used - like new", "Used - good condition", "Used - fair condition"];
@@ -1089,12 +1112,72 @@ function fmtDate(d) {
 }
 __name(fmtDate, "fmtDate");
 
+// src/core/debts.js
+var isDebtRef = /* @__PURE__ */ __name((txRef) => String(txRef || "").startsWith("TGD-"), "isDebtRef");
+async function startDebtPayment(ctx, seller) {
+  if (!(seller.amount_owed > 0)) throw new UserError("You don\u2019t owe anything.");
+  const txRef = "TGD-" + randomToken(12);
+  const id = await insert(ctx.env, "debt_payments", {
+    seller_id: seller.id,
+    amount: seller.amount_owed,
+    tx_ref: txRef,
+    status: "pending",
+    created_at: iso(ctx.now())
+  });
+  const { url } = await ctx.payments.createCheckout({
+    order: { tx_ref: txRef, amount: seller.amount_owed, ref: `DEBT-${id}`, buyer_email: seller.email, buyer_phone: seller.phone, buyer_name: seller.full_name },
+    title: "Settle your TrustGap balance"
+  });
+  return { payment_url: url, amount: seller.amount_owed };
+}
+__name(startDebtPayment, "startDebtPayment");
+async function confirmDebtPayment(ctx, txRef) {
+  const row = await first(ctx.env, "SELECT * FROM debt_payments WHERE tx_ref = ?", txRef);
+  if (!row) return null;
+  if (row.status !== "pending") return row;
+  const v = await ctx.payments.verify(txRef);
+  if (v.status === "failed") {
+    await stmt(ctx.env, "UPDATE debt_payments SET status = 'failed' WHERE id = ? AND status = 'pending'", row.id).run();
+    return { ...row, status: "failed" };
+  }
+  if (v.status !== "successful") return row;
+  if (v.currency !== "NGN" || v.amount < row.amount) {
+    await stmt(ctx.env, "UPDATE debt_payments SET status = 'amount_mismatch', provider_tx_id = ? WHERE id = ? AND status = 'pending'", v.providerTxId, row.id).run();
+    console.error("debt payment amount mismatch", txRef, v.amount, row.amount);
+    return { ...row, status: "amount_mismatch" };
+  }
+  const nonce = randomToken(12);
+  const [won] = await ctx.env.DB.batch([
+    stmt(
+      ctx.env,
+      "UPDATE debt_payments SET status = 'paid', paid_at = ?, provider_tx_id = ?, confirm_nonce = ? WHERE id = ? AND status = 'pending'",
+      iso(ctx.now()),
+      v.providerTxId,
+      nonce,
+      row.id
+    ),
+    stmt(ctx.env, `UPDATE sellers SET amount_owed = MAX(0, amount_owed - ?) WHERE id = ?
+      AND EXISTS (SELECT 1 FROM debt_payments WHERE id = ? AND confirm_nonce = ?)`, row.amount, row.seller_id, row.id, nonce)
+  ]);
+  if (won.meta.changes === 1) {
+    const seller = await getSeller(ctx, row.seller_id);
+    await ctx.notify.send({
+      event: "debt_paid",
+      phone: seller.phone,
+      email: seller.email,
+      sms: `TrustGap: we received ${formatNaira(row.amount)}. ${seller.amount_owed > 0 ? `You still owe ${formatNaira(seller.amount_owed)}.` : "Your balance is cleared. You can create links again."}`
+    });
+  }
+  return first(ctx.env, "SELECT * FROM debt_payments WHERE id = ?", row.id);
+}
+__name(confirmDebtPayment, "confirmDebtPayment");
+
 // src/lib/photos.js
 var MAX_PHOTOS = 4;
 var MAX_PHOTO_BYTES = 600 * 1024;
-async function parsePhotos(input) {
+async function parsePhotos(input, max = MAX_PHOTOS) {
   const list = Array.isArray(input) ? input : input ? [input] : [];
-  if (list.length > MAX_PHOTOS) throw new UserError(`Add up to ${MAX_PHOTOS} photos.`);
+  if (list.length > max) throw new UserError(`Add up to ${max} photos.`);
   const photos = [];
   for (const item of list) {
     const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(item));
@@ -1146,6 +1229,7 @@ async function sha256Bytes(bytes) {
   return [...digest].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 __name(sha256Bytes, "sha256Bytes");
+var EVIDENCE_LINK_HOURS = 2;
 var photoUrls = /* @__PURE__ */ __name((ctx, deal, rows) => rows.map((p) => `${ctx.config.apiUrl}/api/deals/${encodeURIComponent(deal.token)}/photos/${p.position}?v=${p.sha256.slice(0, 10)}`), "photoUrls");
 
 // src/core/promo.js
@@ -1271,6 +1355,9 @@ async function createDeal(ctx, seller, input) {
   const p = pricingInput(ctx, input);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
   const q = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  if (input.condition_confirmed !== true && input.condition_confirmed !== "yes") {
+    throw new UserError("Confirm that the item is in good condition, exactly as agreed with the buyer.");
+  }
   const now = ctx.now();
   const token = randomToken(12);
   const statements = [];
@@ -1311,6 +1398,8 @@ async function createDeal(ctx, seller, input) {
       inspection_hours: ctx.config.inspectionHours,
       photo_count: photoCount,
       promo_code: promo,
+      condition_confirmed_at: iso(now),
+      condition_pledge: fillConsent("seller", q.deliveryFee),
       status: "open",
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now)
@@ -1414,11 +1503,12 @@ function namesMatch(typedName, accountName) {
 __name(namesMatch, "namesMatch");
 
 // src/core/orders.js
-async function startCheckout(ctx, deal, promoInput) {
+async function startCheckout(ctx, deal, promoInput, { acknowledged = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
   const promo = await buyerPromo(ctx, deal, promoInput);
-  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo);
+  const ackAt = acknowledged ? iso(ctx.now()) : null;
+  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo, ackAt);
   const id = randomToken(15);
   await insert(ctx.env, "checkouts", { id, deal_id: deal.id, terms_json: json2, terms_hash: hash, created_at: iso(ctx.now()) });
   return { checkout_id: id, terms_hash: hash, total: JSON.parse(json2).money.buyer_total, promo };
@@ -1463,7 +1553,11 @@ async function placeOrder(ctx, { deal, input }) {
       `The refund account belongs to "${accountName}". Refunds can only go to an account in your own name. Use your own account, or enter your name exactly as your bank has it.`
     );
   }
-  const money = JSON.parse(checkout.terms_json).money;
+  const terms = JSON.parse(checkout.terms_json);
+  if (!terms.buyer_acknowledgement) {
+    throw new UserError("Go back to step 1 and confirm you\u2019ve read what happens if you change your mind.", 409);
+  }
+  const money = terms.money;
   const discount = money.promo_discount || 0;
   const total = deal.buyer_total - discount;
   if (input.expected_total !== void 0 && Number(input.expected_total) !== total) {
@@ -1492,6 +1586,8 @@ async function placeOrder(ctx, { deal, input }) {
     seller_payout: deal.seller_payout,
     promo_code: promoCode,
     promo_discount: discount,
+    buyer_ack_at: terms.buyer_acknowledgement.at,
+    buyer_marketing_opt_in_at: input.marketing_opt_in === true || input.marketing_opt_in === "yes" ? iso(ctx.now()) : null,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
     refund_account_enc: await encrypt(accountNumber, ctx.config.appSecret),
@@ -1792,17 +1888,35 @@ async function syncCourierStatus(ctx, order) {
   return st;
 }
 __name(syncCourierStatus, "syncCourierStatus");
-async function openDispute(ctx, order, { by, category, description }) {
+var PHOTO_REQUIRED = ["wrong_item", "damaged", "not_as_described", "counterfeit"];
+var MAX_DISPUTE_PHOTOS = 2;
+async function openDispute(ctx, order, { by, category, description, photos: photoInput }) {
   if (!DISPUTE_CATEGORIES[category]) throw new UserError("Choose what went wrong.");
   const text = str(description).slice(0, 2e3);
   if (text.length < 3) throw new UserError("Describe the problem.");
+  const photos = await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS);
+  if (by === "buyer" && PHOTO_REQUIRED.includes(category) && !photos.length) {
+    throw new UserError("Add at least one photo showing the problem with the item.");
+  }
   if (!["paid", "shipping", "delivered"].includes(order.status)) throw new UserError("A problem can no longer be reported on this order.");
   if (by === "buyer" && order.status === "delivered" && new Date(order.inspection_ends_at) <= ctx.now()) {
     throw new UserError("The inspection period has ended.");
   }
   const won = await transition(ctx, order.id, [order.status], { status: "disputed" }, (h) => [
     h.insert("disputes", { order_id: order.id, opened_by: by, category, description: text, status: "open", created_at: iso(ctx.now()) }),
-    h.event(by, "dispute_opened", { category, description: text })
+    // Saved in the same step as the dispute, so a report never exists without its photos.
+    ...photos.map((p, i) => h.sql(
+      `INSERT INTO dispute_photos (dispute_id, position, mime, data, sha256, bytes, created_at)
+       SELECT (SELECT MAX(id) FROM disputes WHERE order_id = ?), ?, ?, ?, ?, ?, ? WHERE 1`,
+      order.id,
+      i + 1,
+      p.mime,
+      p.data,
+      p.sha256,
+      p.bytes,
+      iso(ctx.now())
+    )),
+    h.event(by, "dispute_opened", { category, description: text, photos: photos.length })
   ]);
   if (!won) throw new UserError("This order changed while you were reporting. Refresh and try again.", 409);
   const seller = await getSeller(ctx, order.seller_id);
@@ -1811,6 +1925,12 @@ async function openDispute(ctx, order, { by, category, description }) {
   await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: seller.phone, sms });
 }
 __name(openDispute, "openDispute");
+async function evidenceUrls(ctx, disputeId) {
+  const rows = await all(ctx.env, "SELECT id FROM dispute_photos WHERE dispute_id = ? ORDER BY position", disputeId);
+  const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
+  return Promise.all(rows.map(async (r) => `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`));
+}
+__name(evidenceUrls, "evidenceUrls");
 async function resolveDispute(ctx, disputeId, input) {
   const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE id = ?", disputeId);
   if (!dispute || dispute.status !== "open") throw new UserError("Dispute not found or already resolved.");
@@ -1986,7 +2106,7 @@ async function loadOrderByBuyerToken(ctx, token) {
 __name(loadOrderByBuyerToken, "loadOrderByBuyerToken");
 function publicRoutes(r) {
   r.get("/api/health", async ({ ctx }) => {
-    const expected = ["sellers", "sessions", "otps", "deals", "checkouts", "orders", "order_events", "disputes", "ledger", "outbox", "mock_transactions", "meta", "deal_photos"];
+    const expected = ["sellers", "sessions", "otps", "deals", "checkouts", "orders", "order_events", "disputes", "ledger", "outbox", "mock_transactions", "meta", "deal_photos", "dispute_photos"];
     if (!ctx.env.DB) return { ok: false, database: "No D1 binding called DB. Add it under Settings \u2192 Bindings." };
     try {
       await ensureSchema(ctx.env);
@@ -2013,12 +2133,23 @@ function publicRoutes(r) {
     conditions: CONDITIONS,
     expiry_options: EXPIRY_OPTIONS,
     dispute_categories: BUYER_DISPUTE_CATEGORIES,
+    dispute_photo_required: PHOTO_REQUIRED,
+    max_dispute_photos: MAX_DISPUTE_PHOTOS,
+    consents: CONSENTS,
     require_seller_id: ctx.config.requireSellerId
   }));
   r.get("/api/banks", async ({ ctx }) => ({ banks: await ctx.payments.listBanks() }));
   r.get("/api/deals/:token", async ({ ctx, params }) => {
     const deal = await loadDeal(ctx, params.token);
     return { deal: await publicDealView(ctx, deal), rules: RULES(deal) };
+  });
+  r.get("/api/evidence/:token", async ({ ctx, params }) => {
+    const id = (await verifyLink(ctx.config.appSecret, params.token, ctx.now()))?.match(/^dp(\d+)$/)?.[1];
+    const photo = id && await first(ctx.env, "SELECT mime, data FROM dispute_photos WHERE id = ?", Number(id));
+    if (!photo) throw notFound("This photo link has expired. Reload the page to see it again.");
+    return new Response(new Uint8Array(photo.data), {
+      headers: { "Content-Type": photo.mime, "Cache-Control": "private, max-age=3600", "Content-Security-Policy": "default-src 'none'" }
+    });
   });
   r.get("/api/deals/:token/photos/:n", async ({ ctx, params }) => {
     const deal = await first(ctx.env, "SELECT id FROM deals WHERE token = ?", params.token);
@@ -2028,7 +2159,7 @@ function publicRoutes(r) {
       headers: { "Content-Type": photo.mime, "Cache-Control": "public, max-age=31536000, immutable", "Content-Security-Policy": "default-src 'none'" }
     });
   });
-  r.post("/api/deals/:token/accept", async ({ ctx, params, body }) => startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code));
+  r.post("/api/deals/:token/accept", async ({ ctx, params, body }) => startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code, { acknowledged: body.penalty_acknowledged === true }));
   r.post("/api/deals/:token/pay", async ({ ctx, params, body }) => {
     const deal = await loadDeal(ctx, params.token);
     if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
@@ -2036,7 +2167,12 @@ function publicRoutes(r) {
     return { payment_url, track_token: order.buyer_token };
   });
   r.get("/api/payments/callback", async ({ ctx, url }) => {
-    const order = await confirmPayment(ctx, url.searchParams.get("tx_ref") || "", "buyer");
+    const txRef = url.searchParams.get("tx_ref") || "";
+    if (isDebtRef(txRef)) {
+      const debt = await confirmDebtPayment(ctx, txRef);
+      return redirect(`${ctx.config.siteUrl}/seller/dashboard.html?debt=${debt?.status === "paid" ? "paid" : "not-paid"}`);
+    }
+    const order = await confirmPayment(ctx, txRef, "buyer");
     if (!order) return redirect(`${ctx.config.siteUrl}/?error=payment-not-found`);
     return redirect(`${ctx.config.siteUrl}/track.html?t=${order.buyer_token}`);
   });
@@ -2044,6 +2180,7 @@ function publicRoutes(r) {
     const hint = await ctx.payments.parseWebhook(request, body);
     if (!hint) return new Response("unauthorized", { status: 401 });
     if (hint.kind === "transfer") await settleTransfer(ctx, hint);
+    else if (isDebtRef(hint.txRef)) await confirmDebtPayment(ctx, hint.txRef);
     else await confirmPayment(ctx, hint.txRef, "webhook");
     return new Response("ok");
   });
@@ -2117,6 +2254,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         can_report: canReport
       },
       dispute: dispute && {
+        photos: await evidenceUrls(ctx, dispute.id),
         status: dispute.status,
         category: dispute.category,
         resolution_note: dispute.resolution_note,
@@ -2132,7 +2270,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
   });
   r.post("/api/track/:token/dispute", async ({ ctx, params, body }) => {
     if (!BUYER_DISPUTE_CATEGORIES[body.category]) throw new UserError("Choose what went wrong.");
-    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: "buyer", category: body.category, description: body.description });
+    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: "buyer", category: body.category, description: body.description, photos: body.photos });
     return { ok: true };
   });
 }
@@ -2171,10 +2309,11 @@ async function signup(ctx, input) {
   const email = validEmail(input.email);
   const existing = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
   if (existing?.phone_verified_at) throw new UserError("An account with this phone number already exists. Log in instead.");
+  const marketing = input.marketing_opt_in === true || input.marketing_opt_in === "yes" ? iso(ctx.now()) : null;
   if (existing) {
-    await update(ctx.env, "sellers", existing.id, { full_name: fullName, business_name: businessName, email });
+    await update(ctx.env, "sellers", existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing });
   } else {
-    await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, created_at: iso(ctx.now()) });
+    await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, created_at: iso(ctx.now()) });
   }
   return { phone, ...await sendCode(ctx, phone, email) };
 }
@@ -2261,6 +2400,7 @@ function sellerView(s) {
     id_type: s.id_type,
     id_attempts_left: Math.max(0, 3 - (s.id_attempts || 0)),
     amount_owed: s.amount_owed,
+    marketing_opt_in: Boolean(s.marketing_opt_in_at),
     suspended: Boolean(s.suspended_at)
   };
 }
@@ -2404,6 +2544,12 @@ function sellerRoutes(r) {
       deals
     };
   });
+  r.post("/api/seller/debt/pay", async ({ ctx, request }) => startDebtPayment(ctx, (await requireSeller(ctx, request)).seller));
+  r.post("/api/seller/marketing", async ({ ctx, request, body }) => {
+    const { seller } = await requireSeller(ctx, request);
+    await update(ctx.env, "sellers", seller.id, { marketing_opt_in_at: body.opt_in === true ? iso(ctx.now()) : null });
+    return { marketing_opt_in: body.opt_in === true };
+  });
   r.post("/api/seller/quote", async ({ ctx, request, body }) => {
     return previewDeal(ctx, body, (await requireSeller(ctx, request)).seller);
   });
@@ -2522,7 +2668,7 @@ var naira = /* @__PURE__ */ __name((kobo) => kobo == null ? "" : kobo / 100, "na
 var ROW_LIMIT = 5e3;
 var TABS = {
   Orders: {
-    sql: `SELECT o.*, d.item_title, s.business_name
+    sql: `SELECT o.*, d.item_title, d.condition_confirmed_at, s.business_name
           FROM orders o JOIN deals d ON d.id = o.deal_id JOIN sellers s ON s.id = o.seller_id
           WHERE o.status != 'cancelled' ORDER BY o.id DESC LIMIT ${ROW_LIMIT}`,
     header: [
@@ -2539,7 +2685,9 @@ var TABS = {
       "Paid at",
       "Delivered at",
       "Closed at",
-      "Created at"
+      "Created at",
+      "Seller confirmed condition at",
+      "Buyer accepted change-of-mind notice at"
     ],
     row: /* @__PURE__ */ __name((o) => [
       o.ref,
@@ -2555,12 +2703,14 @@ var TABS = {
       o.paid_at,
       o.delivered_at,
       o.closed_at,
-      o.created_at
+      o.created_at,
+      o.condition_confirmed_at || "",
+      o.buyer_ack_at || ""
     ], "row")
   },
   Sellers: {
     sql: `SELECT * FROM sellers ORDER BY id DESC LIMIT ${ROW_LIMIT}`,
-    header: ["ID", "Business", "Full name", "Phone", "Email", "Phone verified", "ID verified", "Payout bank", "Owes (\u20A6)", "Suspended", "Joined"],
+    header: ["ID", "Business", "Full name", "Phone", "Email", "Phone verified", "ID verified", "Payout bank", "Owes (\u20A6)", "Suspended", "Joined", "News & offers opt-in"],
     row: /* @__PURE__ */ __name((s) => [
       s.id,
       s.business_name,
@@ -2572,8 +2722,28 @@ var TABS = {
       s.payout_bank_name || "",
       naira(s.amount_owed),
       s.suspended_at ? "yes" : "",
-      s.created_at
+      s.created_at,
+      s.marketing_opt_in_at || ""
     ], "row")
+  },
+  // Sellers and buyers who ticked "send me TrustGap news and offers". Only these may get newsletters
+  // and promotions. One row per buyer phone number (their latest order).
+  "Marketing contacts": {
+    sql: `SELECT 'seller' AS role, full_name AS name, business_name, phone, email, marketing_opt_in_at AS opted_in_at, 'seller sign-up' AS source
+            FROM sellers WHERE marketing_opt_in_at IS NOT NULL
+          UNION ALL
+          SELECT 'buyer', o.buyer_name, '', o.buyer_phone, o.buyer_email, o.buyer_marketing_opt_in_at, 'order ' || o.ref
+            FROM orders o WHERE o.buyer_marketing_opt_in_at IS NOT NULL AND o.status NOT IN ('awaiting_payment', 'cancelled')
+              AND o.id = (SELECT MAX(id) FROM orders o2 WHERE o2.buyer_phone = o.buyer_phone AND o2.buyer_marketing_opt_in_at IS NOT NULL
+                          AND o2.status NOT IN ('awaiting_payment', 'cancelled'))
+          ORDER BY opted_in_at DESC LIMIT ${ROW_LIMIT}`,
+    header: ["Role", "Name", "Business", "Phone", "Email", "Opted in at", "Source"],
+    row: /* @__PURE__ */ __name((c) => [c.role, c.name, c.business_name || "", c.phone, c.email || "", c.opted_in_at, c.source], "row")
+  },
+  "Debt payments": {
+    sql: `SELECT p.*, s.business_name FROM debt_payments p JOIN sellers s ON s.id = p.seller_id ORDER BY p.id DESC LIMIT ${ROW_LIMIT}`,
+    header: ["ID", "Seller", "Amount (\u20A6)", "Status", "Provider ref", "Started", "Paid at"],
+    row: /* @__PURE__ */ __name((p) => [p.id, p.business_name, naira(p.amount), p.status, p.provider_tx_id || "", p.created_at, p.paid_at || ""], "row")
   },
   Disputes: {
     sql: `SELECT x.*, o.ref FROM disputes x JOIN orders o ON o.id = x.order_id ORDER BY x.id DESC LIMIT ${ROW_LIMIT}`,
@@ -2666,9 +2836,9 @@ async function syncSheets(ctx) {
   ];
   for (const [title, tab] of Object.entries(TABS)) {
     const rows = await all(env, tab.sql);
-    data.push({ range: `${title}!A1`, values: [tab.header, ...rows.map(tab.row)] });
+    data.push({ range: `'${title}'!A1`, values: [tab.header, ...rows.map(tab.row)] });
   }
-  await google("POST", "/values:batchClear", { ranges: Object.keys(tabs).map((t) => `${t}!A:Z`) });
+  await google("POST", "/values:batchClear", { ranges: Object.keys(tabs).map((t) => `'${t}'!A:Z`) });
   await google("POST", "/values:batchUpdate", { valueInputOption: "RAW", data });
   await run(env, "INSERT INTO meta (key, value) VALUES ('sheets_synced_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ctx.now().toISOString());
   return { synced: data.length };
@@ -2764,10 +2934,11 @@ function adminRoutes(r) {
         identity_verified: Boolean(s.identity_verified_at),
         amount_owed: s.amount_owed
       },
-      disputes: (await all(ctx.env, "SELECT * FROM disputes WHERE order_id = ? ORDER BY id", o.id)).map((x) => ({
+      disputes: await Promise.all((await all(ctx.env, "SELECT * FROM disputes WHERE order_id = ? ORDER BY id", o.id)).map(async (x) => ({
         ...x,
-        category_label: DISPUTE_CATEGORIES[x.category] || x.category
-      })),
+        category_label: DISPUTE_CATEGORIES[x.category] || x.category,
+        photos: await evidenceUrls(ctx, x.id)
+      }))),
       ledger: await all(ctx.env, "SELECT * FROM ledger WHERE order_id = ? ORDER BY id", o.id),
       events: await all(ctx.env, "SELECT * FROM order_events WHERE order_id = ? ORDER BY id", o.id),
       messages: await all(ctx.env, "SELECT * FROM outbox WHERE order_id = ? ORDER BY id", o.id)

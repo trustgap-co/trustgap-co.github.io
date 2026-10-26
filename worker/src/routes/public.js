@@ -3,6 +3,9 @@ import { ensureSchema } from '../lib/migrate.js';
 import { redirect, html, UserError, notFound } from '../lib/http.js';
 import { formatNaira, buyerPart } from '../lib/money.js';
 import { STATES } from '../lib/states.js';
+import { verifyLink } from '../lib/crypto.js';
+import { CONSENTS } from '../lib/terms.js';
+import { isDebtRef, confirmDebtPayment } from '../core/debts.js';
 import { RULES } from '../lib/terms.js';
 import { CONDITIONS, EXPIRY_OPTIONS, BUYER_DISPUTE_CATEGORIES, getDeal, getSeller } from '../core/common.js';
 import { refreshDeal, publicDealView, dealPhotos } from '../core/deals.js';
@@ -13,6 +16,9 @@ import {
   confirmPayment,
   revealPin,
   openDispute,
+  evidenceUrls,
+  PHOTO_REQUIRED,
+  MAX_DISPUTE_PHOTOS,
   releaseToSeller,
   DELIVERY_LABELS,
   settleTransfer,
@@ -37,7 +43,7 @@ export function publicRoutes(r) {
   // Also reports whether the database is connected and has all its tables, so setup problems
   // (missing D1 binding, tables that could not be created) show up here, not as login errors.
   r.get('/api/health', async ({ ctx }) => {
-    const expected = ['sellers', 'sessions', 'otps', 'deals', 'checkouts', 'orders', 'order_events', 'disputes', 'ledger', 'outbox', 'mock_transactions', 'meta', 'deal_photos'];
+    const expected = ['sellers', 'sessions', 'otps', 'deals', 'checkouts', 'orders', 'order_events', 'disputes', 'ledger', 'outbox', 'mock_transactions', 'meta', 'deal_photos', 'dispute_photos'];
     if (!ctx.env.DB) return { ok: false, database: 'No D1 binding called DB. Add it under Settings → Bindings.' };
     try {
       await ensureSchema(ctx.env);
@@ -65,6 +71,9 @@ export function publicRoutes(r) {
     conditions: CONDITIONS,
     expiry_options: EXPIRY_OPTIONS,
     dispute_categories: BUYER_DISPUTE_CATEGORIES,
+    dispute_photo_required: PHOTO_REQUIRED,
+    max_dispute_photos: MAX_DISPUTE_PHOTOS,
+    consents: CONSENTS,
     require_seller_id: ctx.config.requireSellerId,
   }));
 
@@ -77,6 +86,16 @@ export function publicRoutes(r) {
     return { deal: await publicDealView(ctx, deal), rules: RULES(deal) };
   });
 
+  // Dispute evidence photos: private, served only through a signed link that expires.
+  r.get('/api/evidence/:token', async ({ ctx, params }) => {
+    const id = (await verifyLink(ctx.config.appSecret, params.token, ctx.now()))?.match(/^dp(\d+)$/)?.[1];
+    const photo = id && (await first(ctx.env, 'SELECT mime, data FROM dispute_photos WHERE id = ?', Number(id)));
+    if (!photo) throw notFound('This photo link has expired. Reload the page to see it again.');
+    return new Response(new Uint8Array(photo.data), {
+      headers: { 'Content-Type': photo.mime, 'Cache-Control': 'private, max-age=3600', 'Content-Security-Policy': "default-src 'none'" },
+    });
+  });
+
   // The item photos. Kept after the link is paid: they are part of what the buyer agreed to.
   r.get('/api/deals/:token/photos/:n', async ({ ctx, params }) => {
     const deal = await first(ctx.env, 'SELECT id FROM deals WHERE token = ?', params.token);
@@ -87,7 +106,10 @@ export function publicRoutes(r) {
     });
   });
 
-  r.post('/api/deals/:token/accept', async ({ ctx, params, body }) => startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code));
+  // Step 1 → 2. Applying a code on its own (to see the new total) doesn't need the acknowledgement;
+  // only a checkout made after the buyer accepts the change-of-mind pop-up can be paid.
+  r.post('/api/deals/:token/accept', async ({ ctx, params, body }) =>
+    startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code, { acknowledged: body.penalty_acknowledged === true }));
 
   r.post('/api/deals/:token/pay', async ({ ctx, params, body }) => {
     const deal = await loadDeal(ctx, params.token);
@@ -98,7 +120,12 @@ export function publicRoutes(r) {
 
   // Flutterwave (or the simulated checkout) sends the buyer back here after paying.
   r.get('/api/payments/callback', async ({ ctx, url }) => {
-    const order = await confirmPayment(ctx, url.searchParams.get('tx_ref') || '', 'buyer');
+    const txRef = url.searchParams.get('tx_ref') || '';
+    if (isDebtRef(txRef)) {
+      const debt = await confirmDebtPayment(ctx, txRef);
+      return redirect(`${ctx.config.siteUrl}/seller/dashboard.html?debt=${debt?.status === 'paid' ? 'paid' : 'not-paid'}`);
+    }
+    const order = await confirmPayment(ctx, txRef, 'buyer');
     if (!order) return redirect(`${ctx.config.siteUrl}/?error=payment-not-found`);
     return redirect(`${ctx.config.siteUrl}/track.html?t=${order.buyer_token}`);
   });
@@ -107,6 +134,7 @@ export function publicRoutes(r) {
     const hint = await ctx.payments.parseWebhook(request, body);
     if (!hint) return new Response('unauthorized', { status: 401 });
     if (hint.kind === 'transfer') await settleTransfer(ctx, hint);
+    else if (isDebtRef(hint.txRef)) await confirmDebtPayment(ctx, hint.txRef);
     else await confirmPayment(ctx, hint.txRef, 'webhook');
     return new Response('ok');
   });
@@ -188,6 +216,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         can_report: canReport,
       },
       dispute: dispute && {
+        photos: await evidenceUrls(ctx, dispute.id),
         status: dispute.status,
         category: dispute.category,
         resolution_note: dispute.resolution_note,
@@ -206,7 +235,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
 
   r.post('/api/track/:token/dispute', async ({ ctx, params, body }) => {
     if (!BUYER_DISPUTE_CATEGORIES[body.category]) throw new UserError('Choose what went wrong.');
-    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: 'buyer', category: body.category, description: body.description });
+    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: 'buyer', category: body.category, description: body.description, photos: body.photos });
     return { ok: true };
   });
 }

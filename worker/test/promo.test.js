@@ -12,7 +12,7 @@ async function assertBooksBalance(t) {
 }
 
 async function buyWithCode(t, dealToken, code, buyer = BUYER) {
-  const accept = await t.post(`/api/deals/${dealToken}/accept`, code ? { promo_code: code } : {});
+  const accept = await t.post(`/api/deals/${dealToken}/accept`, { penalty_acknowledged: true, ...(code ? { promo_code: code } : {}) });
   if (accept.status !== 200) return accept;
   const pay = await t.post(`/api/deals/${dealToken}/pay`, { ...buyer, checkout_id: accept.data.checkout_id, expected_total: accept.data.total });
   if (pay.status !== 200) return pay;

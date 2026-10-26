@@ -7,9 +7,9 @@ export const MAX_PHOTOS = 4;
 export const MAX_PHOTO_BYTES = 600 * 1024;
 
 // Turns the uploaded data URLs ("data:image/jpeg;base64,…") into clean JPEG bytes.
-export async function parsePhotos(input) {
+export async function parsePhotos(input, max = MAX_PHOTOS) {
   const list = Array.isArray(input) ? input : input ? [input] : [];
-  if (list.length > MAX_PHOTOS) throw new UserError(`Add up to ${MAX_PHOTOS} photos.`);
+  if (list.length > max) throw new UserError(`Add up to ${max} photos.`);
   const photos = [];
   for (const item of list) {
     const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(item));
@@ -55,6 +55,9 @@ async function sha256Bytes(bytes) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return [...digest].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
+
+// Private photo addresses (dispute evidence): signed, and only valid for a couple of hours.
+export const EVIDENCE_LINK_HOURS = 2;
 
 // Public addresses of a deal's photos (served by GET /api/deals/:token/photos/:n). The short hash in
 // the address lets browsers cache each photo for good: a deal's photos never change.

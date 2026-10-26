@@ -3,25 +3,46 @@ import { all, first, run } from '../lib/db.js';
 // Read-only copy of the database into Google Sheets for viewing and reporting.
 // D1 stays the source of truth: edits made in the sheet are overwritten on the next sync.
 // Sensitive data (bank account numbers, PINs, full addresses, ID numbers) is never copied.
+// Tab names with spaces are quoted in ranges ('Marketing contacts'!A1).
 
 const naira = (kobo) => (kobo == null ? '' : kobo / 100);
 const ROW_LIMIT = 5000;
 
 const TABS = {
   Orders: {
-    sql: `SELECT o.*, d.item_title, s.business_name
+    sql: `SELECT o.*, d.item_title, d.condition_confirmed_at, s.business_name
           FROM orders o JOIN deals d ON d.id = o.deal_id JOIN sellers s ON s.id = o.seller_id
           WHERE o.status != 'cancelled' ORDER BY o.id DESC LIMIT ${ROW_LIMIT}`,
     header: ['Ref', 'Status', 'Item', 'Seller', 'Buyer', 'Buyer phone', 'Delivery state', 'Paid (₦)', 'Seller gets (₦)',
-      'Delivery', 'Paid at', 'Delivered at', 'Closed at', 'Created at'],
+      'Delivery', 'Paid at', 'Delivered at', 'Closed at', 'Created at', 'Seller confirmed condition at', 'Buyer accepted change-of-mind notice at'],
     row: (o) => [o.ref, o.status, o.item_title, o.business_name, o.buyer_name, o.buyer_phone, o.delivery_state || '',
-      naira(o.amount), naira(o.seller_payout), o.delivery_status, o.paid_at, o.delivered_at, o.closed_at, o.created_at],
+      naira(o.amount), naira(o.seller_payout), o.delivery_status, o.paid_at, o.delivered_at, o.closed_at, o.created_at,
+      o.condition_confirmed_at || '', o.buyer_ack_at || ''],
   },
   Sellers: {
     sql: `SELECT * FROM sellers ORDER BY id DESC LIMIT ${ROW_LIMIT}`,
-    header: ['ID', 'Business', 'Full name', 'Phone', 'Email', 'Phone verified', 'ID verified', 'Payout bank', 'Owes (₦)', 'Suspended', 'Joined'],
+    header: ['ID', 'Business', 'Full name', 'Phone', 'Email', 'Phone verified', 'ID verified', 'Payout bank', 'Owes (₦)', 'Suspended', 'Joined', 'News & offers opt-in'],
     row: (s) => [s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at ? 'yes' : 'no', s.identity_verified_at ? 'yes' : 'no',
-      s.payout_bank_name || '', naira(s.amount_owed), s.suspended_at ? 'yes' : '', s.created_at],
+      s.payout_bank_name || '', naira(s.amount_owed), s.suspended_at ? 'yes' : '', s.created_at, s.marketing_opt_in_at || ''],
+  },
+  // Sellers and buyers who ticked "send me TrustGap news and offers". Only these may get newsletters
+  // and promotions. One row per buyer phone number (their latest order).
+  'Marketing contacts': {
+    sql: `SELECT 'seller' AS role, full_name AS name, business_name, phone, email, marketing_opt_in_at AS opted_in_at, 'seller sign-up' AS source
+            FROM sellers WHERE marketing_opt_in_at IS NOT NULL
+          UNION ALL
+          SELECT 'buyer', o.buyer_name, '', o.buyer_phone, o.buyer_email, o.buyer_marketing_opt_in_at, 'order ' || o.ref
+            FROM orders o WHERE o.buyer_marketing_opt_in_at IS NOT NULL AND o.status NOT IN ('awaiting_payment', 'cancelled')
+              AND o.id = (SELECT MAX(id) FROM orders o2 WHERE o2.buyer_phone = o.buyer_phone AND o2.buyer_marketing_opt_in_at IS NOT NULL
+                          AND o2.status NOT IN ('awaiting_payment', 'cancelled'))
+          ORDER BY opted_in_at DESC LIMIT ${ROW_LIMIT}`,
+    header: ['Role', 'Name', 'Business', 'Phone', 'Email', 'Opted in at', 'Source'],
+    row: (c) => [c.role, c.name, c.business_name || '', c.phone, c.email || '', c.opted_in_at, c.source],
+  },
+  'Debt payments': {
+    sql: `SELECT p.*, s.business_name FROM debt_payments p JOIN sellers s ON s.id = p.seller_id ORDER BY p.id DESC LIMIT ${ROW_LIMIT}`,
+    header: ['ID', 'Seller', 'Amount (₦)', 'Status', 'Provider ref', 'Started', 'Paid at'],
+    row: (p) => [p.id, p.business_name, naira(p.amount), p.status, p.provider_tx_id || '', p.created_at, p.paid_at || ''],
   },
   Disputes: {
     sql: `SELECT x.*, o.ref FROM disputes x JOIN orders o ON o.id = x.order_id ORDER BY x.id DESC LIMIT ${ROW_LIMIT}`,
@@ -107,9 +128,9 @@ export async function syncSheets(ctx) {
   ];
   for (const [title, tab] of Object.entries(TABS)) {
     const rows = await all(env, tab.sql);
-    data.push({ range: `${title}!A1`, values: [tab.header, ...rows.map(tab.row)] });
+    data.push({ range: `'${title}'!A1`, values: [tab.header, ...rows.map(tab.row)] });
   }
-  await google('POST', '/values:batchClear', { ranges: Object.keys(tabs).map((t) => `${t}!A:Z`) });
+  await google('POST', '/values:batchClear', { ranges: Object.keys(tabs).map((t) => `'${t}'!A:Z`) });
   await google('POST', '/values:batchUpdate', { valueInputOption: 'RAW', data });
   await run(env, "INSERT INTO meta (key, value) VALUES ('sheets_synced_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ctx.now().toISOString());
   return { synced: data.length };

@@ -1,4 +1,5 @@
 import { sha256Hex } from './crypto.js';
+import { formatNaira } from './money.js';
 
 export const TERMS_VERSION = '2026-10-pilot-1';
 
@@ -13,7 +14,7 @@ export const RULES = (deal) => [
 ];
 
 // The exact deal and rules the buyer sees and accepts. Stored with the order, hashed, never changed.
-export async function snapshotTerms(deal, seller, photoHashes = [], promo = null) {
+export async function snapshotTerms(deal, seller, photoHashes = [], promo = null, acknowledgedAt = null) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -46,7 +47,27 @@ export async function snapshotTerms(deal, seller, photoHashes = [], promo = null
     },
     inspection_hours: deal.inspection_hours,
     rules: RULES(deal),
+    // The change-of-mind notice the buyer accepted in a pop-up before continuing (exact wording).
+    buyer_acknowledgement: acknowledgedAt && { text: fillConsent('buyer', deal.delivery_fee), at: acknowledgedAt },
   };
   const json = JSON.stringify(terms);
   return { json, hash: await sha256Hex(json) };
 }
+
+// The two confirmations shown as pop-ups before a deal goes ahead. The website shows exactly this
+// wording (from /api/config, with {fee} filled in), and the filled-in wording is what gets recorded.
+export const CONSENTS = {
+  seller: {
+    title: 'Is the item in good condition, exactly as agreed with the buyer?',
+    body: 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}).',
+    confirm: 'The item is in good condition as agreed',
+  },
+  buyer: {
+    title: 'Before you pay: changing your mind has a cost',
+    body: 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}). If the item is wrong, damaged, fake or not as described, you get a full refund.',
+    confirm: 'I understand. Continue',
+  },
+};
+
+export const fillConsent = (who, deliveryFeeKobo) =>
+  `${CONSENTS[who].title} ${CONSENTS[who].body.replace('{fee}', formatNaira(2 * deliveryFeeKobo))}`;

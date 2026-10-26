@@ -55,7 +55,7 @@ describe('states instead of fixed areas', () => {
     assert.equal(view.price.total, 4_995_700);
     assert.doesNotMatch(JSON.stringify(view), /Allen Avenue/, 'never the pickup address');
 
-    const { checkout_id } = (await t.post(`/api/deals/${deal.token}/accept`)).data;
+    const { checkout_id } = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true })).data;
     const stale = await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id, expected_total: 100 });
     assert.equal(stale.status, 409);
     const sneaky = { ...BUYER, checkout_id, expected_total: view.price.total, delivery_address: '1 Other Street, Kano', delivery_state: 'Kano' };

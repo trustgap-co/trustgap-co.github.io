@@ -38,10 +38,11 @@ export async function signup(ctx, input) {
   const email = validEmail(input.email);
   const existing = await first(ctx.env, 'SELECT * FROM sellers WHERE phone = ?', phone);
   if (existing?.phone_verified_at) throw new UserError('An account with this phone number already exists. Log in instead.');
+  const marketing = input.marketing_opt_in === true || input.marketing_opt_in === 'yes' ? iso(ctx.now()) : null;
   if (existing) {
-    await update(ctx.env, 'sellers', existing.id, { full_name: fullName, business_name: businessName, email });
+    await update(ctx.env, 'sellers', existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing });
   } else {
-    await insert(ctx.env, 'sellers', { full_name: fullName, business_name: businessName, phone, email, created_at: iso(ctx.now()) });
+    await insert(ctx.env, 'sellers', { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, created_at: iso(ctx.now()) });
   }
   return { phone, ...(await sendCode(ctx, phone, email)) };
 }
@@ -134,6 +135,7 @@ export function sellerView(s) {
     id_type: s.id_type,
     id_attempts_left: Math.max(0, 3 - (s.id_attempts || 0)),
     amount_owed: s.amount_owed,
+    marketing_opt_in: Boolean(s.marketing_opt_in_at),
     suspended: Boolean(s.suspended_at),
   };
 }

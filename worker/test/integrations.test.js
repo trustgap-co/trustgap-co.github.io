@@ -1,7 +1,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createHmac } from 'node:crypto';
-import { boot, onboardSeller, createDeal, buyerPays } from './helpers.js';
+import { boot, onboardSeller, createDeal, buyerPays, SELLER, BUYER } from './helpers.js';
 
 // Replaces global fetch for one test, recording calls to external services.
 let realFetch;
@@ -61,18 +61,26 @@ describe('Google Sheets copy', () => {
       return ok({});
     });
     const t = boot({ GOOGLE_SHEET_ID: 'sheet123', GOOGLE_SERVICE_ACCOUNT_EMAIL: 'bot@x.iam.gserviceaccount.com', GOOGLE_PRIVATE_KEY: pem });
-    const deal = await createDeal(t, await onboardSeller(t));
-    await buyerPays(t, deal.token);
+    const deal = await createDeal(t, await onboardSeller(t, { ...SELLER, marketing_opt_in: true }));
+    await buyerPays(t, deal.token, { ...BUYER, marketing_opt_in: true });
+    const deal2 = await createDeal(t, await onboardSeller(t, { ...SELLER, phone: '0803 555 0000', email: 'no@example.com' }));
+    await buyerPays(t, deal2.token, { ...BUYER, buyer_phone: '08075550000', buyer_email: 'quiet@example.com' });
     const admin = (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
     const res = await t.post('/api/admin/sync-sheets', {}, admin);
     assert.equal(res.status, 200, JSON.stringify(res.data));
 
     const add = calls.find((c) => c.url.endsWith(':batchUpdate') && !c.url.includes('values'));
-    assert.deepEqual(JSON.parse(add.init.body).requests.map((r) => r.addSheet.properties.title), ['Summary', 'Sellers', 'Disputes', 'Ledger']);
-    const orders = written.data.find((d) => d.range === 'Orders!A1').values;
+    assert.deepEqual(JSON.parse(add.init.body).requests.map((r) => r.addSheet.properties.title), ['Summary', 'Sellers', 'Marketing contacts', 'Debt payments', 'Disputes', 'Ledger']);
+    const tab = (name) => written.data.find((d) => d.range === `'${name}'!A1`).values;
+    const orders = tab('Orders');
     assert.equal(orders[1][1], 'paid');
     assert.equal(orders[1][7], 49957);
     assert.equal(orders[1][6], 'Lagos');
+    assert.ok(orders[1][14] && orders[1][15], 'both confirmations are recorded with their times');
+    const marketing = tab('Marketing contacts');
+    assert.deepEqual(marketing.slice(1).map((r) => [r[0], r[3]]).sort(), [['buyer', '+2348091234567'], ['seller', '+2348031234567']],
+      'only the seller and buyer who opted in');
+    assert.doesNotMatch(JSON.stringify(marketing), /quiet@example|no@example/);
     const everything = JSON.stringify(written);
     assert.doesNotMatch(everything, /0000000002|Admiralty|11111111111/);
     assert.ok(calls.every((c) => !c.init.headers?.Authorization || c.init.headers.Authorization === 'Bearer tok'));

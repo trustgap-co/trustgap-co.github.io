@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { boot, onboardSeller, login, createDeal, buyerCheckout, completePayment, buyerPays, SELLER, DEAL, BUYER } from './helpers.js';
+import { boot, onboardSeller, login, createDeal, buyerCheckout, completePayment, buyerPays, SELLER, DEAL, BUYER, PHOTO } from './helpers.js';
 
 const lastOrder = (t) => t.one('SELECT * FROM orders ORDER BY id DESC LIMIT 1');
 const ledgerOf = async (t, orderId) =>
@@ -274,7 +274,7 @@ describe('disputes', () => {
     const deal = await createDeal(t, seller);
     const { trackToken, track } = await buyerPays(t, deal.token);
     await shipAndDeliver(t, seller, await lastOrder(t), track.order.pin);
-    await t.post(`/api/track/${trackToken}/dispute`, { category: 'counterfeit', description: 'No serial tag, stitching looks fake' });
+    await t.post(`/api/track/${trackToken}/dispute`, { category: 'counterfeit', description: 'No serial tag, stitching looks fake', photos: [PHOTO] });
     t.advanceHours(48);
     await t.scheduled();
     assert.equal((await lastOrder(t)).status, 'disputed');

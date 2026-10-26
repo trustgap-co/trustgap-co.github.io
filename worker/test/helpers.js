@@ -70,6 +70,7 @@ export const PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4QA6RXh
 
 export const DEAL = {
   photos: [PHOTO],
+  condition_confirmed: true, // the seller's pop-up confirmation
   item_title: 'Nike Tech Fleece sneakers, size 42, blue',
   item_description: 'Original, brand new in box with receipt. Blue colourway, size 42 EU.',
   item_condition: 'Brand new (sealed)',
@@ -119,7 +120,7 @@ export async function createDeal(t, token, deal = DEAL) {
 
 // Buyer confirms the deal (step 1), enters their details (step 2) and reaches the payment page.
 export async function buyerCheckout(t, dealToken, buyer = BUYER) {
-  const accept = await t.post(`/api/deals/${dealToken}/accept`);
+  const accept = await t.post(`/api/deals/${dealToken}/accept`, { penalty_acknowledged: true });
   if (accept.status !== 200) return accept;
   const total = (await t.get(`/api/deals/${dealToken}`)).data.deal.price.total;
   return t.post(`/api/deals/${dealToken}/pay`, { ...buyer, checkout_id: accept.data.checkout_id, expected_total: total });

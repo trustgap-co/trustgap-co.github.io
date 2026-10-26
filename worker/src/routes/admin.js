@@ -3,7 +3,7 @@ import { UserError, notFound } from '../lib/http.js';
 import { verifyLink } from '../lib/crypto.js';
 import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso } from '../core/common.js';
 import { adminLogin, authenticate } from '../core/sellers.js';
-import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, DELIVERY_LABELS } from '../core/orders.js';
+import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceUrls, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
 import { dealPhotos } from '../core/deals.js';
 import { syncSheets } from '../providers/sheets.js';
@@ -93,10 +93,11 @@ export function adminRoutes(r) {
         payout_bank_name: s.payout_bank_name, payout_account_number: s.payout_account_number,
         identity_verified: Boolean(s.identity_verified_at), amount_owed: s.amount_owed,
       },
-      disputes: (await all(ctx.env, 'SELECT * FROM disputes WHERE order_id = ? ORDER BY id', o.id)).map((x) => ({
+      disputes: await Promise.all((await all(ctx.env, 'SELECT * FROM disputes WHERE order_id = ? ORDER BY id', o.id)).map(async (x) => ({
         ...x,
         category_label: DISPUTE_CATEGORIES[x.category] || x.category,
-      })),
+        photos: await evidenceUrls(ctx, x.id),
+      }))),
       ledger: await all(ctx.env, 'SELECT * FROM ledger WHERE order_id = ? ORDER BY id', o.id),
       events: await all(ctx.env, 'SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id),
       messages: await all(ctx.env, 'SELECT * FROM outbox WHERE order_id = ? ORDER BY id', o.id),

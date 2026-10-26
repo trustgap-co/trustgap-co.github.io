@@ -83,3 +83,51 @@ describe('item photos', () => {
     assert.throws(() => stripJpegMetadata(new Uint8Array([0xff, 0xd8, 0x00, 0x01])), /damaged/);
   });
 });
+
+describe('buyer evidence photos on a reported problem', () => {
+  const adminToken = async (t) => (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
+  async function paidOrder(t) {
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller);
+    return (await buyerPays(t, deal.token)).trackToken;
+  }
+
+  test('item problems need a photo, at most two; "not delivered" needs none', async () => {
+    const t = boot();
+    const track = await paidOrder(t);
+    const report = (body) => t.post(`/api/track/${track}/dispute`, { description: 'Screen is cracked on the left side', ...body });
+    assert.match((await report({ category: 'damaged' })).data.error, /at least one photo/);
+    assert.match((await report({ category: 'damaged', photos: [PHOTO, PHOTO, PHOTO] })).data.error, /up to 2/);
+    assert.equal((await t.one('SELECT COUNT(*) AS n FROM disputes')).n, 0);
+    const t2 = boot();
+    const track2 = await paidOrder(t2);
+    assert.equal((await t2.post(`/api/track/${track2}/dispute`, { category: 'not_delivered', description: 'Nothing came' })).status, 200);
+  });
+
+  test('admin sees the photos straight away through private, expiring links', async () => {
+    const t = boot();
+    const track = await paidOrder(t);
+    const r = await t.post(`/api/track/${track}/dispute`, { category: 'damaged', description: 'Screen is cracked on the left side', photos: [PHOTO, PHOTO] });
+    assert.equal(r.status, 200);
+    const order = await t.one('SELECT id FROM orders');
+    const view = (await t.get(`/api/admin/orders/${order.id}`, await adminToken(t))).data;
+    const urls = view.disputes[0].photos;
+    assert.equal(urls.length, 2);
+    assert.ok(urls[0].startsWith(`${API}/api/evidence/`));
+    const img = await t.get(new URL(urls[0]).pathname);
+    assert.equal(img.status, 200);
+    assert.equal(img.headers.get('Content-Type'), 'image/jpeg');
+    assert.match(img.headers.get('Cache-Control'), /private/);
+    assert.ok(!Buffer.from(img.data, 'latin1').includes('TestCam-GPS'), 'location data removed');
+    assert.equal((await t.get(`/api/track/${track}`)).data.dispute.photos.length, 2, 'the buyer sees what they sent');
+
+    const token = new URL(urls[0]).pathname.split('/').pop();
+    const forged = token.replace(/^dp\d+/, `dp${999}`);
+    assert.equal((await t.get(`/api/evidence/${forged}`)).status, 404, 'a changed link is refused');
+    assert.equal((await t.get('/api/evidence/dp1')).status, 404, 'an unsigned id is refused');
+    t.advanceHours(3);
+    assert.equal((await t.get(new URL(urls[0]).pathname)).status, 404, 'links expire');
+    const fresh = (await t.get(`/api/admin/orders/${order.id}`, await adminToken(t))).data.disputes[0].photos[0];
+    assert.equal((await t.get(new URL(fresh).pathname)).status, 200, 'reloading the page gives fresh links');
+  });
+});

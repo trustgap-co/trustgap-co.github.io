@@ -1,9 +1,10 @@
-import { first, all } from '../lib/db.js';
+import { first, all, update } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
-import { getSeller, payUrl, HELD_STATUSES } from '../core/common.js';
+import { getSeller, payUrl, HELD_STATUSES, iso } from '../core/common.js';
 import { signup, requestLogin, verifyCode, authenticate, logout, sellerView, setPayoutAccount, verifyIdentity } from '../core/sellers.js';
 import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown, dealPhotos } from '../core/deals.js';
 import { bookPickup, DELIVERY_LABELS } from '../core/orders.js';
+import { startDebtPayment } from '../core/debts.js';
 
 export async function requireSeller(ctx, request) {
   const session = await authenticate(ctx, request);
@@ -83,6 +84,16 @@ export function sellerRoutes(r) {
   });
 
   // "Calculate price": the exact delivery fee, fees, buyer total and payout, before creating the link.
+  // Pay what's owed from a past dispute now, on the payment page (instead of waiting for a payout).
+  r.post('/api/seller/debt/pay', async ({ ctx, request }) => startDebtPayment(ctx, (await requireSeller(ctx, request)).seller));
+
+  // TrustGap news and offers by SMS, WhatsApp or email: on or off.
+  r.post('/api/seller/marketing', async ({ ctx, request, body }) => {
+    const { seller } = await requireSeller(ctx, request);
+    await update(ctx.env, 'sellers', seller.id, { marketing_opt_in_at: body.opt_in === true ? iso(ctx.now()) : null });
+    return { marketing_opt_in: body.opt_in === true };
+  });
+
   r.post('/api/seller/quote', async ({ ctx, request, body }) => {
     return previewDeal(ctx, body, (await requireSeller(ctx, request)).seller);
   });

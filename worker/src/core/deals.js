@@ -1,6 +1,7 @@
 import { first, all, insertStmt, updateStmt, stmt } from '../lib/db.js';
 import { parsePhotos, photoUrls } from '../lib/photos.js';
 import { checkSellerPromo } from './promo.js';
+import { fillConsent } from '../lib/terms.js';
 import { randomToken } from '../lib/crypto.js';
 import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira } from '../lib/money.js';
 import { normaliseState } from '../lib/states.js';
@@ -98,6 +99,10 @@ export async function createDeal(ctx, seller, input) {
   const p = pricingInput(ctx, input);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
   const q = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  // The seller confirms the item's condition in a pop-up, seeing what a false description costs them.
+  if (input.condition_confirmed !== true && input.condition_confirmed !== 'yes') {
+    throw new UserError('Confirm that the item is in good condition, exactly as agreed with the buyer.');
+  }
 
   const now = ctx.now();
   const token = randomToken(12);
@@ -137,6 +142,8 @@ export async function createDeal(ctx, seller, input) {
       inspection_hours: ctx.config.inspectionHours,
       photo_count: photoCount,
       promo_code: promo,
+      condition_confirmed_at: iso(now),
+      condition_pledge: fillConsent('seller', q.deliveryFee),
       status: 'open',
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now),

@@ -1,10 +1,11 @@
 import { first, all, run, insert, update, stmt } from '../lib/db.js';
-import { randomToken, humanRef, randomDigits, encrypt, decrypt, safeEqual } from '../lib/crypto.js';
+import { randomToken, humanRef, randomDigits, encrypt, decrypt, safeEqual, signLink } from '../lib/crypto.js';
 import { nairaToKobo, formatNaira, buyerPart } from '../lib/money.js';
 import { namesMatch } from '../lib/names.js';
 import { snapshotTerms } from '../lib/terms.js';
 import { refreshDeal, dealPhotoHashes } from './deals.js';
 import { checkPromo, buyerUsedPromo } from './promo.js';
+import { parsePhotos, EVIDENCE_LINK_HOURS } from '../lib/photos.js';
 import {
   UserError,
   DISPUTE_CATEGORIES,
@@ -28,11 +29,12 @@ import {
 
 // ---------------------------------------------------------------- buyer checkout
 
-export async function startCheckout(ctx, deal, promoInput) {
+export async function startCheckout(ctx, deal, promoInput, { acknowledged = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== 'open') throw new UserError('This link is no longer available.', 410);
   const promo = await buyerPromo(ctx, deal, promoInput);
-  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo);
+  const ackAt = acknowledged ? iso(ctx.now()) : null;
+  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo, ackAt);
   const id = randomToken(15);
   await insert(ctx.env, 'checkouts', { id, deal_id: deal.id, terms_json: json, terms_hash: hash, created_at: iso(ctx.now()) });
   return { checkout_id: id, terms_hash: hash, total: JSON.parse(json).money.buyer_total, promo };
@@ -82,7 +84,11 @@ export async function placeOrder(ctx, { deal, input }) {
 
   // The address and every amount come from the link the buyer confirmed in step 1, never from
   // this request. A mismatch means the page is out of date.
-  const money = JSON.parse(checkout.terms_json).money;
+  const terms = JSON.parse(checkout.terms_json);
+  if (!terms.buyer_acknowledgement) {
+    throw new UserError('Go back to step 1 and confirm you’ve read what happens if you change your mind.', 409);
+  }
+  const money = terms.money;
   const discount = money.promo_discount || 0;
   const total = deal.buyer_total - discount;
   if (input.expected_total !== undefined && Number(input.expected_total) !== total) {
@@ -112,6 +118,8 @@ export async function placeOrder(ctx, { deal, input }) {
     seller_payout: deal.seller_payout,
     promo_code: promoCode,
     promo_discount: discount,
+    buyer_ack_at: terms.buyer_acknowledgement.at,
+    buyer_marketing_opt_in_at: input.marketing_opt_in === true || input.marketing_opt_in === 'yes' ? iso(ctx.now()) : null,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
     refund_account_enc: await encrypt(accountNumber, ctx.config.appSecret),
@@ -421,23 +429,43 @@ export async function syncCourierStatus(ctx, order) {
 
 // ---------------------------------------------------------------- disputes & money out
 
-export async function openDispute(ctx, order, { by, category, description }) {
+// Problems that are about the item itself: the buyer must show it in at least one photo.
+export const PHOTO_REQUIRED = ['wrong_item', 'damaged', 'not_as_described', 'counterfeit'];
+export const MAX_DISPUTE_PHOTOS = 2;
+
+export async function openDispute(ctx, order, { by, category, description, photos: photoInput }) {
   if (!DISPUTE_CATEGORIES[category]) throw new UserError('Choose what went wrong.');
   const text = str(description).slice(0, 2000);
   if (text.length < 3) throw new UserError('Describe the problem.');
+  const photos = await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS);
+  if (by === 'buyer' && PHOTO_REQUIRED.includes(category) && !photos.length) {
+    throw new UserError('Add at least one photo showing the problem with the item.');
+  }
   if (!['paid', 'shipping', 'delivered'].includes(order.status)) throw new UserError('A problem can no longer be reported on this order.');
   if (by === 'buyer' && order.status === 'delivered' && new Date(order.inspection_ends_at) <= ctx.now()) {
     throw new UserError('The inspection period has ended.');
   }
   const won = await transition(ctx, order.id, [order.status], { status: 'disputed' }, (h) => [
     h.insert('disputes', { order_id: order.id, opened_by: by, category, description: text, status: 'open', created_at: iso(ctx.now()) }),
-    h.event(by, 'dispute_opened', { category, description: text }),
+    // Saved in the same step as the dispute, so a report never exists without its photos.
+    ...photos.map((p, i) => h.sql(
+      `INSERT INTO dispute_photos (dispute_id, position, mime, data, sha256, bytes, created_at)
+       SELECT (SELECT MAX(id) FROM disputes WHERE order_id = ?), ?, ?, ?, ?, ?, ? WHERE 1`,
+      order.id, i + 1, p.mime, p.data, p.sha256, p.bytes, iso(ctx.now()))),
+    h.event(by, 'dispute_opened', { category, description: text, photos: photos.length }),
   ]);
   if (!won) throw new UserError('This order changed while you were reporting. Refresh and try again.', 409);
   const seller = await getSeller(ctx, order.seller_id);
   const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.`;
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: order.buyer_phone, sms });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: seller.phone, sms });
+}
+
+// Signed addresses of a dispute's photos, valid for a couple of hours (GET /api/evidence/:token).
+export async function evidenceUrls(ctx, disputeId) {
+  const rows = await all(ctx.env, 'SELECT id FROM dispute_photos WHERE dispute_id = ? ORDER BY position', disputeId);
+  const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
+  return Promise.all(rows.map(async (r) => `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`));
 }
 
 export async function resolveDispute(ctx, disputeId, input) {
