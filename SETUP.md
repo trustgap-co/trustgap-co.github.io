@@ -150,7 +150,15 @@ npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL   # "client_email"
 npx wrangler secret put GOOGLE_PRIVATE_KEY             # "private_key", including the BEGIN/END lines
 ```
 
-Every 15 minutes the Worker rewrites tabs **Summary, Orders, Sellers, Disputes, Ledger**.
+Every 15 minutes the Worker rewrites tabs **Summary, Orders, Sellers, Marketing contacts, Debt payments,
+Disputes, Ledger** (it only touches those tabs, so the survey tabs from §10 can live in the same sheet).
+- **Orders** includes when the seller confirmed the item's condition and when the buyer accepted the
+  change-of-mind notice (the exact wording is kept in the database: admin order page).
+- **Marketing contacts** lists sellers and buyers who ticked "Send me TrustGap news and offers" (seller
+  sign-up, buyer step 2, or the seller's Settings): name, phone, email, when they opted in. Use only
+  this tab for newsletters and promotions; people who didn't tick the box must not get marketing. If
+  someone replies STOP, untick it for them (sellers can do it themselves in Settings).
+- **Debt payments** lists sellers paying a dispute charge from their dashboard.
 It is read-only: edits in the sheet are overwritten. Bank account numbers, PINs, full addresses and
 ID numbers are never copied. **Admin → Orders → Copy to Google Sheets now** forces a sync.
 
@@ -206,6 +214,13 @@ Steps:
 4. Live keys are refused unless you also set `ALLOW_LIVE_PAYMENTS = "true"`. Flutterwave was clear
    that **TrustGap, not Flutterwave, is the custodian of the money in the wallet**, so do this only
    after a Nigerian fintech lawyer has advised on safeguarding and segregation of those funds.
+
+**Sellers paying what they owe.** When admin charges a seller in a dispute (e.g. twice the delivery
+fee), the seller's dashboard shows **Pay ₦X now**. It opens the same Flutterwave payment page buyers
+use (reference `TGD-…`), and the balance clears as soon as Flutterwave confirms the payment (through the
+same redirect and webhook, nothing extra to set up). Otherwise the amount is still taken from their next
+payout, and they can't create new links until it's cleared. Flutterwave's 2% on that payment is
+TrustGap's cost.
 
 Still to ask Flutterwave (their integrations team offered a walkthrough):
 - Is the 2% on local NGN collections capped?
@@ -289,6 +304,11 @@ stored in your D1 database (the Worker creates the `deal_photos` table itself on
   uploading, and the Worker removes hidden camera details such as GPS location. (Seller photos are
   JPEG, not PNG: a PNG photo is several MB and too large to store this way.)
 - Photos of links that were never paid are deleted after 30 days. Paid deals keep theirs.
+- **Buyers' problem photos** (up to 2 per report, required for a wrong, damaged, fake or
+  not-as-described item) are stored the same way, in `dispute_photos`. They're private evidence:
+  only admin (on the order page) and the buyer (on their tracking page) can open them, through
+  signed links that stop working after 2 hours (reloading the page gives fresh ones). The seller
+  doesn't see them.
 - Storage: the D1 free plan allows a 500 MB database, roughly 1,000–2,000 paid deals with photos.
   When you get close (Cloudflare → D1 → trustgap shows the size), move to the
   Workers Paid plan ($5/month, 10 GB per database), or ask for the photos to be moved to Cloudflare R2.
@@ -478,7 +498,7 @@ npm run db:migrate:local
 npm run dev                                   # API on http://localhost:8787
 # in another terminal:
 cd docs && python3 -m http.server 8080        # site on http://localhost:8080
-npm test                                      # (in worker/) 72 tests, no Cloudflare account needed
+npm test                                      # (in worker/) 79 tests, no Cloudflare account needed
 ```
 
 Admin locally: http://localhost:8080/admin/ with the password from `.dev.vars`.

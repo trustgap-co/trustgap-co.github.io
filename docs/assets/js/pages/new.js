@@ -1,4 +1,5 @@
-import { api, html, show, onSubmit, shell, money, link, params, stateInput, statesList, formData, fail, track, trackThenGo, $ } from '../core.js';
+import { shrinkPhoto } from '../photos.js';
+import { api, html, show, onSubmit, shell, money, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
 
 const config = await shell('seller');
 const MAX_PHOTOS = 4;
@@ -117,6 +118,7 @@ try {
   let timer;
   let started = false;
   let promoTracked = false;
+  let lastDeliveryFee = null; // from the live preview, for the pop-up's penalty amount
   let last = '';
   async function preview() {
     const d = formData(form);
@@ -127,6 +129,7 @@ try {
     show('#preview', html`<p class="muted small">Calculating…</p>`);
     try {
       const { price: p, delivery_state, promo } = await api('/api/seller/quote', { method: 'POST', body: d, as: 'seller' });
+      lastDeliveryFee = p.deliveryFee;
       if (key !== last) return;
       show('#preview', html`<table class="breakdown">
         <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
@@ -154,6 +157,17 @@ try {
   onSubmit($('#deal'), async (data) => {
     if (!photos.length && !keeping.length) throw new Error('Add at least one photo of the item, so the buyer can see what they are paying for.');
     if (photos.length) data.photos = photos;
+    // The seller confirms the item's condition, with the cost of a false description in front of them.
+    const c = config.consents?.seller;
+    const fee = lastDeliveryFee != null ? money(2 * lastDeliveryFee) : 'shown in the price box';
+    const confirmed = await confirmModal({
+      title: c?.title || 'Is the item in good condition, exactly as agreed with the buyer?',
+      body: (c?.body || 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}).').replace('{fee}', fee),
+      confirm: c?.confirm || 'The item is in good condition as agreed',
+    });
+    track('seller_condition_confirm', { confirmed });
+    if (!confirmed) return;
+    data.condition_confirmed = true;
     const { deal } = await api('/api/seller/deals', { method: 'POST', body: data, as: 'seller' });
     const price = Number(String(data.item_price).replace(/[^\d.]/g, '')) || 0;
     trackThenGo('deal_link_created', {
@@ -164,31 +178,4 @@ try {
   });
 } catch (err) {
   fail(err);
-}
-
-// Loads a photo from the phone and returns it as a JPEG data URL, at most 1280px on its longest side
-// and under ~450 KB. Browsers apply the photo's rotation when drawing it, so it comes out upright.
-async function shrinkPhoto(file) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    const scale = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(img.naturalWidth * scale);
-    canvas.height = Math.round(img.naturalHeight * scale);
-    const g = canvas.getContext('2d');
-    g.fillStyle = '#fff'; // transparent PNGs get a white background instead of black
-    g.fillRect(0, 0, canvas.width, canvas.height);
-    g.drawImage(img, 0, 0, canvas.width, canvas.height);
-    let out;
-    for (const quality of [0.82, 0.72, 0.62, 0.5]) {
-      out = canvas.toDataURL('image/jpeg', quality);
-      if (out.length * 0.75 < 450 * 1024) break;
-    }
-    return out;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }

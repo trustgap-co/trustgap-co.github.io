@@ -25,7 +25,11 @@ async function render() {
         <p class="small">Item ${money(d.item_price)} · delivery ${money(o.delivery_fee)} to ${o.delivery_state} (${d.delivery_payer}) · TrustGap fee ${money(o.platform_fee)} + processing ${money(o.processing_fee)} (${d.fee_payer})<br>
           Parcel ${d.weight_kg} kg${d.fragile ? ', fragile' : ''}<br>
           Buyer paid <strong>${money(o.amount)}</strong> · seller gets <strong>${money(o.seller_payout)}</strong></p>
-        <p class="small">Packing note: ${o.packing_note || 'none'}</p></div>
+        <p class="small">Packing note: ${o.packing_note || 'none'}</p>
+        <div class="consents small">
+          <p><strong>Seller’s condition confirmation:</strong> ${d.condition_confirmed_at ? html`✓ ${date(d.condition_confirmed_at)}<br><span class="muted">“${d.condition_pledge}”</span>` : html`<span class="muted">not recorded (link made before confirmations)</span>`}</p>
+          <p><strong>Buyer’s change-of-mind notice:</strong> ${o.buyer_ack_at ? html`✓ accepted ${date(o.buyer_ack_at)} (wording saved in the order’s terms)` : html`<span class="muted">not recorded (order made before confirmations)</span>`}</p>
+        </div></div>
       <div><h2>Seller</h2>
         <p>${s.business_name} (${s.full_name}) ${s.identity_verified ? '✓ ID' : '✗ ID'}<br>${s.phone} · ${s.email}<br>
           Pickup: ${d.pickup_address}, ${d.pickup_state}<br>Payout: ${s.payout_bank_name} ${s.payout_account_number}
@@ -46,6 +50,8 @@ async function render() {
     <h2>Dispute #${x.id}: ${x.category_label} (${x.status})</h2>
     <p class="small muted">Opened by ${x.opened_by} · ${date(x.created_at)}</p>
     <p class="pre">${x.description}</p>
+    ${x.photos?.length ? html`<p class="small"><strong>Buyer’s photos (${x.photos.length})</strong>: tap to open full size</p>${gallery(x.photos, 'Evidence')}`
+      : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}
     ${x.status === 'resolved'
       ? html`<p><strong>Decision:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}</p>`
       : html`<form class="form" id="resolve" data-id="${x.id}">

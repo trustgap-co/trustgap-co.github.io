@@ -53,6 +53,7 @@ Sent to GA4 always; the **Meta** column shows what Meta receives.
 | `deal_unavailable` | Link is paid / expired / cancelled / replaced | deal_status | – |
 | `begin_checkout` | "The item, address and price are right. Continue" | same as view_item | InitiateCheckout |
 | `deal_review_again` | Buyer goes back to review the deal | – | – |
+| `buyer_penalty_notice` | Buyer answers the change-of-mind pop-up | acknowledged (true / false) | – |
 | `add_payment_info` | Details accepted, going to the payment page | same as view_item | AddPaymentInfo |
 | `purchase` | First time the tracking page shows a paid order (once per order per device) | transaction_id (order ref), value, shipping, trustgap_fee | Purchase (event ID = order ref) |
 | `payment_incomplete` | Tracking page with payment not completed | order_status | – |
@@ -72,6 +73,8 @@ Sent to GA4 always; the **Meta** column shows what Meta receives.
 | `deal_link_created` | Link created | value, condition, quantity, states, who pays, expiry, is_revision | DealLinkCreated |
 | `share` | Link copied or "Share on WhatsApp" | method = copy / whatsapp | – |
 | `pickup_booked` | Seller books the courier | – | – |
+| `seller_condition_confirm` | Seller answers the condition pop-up | confirmed (true / false) | – |
+| `debt_payment_started`, `debt_payment_result` | Seller taps Pay now / comes back from the payment page | value, result | – |
 
 ### Pre-launch campaign
 | Event | When | Main details | Meta |

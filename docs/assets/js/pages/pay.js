@@ -1,6 +1,6 @@
 // The link the seller sends. Step 1: confirm the whole deal, including the delivery address the
 // seller entered (read-only) and the exact total. Step 2: contact details and refund account, pay.
-import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
 
 const config = await shell('buyer');
 const token = params.get('d') || '';
@@ -106,10 +106,20 @@ function review(d, rules, promo = null) {
   $('#promo-remove')?.addEventListener('click', () => review(d, rules));
 
   onSubmit($('#accept'), async () => {
+    // The buyer sees what changing their mind would cost before going on to pay.
+    const c = config.consents?.buyer;
+    const acknowledged = await confirmModal({
+      title: c?.title || 'Before you pay: changing your mind has a cost',
+      body: (c?.body || 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}). If the item is wrong, damaged, fake or not as described, you get a full refund.')
+        .replace('{fee}', money(2 * d.price.delivery_full)),
+      confirm: c?.confirm || 'I understand. Continue',
+    });
+    track('buyer_penalty_notice', { acknowledged });
+    if (!acknowledged) return;
     track('begin_checkout', { ...ecommerce(d), ...(promo ? { coupon: promo.code, value: naira(promo.total) } : {}) });
-    const checkout = promo
-      ? { checkout_id: promo.checkoutId, total: promo.total }
-      : await api(`/api/deals/${encodeURIComponent(token)}/accept`, { method: 'POST', body: {} });
+    const checkout = await api(`/api/deals/${encodeURIComponent(token)}/accept`, {
+      method: 'POST', body: { penalty_acknowledged: true, ...(promo ? { promo_code: promo.code } : {}) },
+    });
     await details(d, checkout.checkout_id, checkout.total ?? d.price.total);
     scrollTo(0, 0);
   });
@@ -134,6 +144,7 @@ async function details(d, checkoutId, total) {
         </div>
         ${testAccountsHint(config)}
       </fieldset>
+      <label class="choice"><input type="checkbox" name="marketing_opt_in" value="yes"> Send me TrustGap news and special offers by SMS, WhatsApp or email <small>(optional; stop any time)</small></label>
       <button class="btn btn-block">Pay ${money(total)} securely</button>
       <p class="muted small center">Your payment is secured under the deal rules. The seller is not paid until delivery and inspection.</p>
     </form>

@@ -12,6 +12,7 @@ show('#app', html`<section class="card narrow">
     <label>Business / page name <small>what buyers know you as</small><input name="business_name" required></label>
     <label>Phone (WhatsApp) <input name="phone" required inputmode="tel" autocomplete="tel" placeholder="0803 123 4567"></label>
     <label>Email <input name="email" type="email" required autocomplete="email"></label>
+    <label class="choice"><input type="checkbox" name="marketing_opt_in" value="yes"> Send me TrustGap news, selling tips and special offers by SMS, WhatsApp or email <small>(optional; stop any time)</small></label>
     <button class="btn btn-block">Send me a code</button>
   </form>
   <p class="muted">Already have an account? <a href="${link('seller/login.html')}">Log in</a></p>

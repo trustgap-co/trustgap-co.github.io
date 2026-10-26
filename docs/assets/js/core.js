@@ -168,6 +168,26 @@ export const gallery = (urls, label = 'Item') =>
     ? html`<div class="gallery" role="list" aria-label="${label} photos">${urls.map((u, i) =>
       html`<a role="listitem" href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="${label}, photo ${i + 1} of ${urls.length}" decoding="async" ${i ? raw('loading="lazy"') : ''}></a>`)}</div>`
     : '';
+// A pop-up asking the person to confirm something important. Resolves true only if they press the
+// confirm button (Escape, the back button or "Go back" resolve false).
+export function confirmModal({ title, body, confirm, cancel = 'Go back and check', tone = 'warn' }) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = `modal modal-${tone}`;
+    dlg.innerHTML = String(html`<form method="dialog">
+      <div class="modal-icon" aria-hidden="true">!</div>
+      <h2>${title}</h2>
+      <p>${body}</p>
+      <button class="btn btn-block" value="yes">${confirm}</button>
+      <button class="btn btn-block btn-secondary" value="no">${cancel}</button>
+    </form>`);
+    document.body.appendChild(dlg);
+    dlg.addEventListener('close', () => { resolve(dlg.returnValue === 'yes'); dlg.remove(); });
+    dlg.showModal();
+    dlg.querySelector('button[value=no]').focus(); // the safe choice has focus
+  });
+}
+
 export const errorBox = (msg) => (msg ? html`<div class="error" role="alert">${msg}</div>` : '');
 export const flash = {
   set: (m) => session.set('tg_flash', m),

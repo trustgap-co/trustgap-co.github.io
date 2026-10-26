@@ -1,4 +1,5 @@
 // The buyer's private tracking page: status, delivery PIN, confirm or report a problem.
+import { photoPicker } from '../photos.js';
 import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, $ } from '../core.js';
 
 await shell('buyer');
@@ -39,7 +40,8 @@ async function render() {
       ? html`<div class="callout ${dispute.status === 'open' ? 'warn' : 'info'}">
           <strong>${dispute.status === 'open' ? 'Under review' : 'Decision'}:</strong>
           ${dispute.status === 'open' ? 'TrustGap is reviewing this order. Your money stays held.' : dispute.resolution_note}
-          ${dispute.status === 'resolved' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}` : ''}</div>`
+          ${dispute.status === 'resolved' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}` : ''}
+          ${dispute.photos?.length ? html`<p class="small" style="margin:10px 0 0">Your photos:</p>${gallery(dispute.photos, 'Problem')}` : ''}</div>`
       : ''}
     ${o.status === 'duplicate_refunded' ? html`<div class="callout info">This deal was already paid, so this payment was refunded in full to ${o.refund_account}.</div>` : ''}
     ${o.can_report
@@ -48,7 +50,14 @@ async function render() {
             <label>What went wrong? <select name="category" required><option value="">Choose</option>
               ${Object.entries(config.dispute_categories).map(([k, label]) => html`<option value="${k}">${label}</option>`)}</select></label>
             <label>Details <small>what you expected vs what you got</small><textarea name="description" required rows="3" maxlength="2000"></textarea></label>
-            <p class="muted small">Keep the item, packaging and any unboxing video. TrustGap will contact you for evidence. The money stays held until a decision.</p>
+            <div class="photo-field">
+              <p class="label">Photos of the problem <small id="ev-rule">Up to ${config.max_dispute_photos || 2}. Show the problem clearly: the damage, the wrong label or size, the missing part.</small></p>
+              <div class="photo-grid" id="ev-grid"></div>
+              <label class="btn btn-secondary photo-add" id="ev-add">+ Add photo
+                <input type="file" accept="image/*" multiple id="ev-input" class="visually-hidden"></label>
+              <p class="muted small" id="ev-note" aria-live="polite"></p>
+            </div>
+            <p class="muted small">Keep the item, packaging and any unboxing video. TrustGap may contact you for more evidence. The money stays held until a decision.</p>
             <button class="btn btn-danger">Report problem &amp; hold payment</button>
           </form></details>`
       : ''}
@@ -74,10 +83,20 @@ async function render() {
     });
   }
   if ($('#dispute')) {
+    const needsPhoto = config.dispute_photo_required || [];
+    const evidence = photoPicker({ grid: $('#ev-grid'), input: $('#ev-input'), add: $('#ev-add'), note: $('#ev-note'),
+      max: config.max_dispute_photos || 2, hint: 'Photos help TrustGap decide faster.' });
+    $('#ev-input').addEventListener('change', () => { const box = $('#dispute .form-error'); if (box) box.innerHTML = ''; });
+    $('#dispute [name=category]').addEventListener('change', (e) => {
+      $('#ev-note').textContent = needsPhoto.includes(e.target.value) && !evidence.list().length
+        ? 'For this problem, add at least one photo showing it.' : $('#ev-note').textContent;
+    });
     onSubmit($('#dispute'), async (data) => {
-      await api(path + '/dispute', { method: 'POST', body: data });
+      const photos = evidence.list();
+      if (needsPhoto.includes(data.category) && !photos.length) throw new Error('Add at least one photo showing the problem with the item.');
+      await api(path + '/dispute', { method: 'POST', body: { ...data, photos } });
       flash.set('Problem reported. Your money is held while TrustGap reviews it.');
-      trackThenGo('dispute_opened', { transaction_id: o.ref, dispute_category: data.category }, location.href);
+      trackThenGo('dispute_opened', { transaction_id: o.ref, dispute_category: data.category, photo_count: photos.length }, location.href);
     });
   }
 }

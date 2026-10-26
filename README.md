@@ -44,7 +44,16 @@ Live site: https://trustgap-co.github.io/
    order to delivered. With manual riders, the rider can only mark it delivered with the buyer's PIN.
 7. **Inspection window** (24h): buyer confirms or reports a problem; otherwise the seller is paid
    automatically.
-8. **Disputes**: admin sees everything and decides the refund, payout and any charge to the seller.
+**Confirmations, in the person's face.** When the seller taps *Create link*, a pop-up asks "Is the
+item in good condition, exactly as agreed with the buyer?" and shows the cost of a false description
+(twice the delivery fee, in naira). When the buyer taps *Confirm & proceed to payment*, a pop-up shows
+the cost of changing their mind after paying. Both are required, recorded word for word with the time,
+shown to admin on the order page and copied to Google Sheets.
+
+8. **Disputes**: the buyer reports the problem with up to 2 photos (required when the item is wrong,
+   damaged, fake or not as described). Admin sees the photos on the order page straight away, with
+   everything else, and decides the refund, payout and any charge to the seller. A seller who owes a
+   charge sees **Pay ₦X now** on their dashboard (the payment page), or it's taken from their next payout.
 
 **Fees**, shown as two lines on every link: **TrustGap fee** 1.5% of the item price (minimum ₦100,
 no cap) and **Payment processing**, Flutterwave's charges passed on at cost. About 3.9% in total;
@@ -96,7 +105,7 @@ Copy guardrails (from the trust report): don't say “escrow”, “guaranteed�
 | `worker/src/providers/` | Flutterwave, Monnify, Fez, Make.com and Google Sheets connections (+ simulated versions) |
 | `worker/src/lib/` | Money maths, Nigerian states, buyer rules, encryption, signed links, automatic database setup |
 | `worker/migrations/` | Database tables (item photos are stored in D1 too, in `deal_photos`) |
-| `worker/test/` | 72 tests: full journeys, race conditions, pricing, payouts, Monnify, Fez, Make.com and Sheets |
+| `worker/test/` | 79 tests: full journeys, race conditions, pricing, payouts, Monnify, Fez, Make.com and Sheets |
 | `worker/dashboard/worker.js` | The whole Worker in one file, to paste into Cloudflare's **Edit code** |
 | `docs/assets/js/core.js` | Shared website code: API calls, safe HTML, header/footer, image slots, private-link handling |
 | `docs/assets/js/analytics.js` | GA4 + Meta Pixel, cookie banner, automatic and funnel events, speed measurements |

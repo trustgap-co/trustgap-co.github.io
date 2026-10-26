@@ -30,7 +30,18 @@ async function render() {
             <p>11111111111: Adebayo Oluwaseun John, born 1990-01-15</p></details>` : ''}
           <button class="btn">Verify my identity</button>
         </form>`}
+  </section>
+  <section class="card narrow">
+    <h1>3. News and offers</h1>
+    <label class="choice"><input type="checkbox" id="marketing" ${s.marketing_opt_in ? 'checked' : ''}>
+      Send me TrustGap news, selling tips and special offers by SMS, WhatsApp or email</label>
+    <p class="muted small" id="marketing-note">Optional. Messages about your deals and payouts are always sent.</p>
   </section>`);
+
+  $('#marketing').addEventListener('change', async (e) => {
+    const r = await api('/api/seller/marketing', { method: 'POST', body: { opt_in: e.target.checked }, as: 'seller' }).catch(() => null);
+    $('#marketing-note').textContent = r ? (r.marketing_opt_in ? 'Saved: you’ll get news and offers.' : 'Saved: no news or offers.') : 'Couldn’t save. Try again.';
+  });
 
   onSubmit($('#payout'), async (data) => {
     const { seller } = await api('/api/seller/payout', { method: 'POST', body: data, as: 'seller' });
