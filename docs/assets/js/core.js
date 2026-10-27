@@ -230,13 +230,19 @@ export const statesList = (states) => html`<datalist id="states-list">${states.m
 export const bankOptions = (banks, selected) =>
   html`<option value="">Choose your bank</option>${banks.map((b) => html`<option value="${b.code}" ${b.code === selected ? 'selected' : ''}>${b.name}</option>`)}`;
 
+// Which bank accounts work while testing: TrustGap's own simulator, or Flutterwave's test mode.
 export const testAccountsHint = (config) =>
   config.test_mode && config.payment_provider === 'mock'
     ? html`<details class="hint"><summary>Test mode: use a test account number</summary><ul>
         <li>0000000001: Adebayo Oluwaseun John</li><li>0000000002: Chioma Ngozi Okafor</li>
         <li>0000000003: Musa Ibrahim Bello</li><li>0000000004: Funmilayo Grace Adeyemi</li>
         <li>0000000005: Emeka Peter Nwosu</li></ul><p>Pick any bank. The name must match.</p></details>`
-    : '';
+    : config.payment_provider === 'flutterwave' && config.payment_test
+      ? html`<details class="hint"><summary>Flutterwave test mode: use a Flutterwave test account</summary>
+          <p>Real account numbers don’t work with test keys. Choose <strong>Access Bank</strong> and account
+          <strong>0690000032</strong> (or 0690000031 to 0690000040). The name must match the account’s name:
+          if it doesn’t, the message tells you the name Flutterwave has for it, so type that.</p></details>`
+      : '';
 
 // ---------------------------------------------------------------- page shell
 const PUBLIC_NAV = [

@@ -211,6 +211,12 @@ Steps:
 2. In the Flutterwave dashboard set the webhook URL to `https://<your-worker>/webhooks/flutterwave`
    and enable payment **and** transfer events.
 3. Set `PAYMENT_PROVIDER = "flutterwave"` and deploy. Run test orders through to payout and refund.
+   **Test accounts:** with a test key (`FLWSECK_TEST-…`), Flutterwave only recognises its own test
+   bank accounts, not real ones, and not the `0000000001`–`0000000005` numbers (those belong to TrustGap's
+   built-in simulator, `PAYMENT_PROVIDER = "mock"`). Use **Access Bank, 0690000032** (or 0690000031 to
+   0690000040) for the buyer's refund account and the seller's payout account. The name typed must match
+   the name Flutterwave has for that test account; if it doesn't, the error message shows that name.
+   The forms show this tip automatically in Flutterwave test mode.
 4. Live keys are refused unless you also set `ALLOW_LIVE_PAYMENTS = "true"`. Flutterwave was clear
    that **TrustGap, not Flutterwave, is the custodian of the money in the wallet**, so do this only
    after a Nigerian fintech lawyer has advised on safeguarding and segregation of those funds.
