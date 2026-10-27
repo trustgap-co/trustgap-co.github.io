@@ -5,6 +5,7 @@ import { formatNaira, buyerPart } from '../lib/money.js';
 import { STATES } from '../lib/states.js';
 import { verifyLink } from '../lib/crypto.js';
 import { CONSENTS } from '../lib/terms.js';
+import { createContext } from '../context.js';
 import { isDebtRef, confirmDebtPayment } from '../core/debts.js';
 import { RULES } from '../lib/terms.js';
 import { CONDITIONS, EXPIRY_OPTIONS, BUYER_DISPUTE_CATEGORIES, getDeal, getSeller } from '../core/common.js';
@@ -53,7 +54,14 @@ export function publicRoutes(r) {
       const columns = (await all(ctx.env, 'PRAGMA table_info(deals)')).map((c) => c.name);
       if (!columns.includes('processing_fee')) return { ok: false, database: 'Database update 0002 not applied. Check Logs.' };
       if (!columns.includes('photo_count')) return { ok: false, database: 'Database update 0005 (item photos) not applied. Check Logs.' };
-      return { ok: true, database: 'connected' };
+      // The settings every other page needs: payment, identity and courier connections.
+      try {
+        const c = createContext(ctx.env);
+        if (c.payments.blocked) return { ok: false, database: 'connected', settings: `Payments: ${c.payments.blocked}` };
+      } catch (err) {
+        return { ok: false, database: 'connected', settings: err.message };
+      }
+      return { ok: true, database: 'connected', settings: 'ok' };
     } catch (err) {
       return { ok: false, database: `Database error: ${err.message}` };
     }

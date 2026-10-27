@@ -72,6 +72,7 @@ __name(readBody, "readBody");
 // src/config.js
 function loadConfig(env) {
   const num = /* @__PURE__ */ __name((v, d) => v === void 0 || v === "" ? d : Number(v), "num");
+  const choice = /* @__PURE__ */ __name((v, d) => String(v ?? "").trim().toLowerCase() || d, "choice");
   const testMode = env.TEST_MODE !== "false";
   if (!env.APP_SECRET && !testMode) throw new Error("APP_SECRET must be set when TEST_MODE is false");
   return {
@@ -80,9 +81,9 @@ function loadConfig(env) {
     adminPassword: env.ADMIN_PASSWORD || (testMode ? "admin" : ""),
     siteUrl: String(env.SITE_URL || "http://localhost:8080").replace(/\/$/, ""),
     apiUrl: String(env.API_URL || "http://localhost:8787").replace(/\/$/, ""),
-    paymentProvider: env.PAYMENT_PROVIDER || "mock",
-    logisticsProvider: env.LOGISTICS_PROVIDER || "manual",
-    identityProvider: env.IDENTITY_PROVIDER || "mock",
+    paymentProvider: choice(env.PAYMENT_PROVIDER, "mock"),
+    logisticsProvider: choice(env.LOGISTICS_PROVIDER, "manual"),
+    identityProvider: choice(env.IDENTITY_PROVIDER, "mock"),
     requireSellerId: env.REQUIRE_SELLER_ID !== "false",
     // TrustGap fee (no cap) and the "Payment processing" line that passes Flutterwave's costs on.
     fee: {
@@ -306,14 +307,13 @@ __name(decrypt, "decrypt");
 // src/providers/payments/flutterwave.js
 function createFlutterwavePayments(ctx) {
   const { env, config } = ctx;
-  const secretKey = env.FLW_SECRET_KEY || "";
+  const secretKey = String(env.FLW_SECRET_KEY || "").trim();
   if (!secretKey) throw new Error("FLW_SECRET_KEY is required when PAYMENT_PROVIDER=flutterwave");
   const isTest = secretKey.startsWith("FLWSECK_TEST");
-  if (!isTest && env.ALLOW_LIVE_PAYMENTS !== "true") {
-    throw new Error("Live Flutterwave key detected. Set ALLOW_LIVE_PAYMENTS=true only after custody is approved.");
-  }
+  const blocked = isTest ? null : !secretKey.startsWith("FLWSECK-") ? "FLW_SECRET_KEY doesn\u2019t look like a Flutterwave v3 secret key (it should start with FLWSECK_TEST- or FLWSECK-). Copy it from Flutterwave \u2192 Settings \u2192 API keys." : String(env.ALLOW_LIVE_PAYMENTS).trim() !== "true" ? "A live Flutterwave key is set, but live payments are locked. Use your test key (FLWSECK_TEST-\u2026) or, only once holding customer money is approved, set ALLOW_LIVE_PAYMENTS = true." : null;
   const apiBase = env.FLW_API_BASE || "https://api.flutterwave.com/v3";
   async function call(method, path, body) {
+    if (blocked) throw Object.assign(new Error(blocked), { definite: false, locked: true });
     let res;
     try {
       res = await fetch(apiBase + path, {
@@ -338,6 +338,7 @@ function createFlutterwavePayments(ctx) {
   return {
     name: "flutterwave",
     isTest,
+    blocked,
     async listBanks() {
       try {
         const data = await call("GET", "/banks/NG");
@@ -352,6 +353,7 @@ function createFlutterwavePayments(ctx) {
         const data = await call("POST", "/accounts/resolve", { account_number: accountNumber, account_bank: bankCode });
         return { accountName: data.account_name };
       } catch (err) {
+        if (err.locked) throw err;
         if (err.definite === false) {
           throw new Error("We couldn\u2019t reach the bank to check this account just now. Please try again in a minute.");
         }
@@ -739,7 +741,7 @@ __name(deliver, "deliver");
 // src/context.js
 var pick = /* @__PURE__ */ __name((name, options, kind) => {
   const make = options[name];
-  if (!make) throw new Error(`Unknown ${kind}: ${name}`);
+  if (!make) throw new Error(`${kind} is "${name}", which isn't one of: ${Object.keys(options).join(", ")}. Fix it under Settings \u2192 Variables.`);
   return make;
 }, "pick");
 function createContext(env, execCtx) {
@@ -1555,7 +1557,7 @@ async function placeOrder(ctx, { deal, input }) {
   try {
     ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
   } catch (err) {
-    throw new UserError(`Refund account: ${err.message}`);
+    throw new UserError(err.locked ? err.message : `Refund account: ${err.message}`, err.locked ? 503 : 400);
   }
   if (!namesMatch(buyerName, accountName)) {
     throw new UserError(
@@ -2125,7 +2127,13 @@ function publicRoutes(r) {
       const columns = (await all(ctx.env, "PRAGMA table_info(deals)")).map((c) => c.name);
       if (!columns.includes("processing_fee")) return { ok: false, database: "Database update 0002 not applied. Check Logs." };
       if (!columns.includes("photo_count")) return { ok: false, database: "Database update 0005 (item photos) not applied. Check Logs." };
-      return { ok: true, database: "connected" };
+      try {
+        const c = createContext(ctx.env);
+        if (c.payments.blocked) return { ok: false, database: "connected", settings: `Payments: ${c.payments.blocked}` };
+      } catch (err) {
+        return { ok: false, database: "connected", settings: err.message };
+      }
+      return { ok: true, database: "connected", settings: "ok" };
     } catch (err) {
       return { ok: false, database: `Database error: ${err.message}` };
     }
@@ -2425,7 +2433,7 @@ async function setPayoutAccount(ctx, seller, input) {
   try {
     ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
   } catch (err) {
-    throw new UserError(`Payout account: ${err.message}`);
+    throw new UserError(err.locked ? err.message : `Payout account: ${err.message}`, err.locked ? 503 : 400);
   }
   if (!namesMatch(seller.full_name, accountName)) {
     throw new UserError(
@@ -3026,7 +3034,7 @@ var index_default = {
       const match = router.match(request.method, url.pathname.replace(/\/{2,}/g, "/"));
       if (!match) throw new UserError("Not found", 404);
       if (url.pathname !== "/api/health") await ensureSchema(env);
-      const ctx = createContext(env, execCtx);
+      const ctx = url.pathname === "/api/health" ? { env } : createContext(env, execCtx);
       const body = request.method === "POST" ? await readBody(request) : {};
       const out = await match.handler({ ctx, request, params: match.params, body, url });
       res = out instanceof Response ? out : json(out ?? { ok: true });
@@ -3034,8 +3042,12 @@ var index_default = {
       if (err instanceof UserError) {
         res = json({ error: err.message }, err.status);
       } else {
-        console.error(err);
-        res = json({ error: "Something went wrong on our side. Your money is safe. Please try again in a moment." }, 500);
+        const ref = Math.random().toString(36).slice(2, 8).toUpperCase();
+        console.error(`[error ${ref}]`, err);
+        res = json({
+          error: `Something went wrong on our side. Your money is safe. Please try again in a moment. (Ref ${ref})`,
+          ...env.TEST_MODE !== "false" ? { detail: String(err?.message || err) } : {}
+        }, 500);
       }
     }
     for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);

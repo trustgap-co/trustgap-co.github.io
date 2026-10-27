@@ -1,6 +1,8 @@
 // Settings come from wrangler.toml [vars] and `wrangler secret put` (see SETUP.md).
 export function loadConfig(env) {
   const num = (v, d) => (v === undefined || v === '' ? d : Number(v));
+  // Names typed into the Cloudflare dashboard often pick up a capital letter or a trailing space.
+  const choice = (v, d) => String(v ?? '').trim().toLowerCase() || d;
   const testMode = env.TEST_MODE !== 'false';
   if (!env.APP_SECRET && !testMode) throw new Error('APP_SECRET must be set when TEST_MODE is false');
   return {
@@ -9,9 +11,9 @@ export function loadConfig(env) {
     adminPassword: env.ADMIN_PASSWORD || (testMode ? 'admin' : ''),
     siteUrl: String(env.SITE_URL || 'http://localhost:8080').replace(/\/$/, ''),
     apiUrl: String(env.API_URL || 'http://localhost:8787').replace(/\/$/, ''),
-    paymentProvider: env.PAYMENT_PROVIDER || 'mock',
-    logisticsProvider: env.LOGISTICS_PROVIDER || 'manual',
-    identityProvider: env.IDENTITY_PROVIDER || 'mock',
+    paymentProvider: choice(env.PAYMENT_PROVIDER, 'mock'),
+    logisticsProvider: choice(env.LOGISTICS_PROVIDER, 'manual'),
+    identityProvider: choice(env.IDENTITY_PROVIDER, 'mock'),
     requireSellerId: env.REQUIRE_SELLER_ID !== 'false',
     // TrustGap fee (no cap) and the "Payment processing" line that passes Flutterwave's costs on.
     fee: {

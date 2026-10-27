@@ -119,9 +119,29 @@ describe('Flutterwave adapter guard', () => {
     assert.equal((await t.post('/api/seller/payout', { bank_code: '044', account_number: '0690000032' }, token)).status, 200);
   });
 
-  test('refuses a live key unless live payments are explicitly allowed', async () => {
-    const t = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'FLWSECK-live-123' });
-    const res = await t.get('/api/config');
-    assert.equal(res.status, 500);
+  test('a live key stays locked without ALLOW_LIVE_PAYMENTS, but only payments stop', async () => {
+    stubFetch(() => ok({ status: 'success', data: [] }));
+    const t = boot({ PAYMENT_PROVIDER: ' Flutterwave ', FLW_SECRET_KEY: 'FLWSECK-live-123 ' });
+    assert.equal((await t.get('/api/config')).status, 200, 'pages still load');
+    const health = (await t.get('/api/health')).data;
+    assert.equal(health.ok, false);
+    assert.match(health.settings, /live payments are locked/);
+    const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    assert.equal(s.status, 200, 'sellers can still sign up');
+    const token = (await t.post('/api/auth/verify', { phone: '08031234567', code: s.data.dev_code })).data.token;
+    const payout = await t.post('/api/seller/payout', { bank_code: '044', account_number: '0690000032' }, token);
+    assert.equal(payout.status, 503);
+    assert.match(payout.data.error, /live payments are locked/);
+    assert.ok(calls.every((c) => !String(c.init.headers?.Authorization || '').includes('FLWSECK-live')), 'the live key is never used');
+    const allowed = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'FLWSECK-live-123', ALLOW_LIVE_PAYMENTS: 'true' });
+    assert.equal((await allowed.get('/api/health')).data.settings, 'ok');
+    const odd = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'sk_live_abc' });
+    assert.match((await odd.get('/api/health')).data.settings, /doesn’t look like a Flutterwave v3 secret key/);
+    const unknown = boot({ LOGISTICS_PROVIDER: 'gig' });
+    assert.match((await unknown.get('/api/health')).data.settings, /LOGISTICS_PROVIDER is "gig"/);
+    const broken = await unknown.get('/api/config');
+    assert.equal(broken.status, 500);
+    assert.match(broken.data.error, /\(Ref [A-Z0-9]{6}\)/);
+    assert.match(broken.data.detail, /LOGISTICS_PROVIDER is "gig"/, 'in test mode the cause is shown');
   });
 });

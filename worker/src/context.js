@@ -9,7 +9,7 @@ import { createNotifier } from './providers/notify/make.js';
 
 const pick = (name, options, kind) => {
   const make = options[name];
-  if (!make) throw new Error(`Unknown ${kind}: ${name}`);
+  if (!make) throw new Error(`${kind} is "${name}", which isn't one of: ${Object.keys(options).join(', ')}. Fix it under Settings → Variables.`);
   return make;
 };
 

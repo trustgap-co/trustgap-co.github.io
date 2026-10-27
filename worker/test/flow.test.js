@@ -335,7 +335,7 @@ describe('addresses', () => {
 describe('health check', () => {
   test('reports the database state', async () => {
     const t = boot();
-    assert.deepEqual((await t.get('/api/health')).data, { ok: true, database: 'connected' });
+    assert.deepEqual((await t.get('/api/health')).data, { ok: true, database: 'connected', settings: 'ok' });
     await t.env.DB.prepare('DROP TABLE meta').run();
     assert.match((await t.get('/api/health')).data.database, /Tables missing: meta/);
     const noDb = boot();

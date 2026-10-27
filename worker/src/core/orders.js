@@ -74,7 +74,7 @@ export async function placeOrder(ctx, { deal, input }) {
   try {
     ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
   } catch (err) {
-    throw new UserError(`Refund account: ${err.message}`);
+    throw new UserError(err.locked ? err.message : `Refund account: ${err.message}`, err.locked ? 503 : 400);
   }
   if (!namesMatch(buyerName, accountName)) {
     throw new UserError(

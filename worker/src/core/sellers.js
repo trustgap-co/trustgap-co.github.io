@@ -150,7 +150,7 @@ export async function setPayoutAccount(ctx, seller, input) {
   try {
     ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
   } catch (err) {
-    throw new UserError(`Payout account: ${err.message}`);
+    throw new UserError(err.locked ? err.message : `Payout account: ${err.message}`, err.locked ? 503 : 400);
   }
   if (!namesMatch(seller.full_name, accountName)) {
     throw new UserError(

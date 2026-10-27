@@ -20,7 +20,7 @@ test('src/schema.js matches the migration files (run `npm run embed-migrations` 
 test('a brand-new database gets all its tables on the first request', async () => {
   const t = boot();
   assert.deepEqual(await tables(t.env.DB), []);
-  assert.deepEqual((await t.get('/api/health')).data, { ok: true, database: 'connected' });
+  assert.deepEqual((await t.get('/api/health')).data, { ok: true, database: 'connected', settings: 'ok' });
   assert.deepEqual(await tables(t.env.DB), TABLES);
   const applied = (await t.db('SELECT name FROM _migrations ORDER BY name')).map((r) => r.name);
   assert.deepEqual(applied, MIGRATIONS.map((m) => m.name));

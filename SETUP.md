@@ -60,7 +60,8 @@ PINs and signs rider links: **never change it after launch**, or those become un
 retries SMS. Google Sheets is copied on every third run.
 
 **f. Check it works:** open `https://trustgap-api.<you>.workers.dev/api/health` in your browser.
-You should see `{"ok":true,"database":"connected"}`. The first visit also creates the tables
+You should see `{"ok":true,"database":"connected","settings":"ok"}`. If `settings` says something
+else (a missing key, a mistyped provider name, a locked live key), it tells you exactly what to fix. The first visit also creates the tables
 (D1 → trustgap → Tables then lists 12). If it says something else, the message tells you what to fix.
 
 **g. Tell the website where the Worker is:** `docs/assets/js/config.js` already points to
@@ -217,7 +218,10 @@ Steps:
    0690000040) for the buyer's refund account and the seller's payout account. The name typed must match
    the name Flutterwave has for that test account; if it doesn't, the error message shows that name.
    The forms show this tip automatically in Flutterwave test mode.
-4. Live keys are refused unless you also set `ALLOW_LIVE_PAYMENTS = "true"`. Flutterwave was clear
+4. A live key (`FLWSECK-…`) is **locked** unless you also set `ALLOW_LIVE_PAYMENTS = "true"`: the site
+   keeps working, but paying, account checks and payouts stop with a message saying live payments are
+   locked, and `/api/health` shows it. Before unlocking, also set `TEST_MODE = "false"` (live money with
+   the test banner showing would confuse people). Flutterwave was clear
    that **TrustGap, not Flutterwave, is the custodian of the money in the wallet**, so do this only
    after a Nigerian fintech lawyer has advised on safeguarding and segregation of those funds.
 
