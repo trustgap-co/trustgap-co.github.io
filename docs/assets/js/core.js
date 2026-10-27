@@ -94,7 +94,7 @@ export async function api(path, { method = 'GET', body, as } = {}) {
     if (as === 'admin') { session.del('tg_admin'); location.href = link('admin/index.html'); }
     throw new ApiError('Please log in.', 401);
   }
-  if (!res.ok) throw new ApiError(data.error || 'Something went wrong.', res.status);
+  if (!res.ok) throw new ApiError((data.error || 'Something went wrong.') + (data.detail ? ` Details: ${data.detail}` : ''), res.status);
   return data;
 }
 
