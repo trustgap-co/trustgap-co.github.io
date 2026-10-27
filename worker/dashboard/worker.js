@@ -346,9 +346,18 @@ function createFlutterwavePayments(ctx) {
         return NIGERIAN_BANKS;
       }
     },
+    // Errors here are shown to the person as they are, so they're written in plain words.
     async resolveAccount({ bankCode, accountNumber }) {
-      const data = await call("POST", "/accounts/resolve", { account_number: accountNumber, account_bank: bankCode });
-      return { accountName: data.account_name };
+      try {
+        const data = await call("POST", "/accounts/resolve", { account_number: accountNumber, account_bank: bankCode });
+        return { accountName: data.account_name };
+      } catch (err) {
+        if (err.definite === false) {
+          throw new Error("We couldn\u2019t reach the bank to check this account just now. Please try again in a minute.");
+        }
+        console.warn("account resolve refused", bankCode, err.message);
+        throw new Error("We couldn\u2019t find that account number at that bank. Check both and try again." + (isTest ? " (Flutterwave test mode only recognises its test accounts, e.g. Access Bank 0690000032.)" : ""));
+      }
     },
     async createCheckout({ order, title }) {
       const data = await call("POST", "/payments", {
@@ -1546,7 +1555,7 @@ async function placeOrder(ctx, { deal, input }) {
   try {
     ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
   } catch (err) {
-    throw new UserError(`We could not confirm your refund account: ${err.message}`);
+    throw new UserError(`Refund account: ${err.message}`);
   }
   if (!namesMatch(buyerName, accountName)) {
     throw new UserError(
@@ -2124,6 +2133,7 @@ function publicRoutes(r) {
   r.get("/api/config", async ({ ctx }) => ({
     test_mode: ctx.config.testMode,
     payment_provider: ctx.payments.name,
+    payment_test: Boolean(ctx.payments.isTest),
     fee: ctx.config.fee,
     processing: ctx.config.processing,
     max_deal: ctx.config.maxDealKobo,
@@ -2415,7 +2425,7 @@ async function setPayoutAccount(ctx, seller, input) {
   try {
     ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
   } catch (err) {
-    throw new UserError(`We could not confirm that account: ${err.message}`);
+    throw new UserError(`Payout account: ${err.message}`);
   }
   if (!namesMatch(seller.full_name, accountName)) {
     throw new UserError(

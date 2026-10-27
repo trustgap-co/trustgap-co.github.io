@@ -95,6 +95,30 @@ describe('Google Sheets copy', () => {
 });
 
 describe('Flutterwave adapter guard', () => {
+  test('account checks give plain messages, with the test-account tip in test mode', async () => {
+    const t = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'FLWSECK_TEST-abc' });
+    let mode = 'refuse';
+    stubFetch((url) => {
+      if (url.includes('/banks/NG')) return ok({ status: 'success', data: [{ code: '044', name: 'Access Bank' }] });
+      if (url.includes('/accounts/resolve')) {
+        if (mode === 'down') throw new Error('socket hang up');
+        if (mode === 'refuse') return new Response(JSON.stringify({ status: 'error', message: 'invalid account' }), { status: 400 });
+        return ok({ status: 'success', data: { account_number: '0690000032', account_name: 'Adebayo Oluwaseun John' } });
+      }
+      return ok({});
+    });
+    assert.equal((await t.get('/api/config')).data.payment_test, true);
+    const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    const token = (await t.post('/api/auth/verify', { phone: '08031234567', code: s.data.dev_code })).data.token;
+    const refused = await t.post('/api/seller/payout', { bank_code: '044', account_number: '0000000002' }, token);
+    assert.equal(refused.data.error, 'Payout account: We couldn’t find that account number at that bank. Check both and try again. (Flutterwave test mode only recognises its test accounts, e.g. Access Bank 0690000032.)');
+    assert.doesNotMatch(refused.data.error, /POST|accounts\/resolve/);
+    mode = 'down';
+    assert.match((await t.post('/api/seller/payout', { bank_code: '044', account_number: '0690000032' }, token)).data.error, /couldn’t reach the bank/);
+    mode = 'ok';
+    assert.equal((await t.post('/api/seller/payout', { bank_code: '044', account_number: '0690000032' }, token)).status, 200);
+  });
+
   test('refuses a live key unless live payments are explicitly allowed', async () => {
     const t = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'FLWSECK-live-123' });
     const res = await t.get('/api/config');

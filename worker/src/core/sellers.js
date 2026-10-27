@@ -150,7 +150,7 @@ export async function setPayoutAccount(ctx, seller, input) {
   try {
     ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
   } catch (err) {
-    throw new UserError(`We could not confirm that account: ${err.message}`);
+    throw new UserError(`Payout account: ${err.message}`);
   }
   if (!namesMatch(seller.full_name, accountName)) {
     throw new UserError(

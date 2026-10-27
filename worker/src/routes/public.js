@@ -62,6 +62,7 @@ export function publicRoutes(r) {
   r.get('/api/config', async ({ ctx }) => ({
     test_mode: ctx.config.testMode,
     payment_provider: ctx.payments.name,
+    payment_test: Boolean(ctx.payments.isTest),
     fee: ctx.config.fee,
     processing: ctx.config.processing,
     max_deal: ctx.config.maxDealKobo,

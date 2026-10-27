@@ -50,9 +50,19 @@ export function createFlutterwavePayments(ctx) {
         return NIGERIAN_BANKS;
       }
     },
+    // Errors here are shown to the person as they are, so they're written in plain words.
     async resolveAccount({ bankCode, accountNumber }) {
-      const data = await call('POST', '/accounts/resolve', { account_number: accountNumber, account_bank: bankCode });
-      return { accountName: data.account_name };
+      try {
+        const data = await call('POST', '/accounts/resolve', { account_number: accountNumber, account_bank: bankCode });
+        return { accountName: data.account_name };
+      } catch (err) {
+        if (err.definite === false) {
+          throw new Error('We couldn’t reach the bank to check this account just now. Please try again in a minute.');
+        }
+        console.warn('account resolve refused', bankCode, err.message);
+        throw new Error('We couldn’t find that account number at that bank. Check both and try again.'
+          + (isTest ? ' (Flutterwave test mode only recognises its test accounts, e.g. Access Bank 0690000032.)' : ''));
+      }
     },
     async createCheckout({ order, title }) {
       const data = await call('POST', '/payments', {
