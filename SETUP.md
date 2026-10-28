@@ -495,7 +495,10 @@ Already built in:
   and keeps them out of the app pages; `docs/sitemap.xml` lists the public pages.
 - `docs/llms.txt` is a plain-text briefing for AI assistants: what TrustGap is, fees, how disputes
   work, key pages. Update it when facts change (e.g. on launch day).
-- App pages (pay, track, seller, admin, rider) are marked "don't index".
+- App pages (pay, track, seller, admin, rider) are marked "don't index". They still carry
+  link-preview tags, so a deal link shared on WhatsApp shows the TrustGap image with "Your TrustGap
+  payment link". WhatsApp keeps a preview for each address it has already seen, so only links shared
+  after this change show it.
 
 **After editing a page's title, description, FAQ or team, run** `python3 tools/seo.py` from the repo
 root. It refreshes the tags, structured data and sitemap (safe to run any number of times).
