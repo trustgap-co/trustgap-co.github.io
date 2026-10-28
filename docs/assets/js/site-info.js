@@ -39,7 +39,7 @@ export const SITE = {
   sellerResponseTime: '24 hours',
   refundTime: 'Sent within 2 working days of the decision, once the original payment has settled. Your bank may take up to 1–3 further working days to credit it',
   payoutTiming: 'the next working day after the buyer’s payment settles, once the release condition is met',
-  deliveryCoverage: 'Nigeria',
+  deliveryCoverage: 'Comprehensive nationwide coverage across all 36 states',
   governingLaw: 'the Federal Republic of Nigeria',
   // Website analytics. Paste your IDs here (leave the placeholders to keep tracking off):
   //  - ga4Id: GA4 → Admin → Data streams → your web stream → "Measurement ID" (looks like G-AB12CD34EF)
