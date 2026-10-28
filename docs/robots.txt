@@ -1,0 +1,30 @@
+# TrustGap: search engines and AI assistants are welcome on the public pages.
+# The app pages (seller dashboard, admin, private payment and tracking links) are not for indexing.
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /seller/
+Disallow: /pay.html
+Disallow: /track.html
+Disallow: /rider.html
+
+# AI search and answer engines (listed so they're explicitly allowed)
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: ClaudeBot
+User-agent: Claude-SearchBot
+User-agent: Claude-User
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: Bingbot
+Allow: /
+Disallow: /admin/
+Disallow: /seller/
+Disallow: /pay.html
+Disallow: /track.html
+Disallow: /rider.html
+
+Sitemap: https://trustgap-co.github.io/sitemap.xml

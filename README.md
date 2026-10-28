@@ -73,10 +73,14 @@ acting at the same moment can't pay twice.
 | `buyers.html`, `sellers.html` | One page for each side; sellers get a payout calculator |
 | `fees.html` | Fees, calculator (same maths as the Worker), who pays and what is refundable |
 | `faq.html` | Questions, including safety and privacy |
+| `about.html` | The company and the team (photos in `docs/assets/images/team/`) |
 | `survey.html`, `early-access.html` | Pre-launch campaign: buyer/seller survey and early-access sign-up, sent to Google Sheets through Make |
 | `legal/` | 10 policy pages from the Legal Content Pack, marked “Draft: under legal review” |
 | `pay.html`, `track.html` | The buyer's deal link and private tracking page |
 | `seller/`, `admin/`, `rider.html` | Seller app, staff admin, courier-rider page |
+
+**Search engines and AI assistants:** titles, link previews, structured data, `robots.txt`,
+`sitemap.xml` and `llms.txt` are set up. After editing a page, run `python3 tools/seo.py` (SETUP.md §11).
 
 **Launch switch:** `launched: false` in `docs/assets/js/site-info.js` makes the site promote early
 access and the survey; set it to `true` on launch day and the deal buttons come back (SETUP.md §10).

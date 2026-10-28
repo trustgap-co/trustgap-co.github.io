@@ -1,3 +1,4 @@
+import { SITE } from '../site-info.js';
 import { api, html, show, link, shell, money, date, orderBadge, dealBadge, fail, params, track, trackThenGo, $ } from '../core.js';
 
 await shell('seller');
@@ -16,7 +17,7 @@ try {
         <p><strong>You owe ${money(s.amount_owed)}</strong> from a past dispute (the delivery and return of an item that wasn’t as agreed).
         Until it’s paid you can’t create new links, and it will be taken from your next payout.</p>
         <button type="button" class="btn" id="pay-debt">Pay ${money(s.amount_owed)} now</button>
-        <p class="small muted">Pay by card, bank transfer or USSD on our secure payment page. Your balance clears as soon as the payment is confirmed.</p>
+        <p class="small muted">Pay by card, bank transfer or USSD on our secure payment page. The account name there is ${String(SITE.legalName).toUpperCase()}, the company that runs TrustGap. Your balance clears as soon as the payment is confirmed.</p>
       </div>` : ''}
     <div class="stats">
       <div class="stat"><span>${stats.to_ship}</span>to pack &amp; ship</div>

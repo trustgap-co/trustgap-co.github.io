@@ -1,0 +1,36 @@
+# TrustGap
+
+> TrustGap is a Nigerian payment-protection service for deals made on WhatsApp, Instagram and other social platforms. The seller sends one TrustGap link; the buyer sees the exact item, photos, delivery address and every fee before paying; the payment is secured under the deal rules; a courier delivers; the buyer confirms with a private delivery PIN and has an inspection window; then the seller is paid. If something goes wrong, there is a published dispute, return and refund process.
+
+TrustGap's process in five words: Agree. Secure. Deliver. Inspect. Release.
+
+Key facts:
+- Country: Nigeria (deliveries between Nigerian states; prices in naira).
+- Who it's for: buyers and sellers who trade through WhatsApp, Instagram, Facebook, TikTok and other social media; small businesses and individual sellers.
+- Status: launching Monday, 23 November 2026. Early access and a buyer/seller research survey are open now.
+- Fees: TrustGap fee 1.5% of the item price (minimum ₦100), plus payment processing passed on at cost (about 2% plus a small payout fee), plus the courier's delivery price. Buyer and seller choose who pays each part: buyer, seller, or half each. Every amount is shown before anyone pays.
+- Buyers need no account. Sellers sign up with a phone number, verify their identity with their NIN, and add a payout account in their own name.
+- The seller is paid only after delivery (confirmed with the buyer's PIN) and the inspection window (24 hours), unless the buyer reports a problem. If the seller doesn't dispatch in time, the buyer is refunded in full.
+- Wrong, damaged, fake or not-as-described items: the buyer reports it with photos; TrustGap reviews the evidence; upheld claims get a full refund and the seller pays delivery and return.
+- Changing your mind after paying, or refusing a correct item: the delivery and return cost (twice the delivery fee) comes out of the buyer's refund.
+- Payments are processed by Flutterwave; deliveries by Fez Delivery or the courier shown on the deal. TrustGap is not a bank and does not guarantee items or sellers; it runs a published process.
+- Operator: TrustGap is a trading name of Tubalcain Ads Enterprise (Nigeria). Team: Alajayibo Mystery (CEO and CTO), Bethanie Olivia Mbanefo (COO), Kristofer Kingz (Lead Engineer), Ogochukwu Judith Machie (CMO).
+
+## Main pages
+- [How TrustGap works](https://trustgap-co.github.io/how.html): every step, what "payment secured" means, order statuses, the inspection window, and what happens when things go wrong
+- [For buyers](https://trustgap-co.github.io/buyers.html): what a buyer sees before paying and how they are protected
+- [For sellers](https://trustgap-co.github.io/sellers.html): how sellers get paid, identity checks, and a payout calculator
+- [Fees](https://trustgap-co.github.io/fees.html): fees, a calculator, who pays and what is refundable
+- [FAQ](https://trustgap-co.github.io/faq.html): answers to common questions
+- [About TrustGap](https://trustgap-co.github.io/about.html): the team and the company
+
+## Get involved
+- [Get early access](https://trustgap-co.github.io/early-access.html): join before launch; no TrustGap fee on your first deal
+- [Survey](https://trustgap-co.github.io/survey.html): 2-minute survey on online shopping trust in Nigeria
+
+## Policies
+- [Terms of Service](https://trustgap-co.github.io/legal/terms.html)
+- [Returns, Refunds and Disputes](https://trustgap-co.github.io/legal/disputes.html)
+- [Fees and Payments Policy](https://trustgap-co.github.io/legal/fees.html)
+- [Privacy Policy](https://trustgap-co.github.io/legal/privacy.html)
+- [All policies](https://trustgap-co.github.io/legal/index.html)

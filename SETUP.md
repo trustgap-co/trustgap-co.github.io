@@ -212,6 +212,12 @@ Steps:
 2. In the Flutterwave dashboard set the webhook URL to `https://<your-worker>/webhooks/flutterwave`
    and enable payment **and** transfer events.
 3. Set `PAYMENT_PROVIDER = "flutterwave"` and deploy. Run test orders through to payout and refund.
+   **Checkout branding:** the Flutterwave account is in Tubalcain Ads Enterprise's name, but the
+   payment page shows **TrustGap**, the item name with "Payment secured under TrustGap deal rules", and
+   TrustGap's logo (sent as `customizations` with every payment). The logo is the website's icon
+   (`docs/assets/favicon.png`); to use a different image, add a Text variable `CHECKOUT_LOGO_URL` with the
+   full https address of a square PNG or JPG. Flutterwave may still show your registered business name in
+   small print on some screens.
    **Test accounts:** with a test key (`FLWSECK_TEST-…`), Flutterwave only recognises its own test
    bank accounts, not real ones, and not the `0000000001`–`0000000005` numbers (those belong to TrustGap's
    built-in simulator, `PAYMENT_PROVIDER = "mock"`). Use **Access Bank, 0690000032** (or 0690000031 to
@@ -478,7 +484,38 @@ once-per-phone, the end date and the cap, and the most it can cost is your fee o
 2. Worker: `TEST_MODE = "false"` and the live provider settings (see the checklist below).
 3. Check the home page, a real test deal (with and without the code), and the survey still saving.
 
-## 11. Going live checklist
+## 11. Search engines and AI assistants (SEO and AEO)
+
+Already built in:
+- Every public page has a clear title and description, a canonical address, link-preview tags
+  (WhatsApp, X, LinkedIn, with `docs/assets/images/og-image.png`) and structured data that tells
+  Google, Bing and AI assistants what TrustGap is: the organisation, the service and fees, the FAQ
+  answers, the how-it-works steps and the team (About page).
+- `docs/robots.txt` welcomes search engines and AI crawlers (ChatGPT, Claude, Perplexity, Google)
+  and keeps them out of the app pages; `docs/sitemap.xml` lists the public pages.
+- `docs/llms.txt` is a plain-text briefing for AI assistants: what TrustGap is, fees, how disputes
+  work, key pages. Update it when facts change (e.g. on launch day).
+- App pages (pay, track, seller, admin, rider) are marked "don't index".
+
+**After editing a page's title, description, FAQ or team, run** `python3 tools/seo.py` from the repo
+root. It refreshes the tags, structured data and sitemap (safe to run any number of times).
+
+Do once, after the site is live on GitHub:
+1. **Google Search Console** (search.google.com/search-console): add a *URL prefix* property for
+   `https://trustgap-co.github.io/`, verify it (download the HTML verification file into `docs/` and
+   upload it), then **Sitemaps → add `sitemap.xml`**.
+2. **Bing Webmaster Tools** (bing.com/webmasters): sign in and **import from Google Search Console**.
+   This matters for AI: ChatGPT's web search relies largely on Bing's index.
+3. Test a page in Google's **Rich Results Test** (search.google.com/test/rich-results) to see the
+   FAQ and organisation data recognised.
+4. When TrustGap has Instagram, X, TikTok or LinkedIn pages, tell me (or add them to `ORG['sameAs']` in
+   `tools/seo.py`) so search engines connect them to the site.
+
+What makes AI assistants actually recommend TrustGap over time is other websites mentioning it:
+press articles, business directories, blog posts, Nairaland threads, partner pages and reviews.
+The site now makes it easy for them to understand TrustGap; mentions elsewhere make them trust it.
+
+## 12. Going live checklist
 
 - [ ] Lawyer advises on holding customer funds (Flutterwave confirmed TrustGap is the custodian)
 - [ ] Lawyer reviews the policy pages in `docs/legal/` and the buyer rules in `worker/src/lib/terms.js`;

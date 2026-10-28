@@ -1,5 +1,6 @@
 // The link the seller sends. Step 1: confirm the whole deal, including the delivery address the
 // seller entered (read-only) and the exact total. Step 2: contact details and refund account, pay.
+import { SITE } from '../site-info.js';
 import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
 
 const config = await shell('buyer');
@@ -145,6 +146,8 @@ async function details(d, checkoutId, total) {
         ${testAccountsHint(config)}
       </fieldset>
       <label class="choice"><input type="checkbox" name="marketing_opt_in" value="yes"> Send me TrustGap news and special offers by SMS, WhatsApp or email <small>(optional; stop any time)</small></label>
+      <p class="pay-name-note small">On the payment page and for bank transfers, the account name is
+        <strong>${String(SITE.legalName).toUpperCase()}</strong>, the registered company that runs TrustGap. Pay only on that page, never to a seller’s own account.</p>
       <button class="btn btn-block">Pay ${money(total)} securely</button>
       <p class="muted small center">Your payment is secured under the deal rules. The seller is not paid until delivery and inspection.</p>
     </form>

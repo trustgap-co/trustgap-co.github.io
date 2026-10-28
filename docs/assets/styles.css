@@ -552,3 +552,19 @@ body.is-live .when-prelaunch { display: none !important; }
 .consents { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
 .consents p { margin: 0 0 8px; }
 .debt-box .btn { margin: 4px 0 6px; }
+.pay-name-note { background: var(--info-soft); border-radius: 10px; padding: 10px 12px; margin: 4px 0 12px; }
+
+/* ---- About: team ---- */
+.team-grid { display: grid; gap: 20px; margin-top: 24px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.person { background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; }
+.person img { width: 100%; height: auto; aspect-ratio: 4 / 5; object-fit: cover; display: block; filter: grayscale(1); transition: filter .3s; }
+.person:hover img, .person:focus-within img { filter: none; }
+.person-body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.person-body h3 { margin: 0; font-size: 1.12rem; }
+.person-body p { margin: 0; color: var(--muted); font-size: .94rem; line-height: 1.55; }
+.person-role { color: var(--link) !important; font-weight: 600; font-size: .9rem !important; }
+.person-focus { font-size: .88rem !important; }
+.person-link { margin-top: auto; padding-top: 6px; font-weight: 500; font-size: .92rem; }
+
+/* Plain page links for crawlers without JavaScript (removed by the site script). */
+.static-links { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 24px 20px; max-width: 1120px; margin: 0 auto; font-size: .9rem; }

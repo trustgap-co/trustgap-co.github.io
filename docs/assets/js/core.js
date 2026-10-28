@@ -251,6 +251,7 @@ const PUBLIC_NAV = [
   ['sellers.html', 'For sellers'],
   ['fees.html', 'Fees'],
   ['faq.html', 'FAQ'],
+  ['about.html', 'About'],
 ];
 
 const isPlaceholder = (v) => /^\[.*\]$/.test(String(v));
@@ -356,6 +357,7 @@ export async function shell(area) {
     TrustGap is not a bank and does not guarantee items or sellers. See the <a href="${link('legal/terms.html')}">Terms</a>.
     ${trackingConfigured && area !== 'admin' ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div></footer>`));
   rememberSource();
+  $('.static-links')?.remove(); // plain links for crawlers that don't run JavaScript; the menu replaces them
   document.body.classList.add('has-shell');
   // Launch switch (site-info.js → launched): pages mark buttons .when-live / .when-prelaunch.
   document.body.classList.toggle('is-live', Boolean(SITE.launched));
