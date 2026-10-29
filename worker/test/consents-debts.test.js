@@ -24,7 +24,7 @@ describe('confirmations before a deal', () => {
     const refused = await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id: noAck.checkout_id, expected_total: total });
     assert.equal(refused.status, 409);
     assert.match(refused.data.error, /change your mind/);
-    const ack = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true })).data;
+    const ack = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true, terms_accepted: true })).data;
     const pay = await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id: ack.checkout_id, expected_total: total, marketing_opt_in: true });
     assert.equal(pay.status, 200);
     const o = await t.one('SELECT terms_json, buyer_ack_at, buyer_marketing_opt_in_at FROM orders');
@@ -32,6 +32,38 @@ describe('confirmations before a deal', () => {
     assert.match(terms.buyer_acknowledgement.text, /change your mind after paying.*₦6,450/);
     assert.equal(o.buyer_ack_at, terms.buyer_acknowledgement.at);
     assert.ok(o.buyer_marketing_opt_in_at, 'opted in to news and offers');
+  });
+
+  test('sellers must accept the Terms of Service to sign up; the time and version are stored', async () => {
+    const t = boot();
+    const form = { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' };
+    for (const terms_accepted of [undefined, false, 'no']) {
+      const r = await t.post('/api/auth/signup', { ...form, terms_accepted });
+      assert.equal(r.status, 400);
+      assert.match(r.data.error, /Terms of Service/);
+    }
+    assert.equal((await t.one('SELECT COUNT(*) n FROM sellers')).n, 0, 'no account without acceptance');
+    assert.equal((await t.post('/api/auth/signup', { ...form, terms_accepted: 'yes' })).status, 200);
+    const s = await t.one('SELECT terms_accepted_at, terms_version FROM sellers');
+    assert.ok(s.terms_accepted_at);
+    assert.equal(s.terms_version, '2026-10-29');
+  });
+
+  test('buyers must accept the Terms of Service in step 1 before paying', async () => {
+    const t = boot();
+    const deal = await createDeal(t, await onboardSeller(t));
+    const total = (await t.get(`/api/deals/${deal.token}`)).data.deal.price.total;
+    const noTerms = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true })).data;
+    const refused = await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id: noTerms.checkout_id, expected_total: total });
+    assert.equal(refused.status, 409);
+    assert.match(refused.data.error, /Terms of Service/);
+    const ok = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true, terms_accepted: true })).data;
+    assert.equal((await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id: ok.checkout_id, expected_total: total })).status, 200);
+    const o = await t.one('SELECT terms_json, buyer_terms_accepted_at FROM orders');
+    const tos = JSON.parse(o.terms_json).terms_of_service;
+    assert.equal(tos.version, '2026-10-29');
+    assert.ok(tos.documents.includes('legal/terms.html'));
+    assert.equal(o.buyer_terms_accepted_at, tos.at);
   });
 });
 

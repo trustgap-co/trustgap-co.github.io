@@ -31,5 +31,13 @@ export const MIGRATIONS = [
   {
     "name": "0008_debt_payments_consents_marketing.sql",
     "sql": "-- Sellers can pay a dispute charge straight away through the payment page, instead of only having it\n-- taken from a later payout.\nCREATE TABLE IF NOT EXISTS debt_payments (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  amount INTEGER NOT NULL,\n  tx_ref TEXT NOT NULL UNIQUE,\n  status TEXT NOT NULL,\n  confirm_nonce TEXT,\n  provider_tx_id TEXT,\n  created_at TEXT NOT NULL,\n  paid_at TEXT\n);\n-- What each side confirmed before the deal: the seller's condition pledge (exact wording) and the time\n-- the buyer accepted the change-of-mind notice (its wording is in the order's accepted terms).\nALTER TABLE deals ADD COLUMN condition_confirmed_at TEXT;\nALTER TABLE deals ADD COLUMN condition_pledge TEXT;\nALTER TABLE orders ADD COLUMN buyer_ack_at TEXT;\n-- Opt-ins for TrustGap news and offers (separate from the messages needed to run a deal).\nALTER TABLE sellers ADD COLUMN marketing_opt_in_at TEXT;\nALTER TABLE orders ADD COLUMN buyer_marketing_opt_in_at TEXT;\n"
+  },
+  {
+    "name": "0009_terms_of_service_acceptance.sql",
+    "sql": "-- Acceptance of the TrustGap Terms of Service (a required, unticked checkbox). Sellers accept when\n-- signing up; buyers accept in step 1 of each deal (the version and time are also in the order's\n-- accepted terms).\nALTER TABLE sellers ADD COLUMN terms_accepted_at TEXT;\nALTER TABLE sellers ADD COLUMN terms_version TEXT;\nALTER TABLE orders ADD COLUMN buyer_terms_accepted_at TEXT;\n"
+  },
+  {
+    "name": "0010_returns.sql",
+    "sql": "-- Returns to the seller. The buyer's refund waits until the seller has the item back, confirmed by\n-- the seller's 4-digit return PIN (given to the rider at hand-back), the courier's own record, the\n-- seller's \"I've received it\" button, or TrustGap staff.\n--   kind 'door':   refused at the door; the same rider takes the parcel straight back.\n--   kind 'pickup': a problem found after delivery; a new courier order collects it from the buyer.\nCREATE TABLE IF NOT EXISTS returns (\n  id INTEGER PRIMARY KEY,\n  order_id INTEGER NOT NULL REFERENCES orders(id),\n  kind TEXT NOT NULL,\n  status TEXT NOT NULL,\n  pin_enc TEXT NOT NULL,\n  pin_attempts INTEGER NOT NULL DEFAULT 0,\n  courier TEXT,\n  delivery_ref TEXT,\n  rider_url TEXT,\n  courier_status TEXT,\n  cost INTEGER,\n  deadline_at TEXT,\n  received_at TEXT,\n  received_by TEXT,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS returns_order ON returns(order_id);\n"
   }
 ];

@@ -128,6 +128,40 @@ export function createFezLogistics(ctx) {
       return { deliveryRef: orderNo, riderUrl: null };
     },
 
+    // A return is a new Fez order the other way round: collected from the buyer, delivered to the
+    // seller's pickup address. The seller's return PIN goes in CustToken, so Fez marks it delivered
+    // only when the seller gives the rider that PIN.
+    async bookReturn({ order, deal, seller, pin, ref }) {
+      const data = await call('POST', '/order', [
+        {
+          recipientAddress: deal.pickup_address,
+          recipientState: deal.pickup_state,
+          recipientName: seller.business_name,
+          recipientPhone: seller.phone,
+          recipientEmail: seller.email,
+          uniqueID: ref,
+          BatchID: ref,
+          CustToken: pin,
+          itemDescription: `RETURN: ${deal.item_title} (x${deal.quantity})`.slice(0, 250),
+          additionalDetails: [`Return for order ${order.ref}`, order.delivery_landmark && `Pickup landmark: ${order.delivery_landmark}`, 'Seller gives a 4-digit PIN only after checking the item.']
+            .filter(Boolean)
+            .join(' | '),
+          valueOfItem: String(Math.round(deal.item_price / 100)),
+          weight: deal.weight_kg,
+          pickUpState: order.delivery_state,
+          pickUpAddress: order.delivery_address,
+          thirdparty: 'true',
+          senderName: order.buyer_name,
+          senderAddress: order.delivery_address,
+          senderPhone: order.buyer_phone,
+          fragile: Boolean(deal.fragile),
+        },
+      ]);
+      const orderNo = data.orderNos?.[ref];
+      if (!orderNo) throw new Error(`Fez did not return an order number (${data.description || 'no details'}).`);
+      return { deliveryRef: orderNo, riderUrl: null };
+    },
+
     // GET /orders/{orderNo}
     async getStatus(orderNo) {
       const data = await call('GET', `/orders/${encodeURIComponent(orderNo)}`);

@@ -258,9 +258,24 @@ describe('disputes', () => {
     const tooMuch = await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
       { buyer_refund: '49957', seller_payout: '1', seller_charge: '0', note: 'Testing the limit check here' }, admin);
     assert.match(tooMuch.data.error, /cannot exceed/);
-    await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
+    const decided = await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
       { buyer_refund: '49957', seller_payout: '0', seller_charge: '7000', note: 'Rider photo shows size 40. Seller sent the wrong size.' }, admin);
+    assert.equal(decided.data.waiting_for_return, true, 'the rider still has the parcel');
+    assert.equal((await lastOrder(t)).status, 'disputed');
+    assert.equal((await t.one('SELECT status FROM disputes')).status, 'awaiting_return');
+    assert.equal((await ledgerOf(t, order.id)).buyer_refund, undefined, 'no refund before the seller has it back');
+
+    // The seller's return PIN (SMS and order page); the rider enters it at hand-back.
+    const view = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return;
+    assert.equal(view.kind, 'door');
+    assert.match(view.pin, /^\d{4}$/);
+    assert.ok((await t.db('SELECT sms FROM outbox')).some((m) => m.sms.includes(`return PIN for order ${order.ref} is ${view.pin}`)));
+    assert.match((await t.post(`/api/rider/${rt}/status`, { status: 'returned' })).data.error, /return PIN/);
+    const wrong = view.pin === '0000' ? '1111' : '0000';
+    assert.match((await t.post(`/api/rider/${rt}/return-pin`, { pin: wrong })).data.error, /Wrong PIN/);
+    assert.equal((await t.post(`/api/rider/${rt}/return-pin`, { pin: view.pin })).status, 200);
     assert.equal((await lastOrder(t)).status, 'refunded');
+    assert.equal((await lastOrder(t)).delivery_status, 'returned');
     assert.equal((await ledgerOf(t, order.id)).buyer_refund.amount, 4_995_700);
     assert.equal((await t.one('SELECT amount_owed FROM sellers')).amount_owed, 700_000);
 

@@ -15,6 +15,10 @@ export function createManualLogistics(ctx) {
       const token = await signLink(ctx.config.appSecret, `rider-${order.id}`, expires);
       return { deliveryRef: 'MAN-' + order.ref, riderUrl: `${ctx.config.siteUrl}/rider.html?t=${encodeURIComponent(token)}` };
     },
+    // A return: the rider collects from the buyer and enters the seller's return PIN at hand-back.
+    async bookReturn({ order, riderToken }) {
+      return { deliveryRef: 'MAN-' + order.ref + '-R', riderUrl: `${ctx.config.siteUrl}/rider.html?t=${encodeURIComponent(riderToken)}` };
+    },
     async getStatus() {
       return null; // the rider page updates the order directly
     },

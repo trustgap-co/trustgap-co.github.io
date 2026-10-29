@@ -63,6 +63,7 @@ export const SELLER = {
   business_name: 'Bayo Kicks',
   phone: '0803 123 4567',
   email: 'bayo@example.com',
+  terms_accepted: true,
 };
 
 // An 8×6 red JPEG whose EXIF block carries a camera/GPS marker ("TestCam-GPS-…"), to prove it's removed.
@@ -120,7 +121,7 @@ export async function createDeal(t, token, deal = DEAL) {
 
 // Buyer confirms the deal (step 1), enters their details (step 2) and reaches the payment page.
 export async function buyerCheckout(t, dealToken, buyer = BUYER) {
-  const accept = await t.post(`/api/deals/${dealToken}/accept`, { penalty_acknowledged: true });
+  const accept = await t.post(`/api/deals/${dealToken}/accept`, { penalty_acknowledged: true, terms_accepted: true });
   if (accept.status !== 200) return accept;
   const total = (await t.get(`/api/deals/${dealToken}`)).data.deal.price.total;
   return t.post(`/api/deals/${dealToken}/pay`, { ...buyer, checkout_id: accept.data.checkout_id, expected_total: total });

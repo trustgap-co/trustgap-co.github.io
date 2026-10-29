@@ -23,8 +23,10 @@ IDENTITY_PROVIDER = "mock"        # "monnify" once MONNIFY_API_KEY / MONNIFY_SEC
 LOGISTICS_PROVIDER = "manual"      # "fez" once FEZ_USER_ID / FEZ_PASSWORD are set
 FEZ_API_BASE = "https://apisandbox.fezdelivery.co/v1"
 REQUIRE_SELLER_ID = "true"
-FEE_PERCENT = "1.5"               # TrustGap fee (no cap)
+FEE_PERCENT = "1.5"               # TrustGap fee
 FEE_MIN_NAIRA = "100"
+FEE_CAP_NAIRA = "3000"            # TrustGap fee never more than this per deal (0 = no cap)
+PROCESSING_CAP_NAIRA = "2000"     # Flutterwave's cap on its percentage per payment (0 = no cap)
 PROCESSING_PERCENT = "2"          # Flutterwave on local NGN collections
 PAYOUT_FEE_NAIRA = "57.79"        # Flutterwave transfer fee ₦53.75 + 7.5% VAT
 SETTLEMENT_HOURS = "24"           # Flutterwave settles T+1; payouts wait for it

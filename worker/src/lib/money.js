@@ -15,9 +15,10 @@ export function formatNaira(kobo) {
   });
 }
 
-// TrustGap's own fee: a percentage of the item price, with a minimum and no cap.
+// TrustGap's own fee: a percentage of the item price, with a minimum and a cap (maxKobo 0 = no cap).
 export function platformFee(itemPriceKobo, fee) {
-  return Math.max(fee.minKobo, Math.round((itemPriceKobo * fee.percent) / 100));
+  const pf = Math.max(fee.minKobo, Math.round((itemPriceKobo * fee.percent) / 100));
+  return fee.maxKobo ? Math.min(fee.maxKobo, pf) : pf;
 }
 
 const ceilNaira = (kobo) => Math.ceil(kobo / 100) * 100;
@@ -26,12 +27,15 @@ const ceilNaira = (kobo) => Math.ceil(kobo / 100) * 100;
 // of everything collected (including this processing line itself) plus a flat fee when the seller
 // is paid out, so the amount is grossed up and rounded up to the next naira. `buyerShare` is the
 // fraction of the fees the buyer pays (1, 0.5 or 0), because that changes how much is collected.
+// Flutterwave caps its percentage at capKobo per payment (0 = no cap). When the grossed-up amount
+// reaches the cap, the cap plus the payout fee is exactly what Flutterwave takes.
 export function processingFee({ itemPrice, buyerDelivery, platform, buyerShare }, processing) {
   const r = processing.percent / 100;
   // A 50/50 split rounds the buyer's half of each fee up to whole naira, so up to ₦2 more can be
   // collected than buyerShare × fees; Flutterwave's percentage applies to that too.
   const roundingAllowance = buyerShare === 0.5 ? 200 : 0;
-  return ceilNaira((r * (itemPrice + buyerDelivery + buyerShare * platform + roundingAllowance) + processing.payoutFeeKobo) / (1 - r * buyerShare));
+  const pr = (r * (itemPrice + buyerDelivery + buyerShare * platform + roundingAllowance) + processing.payoutFeeKobo) / (1 - r * buyerShare);
+  return ceilNaira(processing.capKobo ? Math.min(pr, processing.capKobo + processing.payoutFeeKobo) : pr);
 }
 
 // Who pays what, from fixed amounts. Invariant: buyerTotal - sellerPayout = delivery + platform + processing.

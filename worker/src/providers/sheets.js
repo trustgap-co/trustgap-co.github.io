@@ -14,16 +14,16 @@ const TABS = {
           FROM orders o JOIN deals d ON d.id = o.deal_id JOIN sellers s ON s.id = o.seller_id
           WHERE o.status != 'cancelled' ORDER BY o.id DESC LIMIT ${ROW_LIMIT}`,
     header: ['Ref', 'Status', 'Item', 'Seller', 'Buyer', 'Buyer phone', 'Delivery state', 'Paid (₦)', 'Seller gets (₦)',
-      'Delivery', 'Paid at', 'Delivered at', 'Closed at', 'Created at', 'Seller confirmed condition at', 'Buyer accepted change-of-mind notice at'],
+      'Delivery', 'Paid at', 'Delivered at', 'Closed at', 'Created at', 'Seller confirmed condition at', 'Buyer accepted change-of-mind notice at', 'Buyer accepted Terms of Service at'],
     row: (o) => [o.ref, o.status, o.item_title, o.business_name, o.buyer_name, o.buyer_phone, o.delivery_state || '',
       naira(o.amount), naira(o.seller_payout), o.delivery_status, o.paid_at, o.delivered_at, o.closed_at, o.created_at,
-      o.condition_confirmed_at || '', o.buyer_ack_at || ''],
+      o.condition_confirmed_at || '', o.buyer_ack_at || '', o.buyer_terms_accepted_at || ''],
   },
   Sellers: {
     sql: `SELECT * FROM sellers ORDER BY id DESC LIMIT ${ROW_LIMIT}`,
-    header: ['ID', 'Business', 'Full name', 'Phone', 'Email', 'Phone verified', 'ID verified', 'Payout bank', 'Owes (₦)', 'Suspended', 'Joined', 'News & offers opt-in'],
+    header: ['ID', 'Business', 'Full name', 'Phone', 'Email', 'Phone verified', 'ID verified', 'Payout bank', 'Owes (₦)', 'Suspended', 'Joined', 'News & offers opt-in', 'Accepted Terms of Service at', 'Terms version'],
     row: (s) => [s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at ? 'yes' : 'no', s.identity_verified_at ? 'yes' : 'no',
-      s.payout_bank_name || '', naira(s.amount_owed), s.suspended_at ? 'yes' : '', s.created_at, s.marketing_opt_in_at || ''],
+      s.payout_bank_name || '', naira(s.amount_owed), s.suspended_at ? 'yes' : '', s.created_at, s.marketing_opt_in_at || '', s.terms_accepted_at || '', s.terms_version || ''],
   },
   // Sellers and buyers who ticked "send me TrustGap news and offers". Only these may get newsletters
   // and promotions. One row per buyer phone number (their latest order).
@@ -38,6 +38,12 @@ const TABS = {
           ORDER BY opted_in_at DESC LIMIT ${ROW_LIMIT}`,
     header: ['Role', 'Name', 'Business', 'Phone', 'Email', 'Opted in at', 'Source'],
     row: (c) => [c.role, c.name, c.business_name || '', c.phone, c.email || '', c.opted_in_at, c.source],
+  },
+  Returns: {
+    sql: `SELECT r.*, o.ref FROM returns r JOIN orders o ON o.id = r.order_id ORDER BY r.id DESC LIMIT ${ROW_LIMIT}`,
+    header: ['Order', 'Kind', 'Status', 'Courier', 'Courier ref', 'Cost (₦)', 'Hand-over deadline', 'Received at', 'Confirmed by', 'Started'],
+    row: (r) => [r.ref, r.kind === 'door' ? 'refused at door' : 'collected from buyer', r.status, r.courier || '', r.delivery_ref || '',
+      naira(r.cost), r.deadline_at || '', r.received_at || '', r.received_by || '', r.created_at],
   },
   'Debt payments': {
     sql: `SELECT p.*, s.business_name FROM debt_payments p JOIN sellers s ON s.id = p.seller_id ORDER BY p.id DESC LIMIT ${ROW_LIMIT}`,

@@ -226,6 +226,7 @@ export async function publicDealView(ctx, deal) {
       delivery: q.buyerDelivery,
       delivery_full: q.deliveryFee,
       platform_fee: q.buyerPlatformShare,
+      platform_fee_full: q.platformFee,
       processing_fee: q.buyerProcessingShare,
       total: q.buyerTotal,
     },

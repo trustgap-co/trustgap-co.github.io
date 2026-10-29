@@ -5,6 +5,7 @@ import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso } from 
 import { adminLogin, authenticate } from '../core/sellers.js';
 import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceUrls, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
+import { activeReturn, isOpenReturn, returnView, verifyReturnPin, applyReturnUpdate, receiveReturn, cancelReturn, syncReturnStatus, RETURN_LABELS } from '../core/returns.js';
 import { dealPhotos } from '../core/deals.js';
 import { syncSheets } from '../providers/sheets.js';
 
@@ -13,37 +14,66 @@ async function requireAdmin(ctx, request) {
   if (!session?.is_admin) throw new UserError('Admin login required.', 401);
 }
 
-async function riderOrder(ctx, token) {
+// A rider link is either a delivery ("rider-<order id>") or a pickup return ("return-<return id>").
+async function riderJob(ctx, token) {
   const data = await verifyLink(ctx.config.appSecret, token, ctx.now());
+  const invalid = () => new UserError('This rider link is invalid or has expired.', 404);
+  if (data?.startsWith('return-')) {
+    const ret = await first(ctx.env, 'SELECT * FROM returns WHERE id = ?', Number(data.slice(7)));
+    if (!ret) throw invalid();
+    return { order: await getOrder(ctx, ret.order_id), ret };
+  }
   const id = data?.startsWith('rider-') ? Number(data.slice(6)) : null;
   const order = id && (await getOrder(ctx, id));
-  if (!order) throw new UserError('This rider link is invalid or has expired.', 404);
+  if (!order) throw invalid();
+  return { order, ret: null };
+}
+async function riderOrder(ctx, token) {
+  const { order, ret } = await riderJob(ctx, token);
+  if (ret) throw new UserError('This is a return link.');
   return order;
 }
 
 export function riderRoutes(r) {
   r.get('/api/rider/:token', async ({ ctx, params }) => {
-    const o = await riderOrder(ctx, params.token);
+    const { order: o, ret: returnJob } = await riderJob(ctx, params.token);
     const d = await getDeal(ctx, o.deal_id);
     const s = await getSeller(ctx, o.seller_id);
+    const seller = { name: s.business_name, phone: s.phone, address: d.pickup_address };
+    const buyer = { name: o.buyer_name, phone: o.buyer_phone, address: o.delivery_address, landmark: o.delivery_landmark };
+    // On a delivery link, a door refusal turns the job into taking the parcel back to the seller.
+    const ret = returnJob || (await activeReturn(ctx, o.id));
+    const doorReturn = !returnJob && ret?.kind === 'door' ? await returnView(ctx, ret) : null;
     return {
       order: {
+        mode: returnJob ? 'return' : 'delivery',
+        return: returnJob ? await returnView(ctx, returnJob) : doorReturn,
         ref: o.ref,
         status: o.status,
         delivery_status: o.delivery_status,
-        delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
+        delivery_label: returnJob ? RETURN_LABELS[returnJob.status] : DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         item_title: d.item_title,
         item_condition: d.item_condition,
         item_description: d.item_description,
         quantity: d.quantity,
         packing_note: o.packing_note,
-        pickup: { name: s.business_name, phone: s.phone, address: d.pickup_address },
-        dropoff: { name: o.buyer_name, phone: o.buyer_phone, address: o.delivery_address, landmark: o.delivery_landmark },
+        pickup: returnJob ? buyer : seller,
+        dropoff: returnJob ? seller : buyer,
       },
     };
   });
   r.post('/api/rider/:token/status', async ({ ctx, params, body }) => {
-    await applyDeliveryUpdate(ctx, await riderOrder(ctx, params.token), { status: body.status, note: body.note, actor: 'rider' });
+    const { order, ret } = await riderJob(ctx, params.token);
+    if (ret) await applyReturnUpdate(ctx, ret, { status: body.status, note: body.note, actor: 'rider' });
+    else await applyDeliveryUpdate(ctx, order, { status: body.status, note: body.note, actor: 'rider' });
+    return { ok: true };
+  });
+  // The seller's return PIN, entered by the rider when handing the item back.
+  r.post('/api/rider/:token/return-pin', async ({ ctx, params, body }) => {
+    const { order, ret } = await riderJob(ctx, params.token);
+    const job = ret || (await activeReturn(ctx, order.id));
+    if (!isOpenReturn(job)) throw new UserError('There is no return to confirm on this link.');
+    await verifyReturnPin(ctx, job, body.pin, 'rider');
     return { ok: true };
   });
   r.post('/api/rider/:token/pin', async ({ ctx, params, body }) => {
@@ -98,15 +128,40 @@ export function adminRoutes(r) {
         category_label: DISPUTE_CATEGORIES[x.category] || x.category,
         photos: await evidenceUrls(ctx, x.id),
       }))),
+      return: await (async () => {
+        const ret = await activeReturn(ctx, o.id);
+        return ret && {
+          ...(await returnView(ctx, ret)),
+          courier: ret.courier, delivery_ref: ret.delivery_ref, rider_url: ret.rider_url, courier_status: ret.courier_status,
+          pin_attempts: ret.pin_attempts, cost: ret.cost,
+          overdue: Boolean(ret.deadline_at && ['booked', 'attempt_failed'].includes(ret.status) && new Date(ret.deadline_at) < ctx.now()),
+        };
+      })(),
       ledger: await all(ctx.env, 'SELECT * FROM ledger WHERE order_id = ? ORDER BY id', o.id),
       events: await all(ctx.env, 'SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id),
       messages: await all(ctx.env, 'SELECT * FROM outbox WHERE order_id = ? ORDER BY id', o.id),
     };
   }));
 
-  r.post('/api/admin/disputes/:id/resolve', admin(async ({ ctx, params, body }) => {
-    await resolveDispute(ctx, Number(params.id), body);
+  r.post('/api/admin/disputes/:id/resolve', admin(async ({ ctx, params, body }) => ({ ok: true, ...(await resolveDispute(ctx, Number(params.id), body)) })));
+
+  const adminReturn = async (ctx, id) => {
+    const ret = await first(ctx.env, 'SELECT * FROM returns WHERE id = ?', Number(id));
+    if (!ret) throw notFound('Return not found.');
+    return ret;
+  };
+  // For when the seller has the item but no PIN was entered (e.g. they confirmed by phone).
+  r.post('/api/admin/returns/:id/received', admin(async ({ ctx, params }) => {
+    if (!(await receiveReturn(ctx, await adminReturn(ctx, params.id), 'admin'))) throw new UserError('This return is already closed.');
     return { ok: true };
+  }));
+  r.post('/api/admin/returns/:id/cancel', admin(async ({ ctx, params, body }) => {
+    await cancelReturn(ctx, await adminReturn(ctx, params.id), body.note);
+    return { ok: true };
+  }));
+  r.post('/api/admin/returns/:id/sync-courier', admin(async ({ ctx, params }) => {
+    const st = await syncReturnStatus(ctx, await adminReturn(ctx, params.id));
+    return { status: st?.raw || 'no update' };
   }));
 
   r.get('/api/admin/disputes', admin(async ({ ctx }) => ({

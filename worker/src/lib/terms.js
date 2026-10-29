@@ -3,6 +3,16 @@ import { formatNaira } from './money.js';
 
 export const TERMS_VERSION = '2026-10-pilot-1';
 
+// The version of the Terms of Service people tick to accept. Change it whenever the legal pages change,
+// so every acceptance records which wording was agreed to.
+export const TOS_VERSION = '2026-10-29';
+export const TOS_DOCUMENTS = {
+  seller: ['legal/terms.html', 'legal/seller-terms.html', 'legal/privacy.html'],
+  buyer: ['legal/terms.html', 'legal/disputes.html', 'legal/privacy.html'],
+};
+const yes = (v) => v === true || v === 'yes';
+export const acceptedTerms = (input) => yes(input?.terms_accepted);
+
 export const RULES = (deal) => [
   'Your payment is held by TrustGap. The seller is not paid until the item is delivered and the inspection period ends.',
   'Check the item at the door. Only give the rider your 4-digit delivery PIN if it matches this description.',
@@ -14,7 +24,7 @@ export const RULES = (deal) => [
 ];
 
 // The exact deal and rules the buyer sees and accepts. Stored with the order, hashed, never changed.
-export async function snapshotTerms(deal, seller, photoHashes = [], promo = null, acknowledgedAt = null) {
+export async function snapshotTerms(deal, seller, photoHashes = [], promo = null, acknowledgedAt = null, tosAcceptedAt = null) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -49,6 +59,8 @@ export async function snapshotTerms(deal, seller, photoHashes = [], promo = null
     rules: RULES(deal),
     // The change-of-mind notice the buyer accepted in a pop-up before continuing (exact wording).
     buyer_acknowledgement: acknowledgedAt && { text: fillConsent('buyer', deal.delivery_fee), at: acknowledgedAt },
+    // The buyer ticked "I agree to the TrustGap Terms of Service" in step 1.
+    terms_of_service: tosAcceptedAt && { version: TOS_VERSION, documents: TOS_DOCUMENTS.buyer, at: tosAcceptedAt },
   };
   const json = JSON.stringify(terms);
   return { json, hash: await sha256Hex(json) };

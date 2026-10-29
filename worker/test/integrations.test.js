@@ -22,7 +22,7 @@ describe('Make.com notifications', () => {
   test('messages are signed and delivered to the Make webhook', async () => {
     stubFetch(() => ok({ accepted: true }));
     const t = boot({ MAKE_WEBHOOK_URL: 'https://hook.make.test/abc', MAKE_WEBHOOK_SECRET: 'make-secret' });
-    await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng', terms_accepted: true });
     assert.equal(calls.length, 1);
     const { url, init } = calls[0];
     assert.equal(url, 'https://hook.make.test/abc');
@@ -39,7 +39,7 @@ describe('Make.com notifications', () => {
     let up = false;
     stubFetch(() => (up ? ok({}) : new Response('down', { status: 500 })));
     const t = boot({ MAKE_WEBHOOK_URL: 'https://hook.make.test/abc' });
-    await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng', terms_accepted: true });
     assert.equal((await t.one('SELECT status FROM outbox')).status, 'failed');
     up = true;
     await t.scheduled();
@@ -70,7 +70,7 @@ describe('Google Sheets copy', () => {
     assert.equal(res.status, 200, JSON.stringify(res.data));
 
     const add = calls.find((c) => c.url.endsWith(':batchUpdate') && !c.url.includes('values'));
-    assert.deepEqual(JSON.parse(add.init.body).requests.map((r) => r.addSheet.properties.title), ['Summary', 'Sellers', 'Marketing contacts', 'Debt payments', 'Disputes', 'Ledger']);
+    assert.deepEqual(JSON.parse(add.init.body).requests.map((r) => r.addSheet.properties.title), ['Summary', 'Sellers', 'Marketing contacts', 'Returns', 'Debt payments', 'Disputes', 'Ledger']);
     const tab = (name) => written.data.find((d) => d.range === `'${name}'!A1`).values;
     const orders = tab('Orders');
     assert.equal(orders[1][1], 'paid');
@@ -95,6 +95,27 @@ describe('Google Sheets copy', () => {
 });
 
 describe('Flutterwave adapter guard', () => {
+  test('checkout page shows TrustGap’s name and logo', async () => {
+    let payload;
+    stubFetch((url, init) => {
+      if (url.endsWith('/payments')) { payload = JSON.parse(init.body); return ok({ status: 'success', data: { link: 'https://checkout.flutterwave.test/pay/abc' } }); }
+      if (url.includes('/accounts/resolve')) return ok({ status: 'success', data: { account_name: 'Adebayo Oluwaseun John' } });
+      if (url.includes('/banks/NG')) return ok({ status: 'success', data: [{ code: '044', name: 'Access Bank' }] });
+      return ok({ status: 'success', data: {} });
+    });
+    const t = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'FLWSECK_TEST-abc' });
+    const token = await onboardSeller(t);
+    await t.db("UPDATE sellers SET amount_owed = 100000");
+    const r = await t.post('/api/seller/debt/pay', {}, token);
+    assert.equal(r.data.payment_url, 'https://checkout.flutterwave.test/pay/abc');
+    assert.equal(payload.customizations.title, 'TrustGap');
+    assert.equal(payload.customizations.logo, 'https://site.test/assets/favicon.png');
+    assert.match(payload.customizations.description, /Payment secured under TrustGap deal rules/);
+    assert.doesNotMatch(JSON.stringify(payload), /escrow/i);
+    assert.equal(payload.amount, 1000);
+    assert.equal(payload.redirect_url, 'https://api.test/api/payments/callback');
+  });
+
   test('account checks give plain messages, with the test-account tip in test mode', async () => {
     const t = boot({ PAYMENT_PROVIDER: 'flutterwave', FLW_SECRET_KEY: 'FLWSECK_TEST-abc' });
     let mode = 'refuse';
@@ -108,7 +129,7 @@ describe('Flutterwave adapter guard', () => {
       return ok({});
     });
     assert.equal((await t.get('/api/config')).data.payment_test, true);
-    const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng', terms_accepted: true });
     const token = (await t.post('/api/auth/verify', { phone: '08031234567', code: s.data.dev_code })).data.token;
     const refused = await t.post('/api/seller/payout', { bank_code: '044', account_number: '0000000002' }, token);
     assert.equal(refused.data.error, 'Payout account: We couldn’t find that account number at that bank. Check both and try again. (Flutterwave test mode only recognises its test accounts, e.g. Access Bank 0690000032.)');
@@ -126,7 +147,7 @@ describe('Flutterwave adapter guard', () => {
     const health = (await t.get('/api/health')).data;
     assert.equal(health.ok, false);
     assert.match(health.settings, /live payments are locked/);
-    const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng' });
+    const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng', terms_accepted: true });
     assert.equal(s.status, 200, 'sellers can still sign up');
     const token = (await t.post('/api/auth/verify', { phone: '08031234567', code: s.data.dev_code })).data.token;
     const payout = await t.post('/api/seller/payout', { bank_code: '044', account_number: '0690000032' }, token);

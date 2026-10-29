@@ -1,7 +1,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { boot, onboardSeller, createDeal, buyerCheckout, completePayment, DEAL, BUYER } from './helpers.js';
+import { boot, onboardSeller, createDeal, buyerCheckout, completePayment, DEAL, BUYER, PHOTO } from './helpers.js';
 import { normaliseState } from '../src/lib/states.js';
 import { mapFezStatus, parseFezExpiry } from '../src/providers/logistics/fez.js';
 
@@ -55,7 +55,7 @@ describe('states instead of fixed areas', () => {
     assert.equal(view.price.total, 4_995_700);
     assert.doesNotMatch(JSON.stringify(view), /Allen Avenue/, 'never the pickup address');
 
-    const { checkout_id } = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true })).data;
+    const { checkout_id } = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true, terms_accepted: true })).data;
     const stale = await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id, expected_total: 100 });
     assert.equal(stale.status, 409);
     const sneaky = { ...BUYER, checkout_id, expected_total: view.price.total, delivery_address: '1 Other Street, Kano', delivery_state: 'Kano' };
@@ -89,7 +89,7 @@ describe('Fez', () => {
   // A small fake Fez server: records every call and lets each test set the parcel's status.
   function fakeFez() {
     const calls = [];
-    const state = { status: 'Pending Pick-Up', reason: null, logins: 0, rejectToken: null };
+    const state = { status: 'Pending Pick-Up', reason: null, logins: 0, rejectToken: null, returnStatus: 'Pending Pick-Up' };
     globalThis.fetch = async (url, init = {}) => {
       const u = String(url);
       const body = init.body ? JSON.parse(init.body) : null;
@@ -109,8 +109,9 @@ describe('Fez', () => {
         return json({ status: 'Error', description: 'Unauthenticated' }, 401);
       }
       if (u.endsWith('/order/cost')) return json({ status: 'Success', cost: { state: body.state, cost: body.state === body.pickUpState ? 2500 : 6000 }, vat: { vatAmount: 187.5 }, totalCost: body.state === body.pickUpState ? 2687.5 : 6450 });
-      if (u.endsWith('/order') && init.method === 'POST') return json({ status: 'Success', description: 'Order Successfully Created', orderNos: { [body[0].uniqueID]: 'FEZ123456' } }, 201);
+      if (u.endsWith('/order') && init.method === 'POST') return json({ status: 'Success', description: 'Order Successfully Created', orderNos: { [body[0].uniqueID]: body[0].uniqueID.endsWith('-R') ? 'FEZRET1' : 'FEZ123456' } }, 201);
       if (u.includes('/orders/FEZ123456')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZ123456', orderStatus: state.status, returnReason: state.reason }] });
+      if (u.includes('/orders/FEZRET1')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZRET1', orderStatus: state.returnStatus }] });
       if (u.endsWith('/webhooks/store')) return json({ status: 'Success', data: { webhook: body.webhook } });
       return json({ status: 'Error', description: 'unexpected ' + u }, 404);
     };
@@ -127,11 +128,11 @@ describe('Fez', () => {
   }
 
   const sign = (orderNo, status, ts) => createHmac('sha256', 'fez-secret').update(`${orderNo}${status}${ts}`).digest('hex');
-  const webhook = (t, status, { signature } = {}) => {
+  const webhook = (t, status, { signature, orderNo = 'FEZ123456' } = {}) => {
     const ts = String(Math.floor(Date.now() / 1000));
-    return t.call('POST', '/webhooks/fez', { orderNumber: 'FEZ123456', status }, null, {
+    return t.call('POST', '/webhooks/fez', { orderNumber: orderNo, status }, null, {
       'X-Timestamp': ts,
-      'X-Signature': signature ?? sign('FEZ123456', status, ts),
+      'X-Signature': signature ?? sign(orderNo, status, ts),
     });
   };
 
@@ -209,6 +210,44 @@ describe('Fez', () => {
     const d = await t.one('SELECT * FROM disputes');
     assert.equal(d.category, 'returned_by_courier');
     assert.match(d.description, /Recipient unreachable/);
+    // Fez's "Returned" is the record that the seller has it back, so a decision pays out at once.
+    const ret = await t.one('SELECT * FROM returns');
+    assert.deepEqual([ret.kind, ret.status, ret.received_by], ['door', 'received', 'courier']);
+  });
+
+  test('a return after delivery is a new Fez order carrying the seller’s PIN; Delivered releases the refund', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const { seller, trackToken, order } = await paidFezOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box' }, seller);
+    fez.state.status = 'Delivered';
+    await webhook(t, 'Delivered');
+    await t.post(`/api/track/${trackToken}/dispute`, { category: 'damaged', description: 'Sole is torn', photos: [PHOTO] });
+    const admin = (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
+    const dispute = await t.one('SELECT * FROM disputes');
+    const r = await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
+      { buyer_refund: '1000', seller_payout: '0', seller_charge: '0', note: 'Torn sole in photos; item goes back.', return_item: 'yes' }, admin);
+    assert.equal(r.data.waiting_for_return, true, JSON.stringify(r.data));
+
+    const pin = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.pin;
+    const create = fez.calls.filter((c) => c.url.endsWith('/order') && c.method === 'POST').at(-1).body[0];
+    assert.equal(create.uniqueID, `${order.ref}-R`);
+    assert.equal(create.CustToken, pin);
+    assert.equal(create.recipientName, 'Bayo Kicks');
+    assert.equal(create.recipientAddress, DEAL.pickup_address);
+    assert.equal(create.pickUpAddress, order.delivery_address);
+    assert.match(create.itemDescription, /^RETURN: /);
+    assert.equal((await t.one('SELECT delivery_ref FROM returns')).delivery_ref, 'FEZRET1');
+
+    fez.state.returnStatus = 'Picked-Up';
+    await t.scheduled();
+    assert.equal((await t.one('SELECT status FROM returns')).status, 'picked_up');
+    assert.equal((await t.one('SELECT status FROM orders')).status, 'disputed');
+
+    fez.state.returnStatus = 'Delivered';
+    await webhook(t, 'Delivered', { orderNo: 'FEZRET1' });
+    assert.equal((await t.one('SELECT status FROM orders')).status, 'refunded');
+    assert.equal((await t.one('SELECT received_by FROM returns')).received_by, 'courier');
   });
 
   test('admin can register the webhook with Fez', async () => {

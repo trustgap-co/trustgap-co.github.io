@@ -79,7 +79,13 @@ export function createFlutterwavePayments(ctx) {
         currency: 'NGN',
         redirect_url: `${config.apiUrl}/api/payments/callback`,
         customer: { email: order.buyer_email, phonenumber: order.buyer_phone, name: order.buyer_name },
-        customizations: { title: 'TrustGap', description: title },
+        // Branding on Flutterwave's checkout page. The Flutterwave account belongs to Tubalcain Ads
+        // Enterprise; this shows TrustGap's name and logo to buyers instead. (No "escrow" wording.)
+        customizations: {
+          title: 'TrustGap',
+          description: `${title} · Payment secured under TrustGap deal rules`.slice(0, 150),
+          logo: config.checkoutLogoUrl,
+        },
         meta: { order_ref: order.ref },
         session_duration: config.paymentTimeoutMinutes,
         max_retry_attempt: 3,

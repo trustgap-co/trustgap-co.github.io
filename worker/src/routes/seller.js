@@ -4,6 +4,7 @@ import { getSeller, payUrl, HELD_STATUSES, iso } from '../core/common.js';
 import { signup, requestLogin, verifyCode, authenticate, logout, sellerView, setPayoutAccount, verifyIdentity } from '../core/sellers.js';
 import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown, dealPhotos } from '../core/deals.js';
 import { bookPickup, DELIVERY_LABELS } from '../core/orders.js';
+import { activeReturn, isOpenReturn, returnView, receiveReturn } from '../core/returns.js';
 import { startDebtPayment } from '../core/debts.js';
 
 export async function requireSeller(ctx, request) {
@@ -144,8 +145,21 @@ export function sellerRoutes(r) {
         inspection_ends_at: o.inspection_ends_at,
       },
       dispute,
+      // Includes the return PIN while the item is on its way back, to give the rider at hand-back.
+      return: await returnView(ctx, await activeReturn(ctx, o.id), { withPin: true }),
       events: await all(ctx.env, 'SELECT type, actor, created_at FROM order_events WHERE order_id = ? ORDER BY id', o.id),
     };
+  });
+
+  // The seller confirms they have the item back without the rider entering the PIN.
+  r.post('/api/seller/orders/:id/return-received', async ({ ctx, request, params }) => {
+    const { seller } = await requireSeller(ctx, request);
+    const o = await first(ctx.env, 'SELECT id FROM orders WHERE id = ? AND seller_id = ?', Number(params.id), seller.id);
+    if (!o) throw notFound('Order not found.');
+    const ret = await activeReturn(ctx, o.id);
+    if (!isOpenReturn(ret)) throw new UserError('There is no return waiting on this order.');
+    await receiveReturn(ctx, ret, 'seller');
+    return { ok: true };
   });
 
   r.post('/api/seller/orders/:id/book', async ({ ctx, request, params, body }) => {

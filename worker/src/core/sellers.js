@@ -1,6 +1,7 @@
 import { first, insert, run, update } from '../lib/db.js';
 import { hmac, randomDigits, randomToken, safeEqual, sha256Hex } from '../lib/crypto.js';
 import { namesMatch } from '../lib/names.js';
+import { TOS_VERSION, acceptedTerms } from '../lib/terms.js';
 import { UserError, iso, str, requireLength, normalisePhone, validEmail, getSeller } from './common.js';
 
 // ---------------------------------------------------------------- one-time codes (login by SMS)
@@ -38,11 +39,13 @@ export async function signup(ctx, input) {
   const email = validEmail(input.email);
   const existing = await first(ctx.env, 'SELECT * FROM sellers WHERE phone = ?', phone);
   if (existing?.phone_verified_at) throw new UserError('An account with this phone number already exists. Log in instead.');
+  if (!acceptedTerms(input)) throw new UserError('Tick the box to accept the TrustGap Terms of Service and Seller Terms. You can’t create an account without accepting them.');
+  const terms = { terms_accepted_at: iso(ctx.now()), terms_version: TOS_VERSION };
   const marketing = input.marketing_opt_in === true || input.marketing_opt_in === 'yes' ? iso(ctx.now()) : null;
   if (existing) {
-    await update(ctx.env, 'sellers', existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing });
+    await update(ctx.env, 'sellers', existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing, ...terms });
   } else {
-    await insert(ctx.env, 'sellers', { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, created_at: iso(ctx.now()) });
+    await insert(ctx.env, 'sellers', { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
   }
   return { phone, ...(await sendCode(ctx, phone, email)) };
 }

@@ -25,6 +25,7 @@ import {
   settleTransfer,
   syncCourierStatus,
 } from '../core/orders.js';
+import { activeReturn, returnView, syncReturnStatus } from '../core/returns.js';
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -118,7 +119,7 @@ export function publicRoutes(r) {
   // Step 1 → 2. Applying a code on its own (to see the new total) doesn't need the acknowledgement;
   // only a checkout made after the buyer accepts the change-of-mind pop-up can be paid.
   r.post('/api/deals/:token/accept', async ({ ctx, params, body }) =>
-    startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code, { acknowledged: body.penalty_acknowledged === true }));
+    startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code, { acknowledged: body.penalty_acknowledged === true, termsAccepted: body.terms_accepted === true }));
 
   r.post('/api/deals/:token/pay', async ({ ctx, params, body }) => {
     const deal = await loadDeal(ctx, params.token);
@@ -155,6 +156,8 @@ export function publicRoutes(r) {
     if (!hint.signatureValid) console.warn('Fez webhook signature did not verify; re-checking status with Fez anyway', hint.deliveryRef);
     const order = await first(ctx.env, 'SELECT * FROM orders WHERE delivery_ref = ?', hint.deliveryRef);
     if (order) await syncCourierStatus(ctx, order);
+    const ret = order ? null : await first(ctx.env, "SELECT * FROM returns WHERE kind = 'pickup' AND delivery_ref = ?", hint.deliveryRef);
+    if (ret) await syncReturnStatus(ctx, ret);
     return new Response('ok');
   });
 
@@ -224,6 +227,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         can_confirm: o.status === 'delivered',
         can_report: canReport,
       },
+      return: await returnView(ctx, await activeReturn(ctx, o.id)),
       dispute: dispute && {
         photos: await evidenceUrls(ctx, dispute.id),
         status: dispute.status,

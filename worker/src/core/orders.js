@@ -6,6 +6,7 @@ import { snapshotTerms } from '../lib/terms.js';
 import { refreshDeal, dealPhotoHashes } from './deals.js';
 import { checkPromo, buyerUsedPromo } from './promo.js';
 import { parsePhotos, EVIDENCE_LINK_HOURS } from '../lib/photos.js';
+import { activeReturn, isOpenReturn, startDoorReturn, receiveReturn, bookPickupReturn } from './returns.js';
 import {
   UserError,
   DISPUTE_CATEGORIES,
@@ -29,12 +30,13 @@ import {
 
 // ---------------------------------------------------------------- buyer checkout
 
-export async function startCheckout(ctx, deal, promoInput, { acknowledged = false } = {}) {
+export async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== 'open') throw new UserError('This link is no longer available.', 410);
   const promo = await buyerPromo(ctx, deal, promoInput);
   const ackAt = acknowledged ? iso(ctx.now()) : null;
-  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo, ackAt);
+  const tosAt = termsAccepted ? iso(ctx.now()) : null;
+  const { json, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo, ackAt, tosAt);
   const id = randomToken(15);
   await insert(ctx.env, 'checkouts', { id, deal_id: deal.id, terms_json: json, terms_hash: hash, created_at: iso(ctx.now()) });
   return { checkout_id: id, terms_hash: hash, total: JSON.parse(json).money.buyer_total, promo };
@@ -88,6 +90,9 @@ export async function placeOrder(ctx, { deal, input }) {
   if (!terms.buyer_acknowledgement) {
     throw new UserError('Go back to step 1 and confirm you’ve read what happens if you change your mind.', 409);
   }
+  if (!terms.terms_of_service) {
+    throw new UserError('Go back to step 1 and tick the box to accept the TrustGap Terms of Service.', 409);
+  }
   const money = terms.money;
   const discount = money.promo_discount || 0;
   const total = deal.buyer_total - discount;
@@ -119,6 +124,7 @@ export async function placeOrder(ctx, { deal, input }) {
     promo_code: promoCode,
     promo_discount: discount,
     buyer_ack_at: terms.buyer_acknowledgement.at,
+    buyer_terms_accepted_at: terms.terms_of_service.at,
     buyer_marketing_opt_in_at: input.marketing_opt_in === true || input.marketing_opt_in === 'yes' ? iso(ctx.now()) : null,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
@@ -316,6 +322,7 @@ export const DELIVERY_LABELS = {
 export async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   const step = DELIVERY_STEPS[status];
   if (!step) throw new UserError('Unknown delivery update.');
+  if (status === 'returned') throw new UserError('Enter the seller’s return PIN to confirm you handed the item back.');
   const reason = str(note).slice(0, 500);
   if (['attempt_failed', 'refused'].includes(status) && reason.length < 3) throw new UserError('Say what happened.');
   const res = await stmt(
@@ -331,6 +338,7 @@ export async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   await logEvent(ctx, order.id, actor, 'delivery_' + status, reason || null);
   if (status === 'refused') {
     await openDispute(ctx, await getOrder(ctx, order.id), { by: actor, category: 'refused_at_door', description: reason });
+    await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: actor });
   } else if (status === 'out_for_delivery' || status === 'attempt_failed') {
     await ctx.notify.send({
       orderId: order.id,
@@ -423,6 +431,11 @@ export async function syncCourierStatus(ctx, order) {
         description: `The courier returned the parcel${st.reason ? `: ${st.reason}` : ''}.`,
       });
     }
+    // Fez carries the parcel back on the original order, which holds the buyer's PIN, not the
+    // seller's; Fez's "returned" is the record that the seller has it back.
+    const ret = await activeReturn(ctx, order.id);
+    if (!ret) await startDoorReturn(ctx, await getOrder(ctx, order.id), { received: true });
+    else if (ret.kind === 'door') await receiveReturn(ctx, ret, 'courier');
   }
   return st;
 }
@@ -468,6 +481,8 @@ export async function evidenceUrls(ctx, disputeId) {
   return Promise.all(rows.map(async (r) => `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`));
 }
 
+// Staff decide a dispute. When the buyer is refunded and the item has to go back to the seller, the
+// decision is saved and the money waits until the seller has the item (settleAfterReturn).
 export async function resolveDispute(ctx, disputeId, input) {
   const dispute = await first(ctx.env, 'SELECT * FROM disputes WHERE id = ?', disputeId);
   if (!dispute || dispute.status !== 'open') throw new UserError('Dispute not found or already resolved.');
@@ -480,6 +495,48 @@ export async function resolveDispute(ctx, disputeId, input) {
     throw new UserError(`Refund plus payout cannot exceed the ${formatNaira(order.amount)} collected.`);
   }
   const note = requireLength(input.note, 'Decision note', 10, 2000);
+  const decision = { buyerRefund, sellerPayout, sellerCharge, note };
+
+  let ret = await activeReturn(ctx, order.id);
+  const returnFirst = input.return_item === true || input.return_item === 'yes';
+  if (returnFirst && !ret) {
+    if (!buyerRefund) throw new UserError('A return is only needed when the buyer is refunded.');
+    ret = await bookPickupReturn(ctx, order);
+  }
+  if (isOpenReturn(ret) && buyerRefund > 0) {
+    const res = await run(
+      ctx.env,
+      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ? WHERE id = ? AND status = 'open'",
+      note, buyerRefund, sellerPayout, sellerCharge, dispute.id,
+    );
+    if (res.meta.changes !== 1) throw new UserError('This dispute was already decided.');
+    await logEvent(ctx, order.id, 'admin', 'dispute_decided_after_return', { buyerRefund, sellerPayout, sellerCharge, note });
+    const seller = await getSeller(ctx, order.seller_id);
+    const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
+    await ctx.notify.send({ orderId: order.id, event: 'dispute_decided', phone: order.buyer_phone, email: order.buyer_email, sms });
+    await ctx.notify.send({ orderId: order.id, event: 'dispute_decided', phone: seller.phone, email: seller.email, sms });
+    return { waiting_for_return: true };
+  }
+  await settleDispute(ctx, order, dispute, decision);
+  return { waiting_for_return: false };
+}
+
+// Called when a return is received: pays out a decision that was waiting for it. False if none was.
+export async function settleAfterReturn(ctx, order) {
+  const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? AND status = 'awaiting_return' ORDER BY id DESC", order.id);
+  if (!dispute) return false;
+  await settleDispute(ctx, order, dispute, {
+    buyerRefund: dispute.buyer_refund, sellerPayout: dispute.seller_payout, sellerCharge: dispute.seller_charge, note: dispute.resolution_note,
+  });
+  return true;
+}
+
+const decisionSummary = ({ buyerRefund, sellerPayout, sellerCharge, note }) =>
+  `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${
+    sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ''
+  } Reason: ${note}`;
+
+async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note }) {
   const now = iso(ctx.now());
   const retained = order.amount - buyerRefund - sellerPayout;
   const settles = iso(settlesAt(ctx, order.paid_at));
@@ -491,7 +548,7 @@ export async function resolveDispute(ctx, disputeId, input) {
     { status: sellerPayout > 0 ? 'completed' : 'refunded', closed_at: now },
     (h) => [
       h.sql(
-        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ? WHERE id = ? AND status = 'open'",
+        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
         note, buyerRefund, sellerPayout, sellerCharge, now, dispute.id,
       ),
       h.sql('UPDATE sellers SET amount_owed = amount_owed + ? WHERE id = ?', sellerCharge, order.seller_id),
@@ -506,9 +563,7 @@ export async function resolveDispute(ctx, disputeId, input) {
   await sendPendingTransfers(ctx, order.id);
 
   const seller = await getSeller(ctx, order.seller_id);
-  const summary = `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${
-    sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ''
-  } Reason: ${note}`;
+  const summary = decisionSummary({ buyerRefund, sellerPayout, sellerCharge, note });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_resolved', phone: order.buyer_phone, email: order.buyer_email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_resolved', phone: seller.phone, email: seller.email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
 }

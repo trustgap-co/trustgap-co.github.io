@@ -81,18 +81,24 @@ function loadConfig(env) {
     adminPassword: env.ADMIN_PASSWORD || (testMode ? "admin" : ""),
     siteUrl: String(env.SITE_URL || "http://localhost:8080").replace(/\/$/, ""),
     apiUrl: String(env.API_URL || "http://localhost:8787").replace(/\/$/, ""),
+    // Logo on Flutterwave's checkout page: a public square PNG/JPG. Defaults to the website's icon.
+    checkoutLogoUrl: String(env.CHECKOUT_LOGO_URL || "").trim() || `${String(env.SITE_URL || "http://localhost:8080").replace(/\/$/, "")}/assets/favicon.png`,
     paymentProvider: choice(env.PAYMENT_PROVIDER, "mock"),
     logisticsProvider: choice(env.LOGISTICS_PROVIDER, "manual"),
     identityProvider: choice(env.IDENTITY_PROVIDER, "mock"),
     requireSellerId: env.REQUIRE_SELLER_ID !== "false",
-    // TrustGap fee (no cap) and the "Payment processing" line that passes Flutterwave's costs on.
+    // TrustGap fee (capped) and the "Payment processing" line that passes Flutterwave's costs on.
+    // A cap of 0 means no cap.
     fee: {
       percent: num(env.FEE_PERCENT, 1.5),
-      minKobo: num(env.FEE_MIN_NAIRA, 100) * 100
+      minKobo: num(env.FEE_MIN_NAIRA, 100) * 100,
+      maxKobo: num(env.FEE_CAP_NAIRA, 3e3) * 100
     },
     processing: {
       percent: num(env.PROCESSING_PERCENT, 2),
       // Flutterwave's charge on local NGN collections
+      capKobo: num(env.PROCESSING_CAP_NAIRA, 2e3) * 100,
+      // Flutterwave's cap on that charge per payment
       payoutFeeKobo: Math.round(num(env.PAYOUT_FEE_NAIRA, 57.79) * 100)
       // ₦53.75 transfer fee + 7.5% VAT (worst case)
     },
@@ -121,7 +127,9 @@ function loadConfig(env) {
     pinMaxAttempts: 5,
     otp: { ttlMinutes: 10, maxAttempts: 5, maxPerWindow: 3, windowMinutes: 15 },
     sessionDays: 30,
-    riderLinkDays: 14
+    riderLinkDays: 14,
+    // How long the buyer has to hand a returned item to the courier before TrustGap staff step in.
+    returnPickupDays: num(env.RETURN_PICKUP_DAYS, 3)
   };
 }
 __name(loadConfig, "loadConfig");
@@ -368,7 +376,13 @@ function createFlutterwavePayments(ctx) {
         currency: "NGN",
         redirect_url: `${config.apiUrl}/api/payments/callback`,
         customer: { email: order.buyer_email, phonenumber: order.buyer_phone, name: order.buyer_name },
-        customizations: { title: "TrustGap", description: title },
+        // Branding on Flutterwave's checkout page. The Flutterwave account belongs to Tubalcain Ads
+        // Enterprise; this shows TrustGap's name and logo to buyers instead. (No "escrow" wording.)
+        customizations: {
+          title: "TrustGap",
+          description: `${title} \xB7 Payment secured under TrustGap deal rules`.slice(0, 150),
+          logo: config.checkoutLogoUrl
+        },
         meta: { order_ref: order.ref },
         session_duration: config.paymentTimeoutMinutes,
         max_retry_attempt: 3
@@ -526,6 +540,10 @@ function createManualLogistics(ctx) {
       const token = await signLink(ctx.config.appSecret, `rider-${order.id}`, expires);
       return { deliveryRef: "MAN-" + order.ref, riderUrl: `${ctx.config.siteUrl}/rider.html?t=${encodeURIComponent(token)}` };
     },
+    // A return: the rider collects from the buyer and enters the seller's return PIN at hand-back.
+    async bookReturn({ order, riderToken }) {
+      return { deliveryRef: "MAN-" + order.ref + "-R", riderUrl: `${ctx.config.siteUrl}/rider.html?t=${encodeURIComponent(riderToken)}` };
+    },
     async getStatus() {
       return null;
     },
@@ -640,6 +658,37 @@ function createFezLogistics(ctx) {
         }
       ]);
       const orderNo = data.orderNos?.[order.ref];
+      if (!orderNo) throw new Error(`Fez did not return an order number (${data.description || "no details"}).`);
+      return { deliveryRef: orderNo, riderUrl: null };
+    },
+    // A return is a new Fez order the other way round: collected from the buyer, delivered to the
+    // seller's pickup address. The seller's return PIN goes in CustToken, so Fez marks it delivered
+    // only when the seller gives the rider that PIN.
+    async bookReturn({ order, deal, seller, pin, ref }) {
+      const data = await call("POST", "/order", [
+        {
+          recipientAddress: deal.pickup_address,
+          recipientState: deal.pickup_state,
+          recipientName: seller.business_name,
+          recipientPhone: seller.phone,
+          recipientEmail: seller.email,
+          uniqueID: ref,
+          BatchID: ref,
+          CustToken: pin,
+          itemDescription: `RETURN: ${deal.item_title} (x${deal.quantity})`.slice(0, 250),
+          additionalDetails: [`Return for order ${order.ref}`, order.delivery_landmark && `Pickup landmark: ${order.delivery_landmark}`, "Seller gives a 4-digit PIN only after checking the item."].filter(Boolean).join(" | "),
+          valueOfItem: String(Math.round(deal.item_price / 100)),
+          weight: deal.weight_kg,
+          pickUpState: order.delivery_state,
+          pickUpAddress: order.delivery_address,
+          thirdparty: "true",
+          senderName: order.buyer_name,
+          senderAddress: order.delivery_address,
+          senderPhone: order.buyer_phone,
+          fragile: Boolean(deal.fragile)
+        }
+      ]);
+      const orderNo = data.orderNos?.[ref];
       if (!orderNo) throw new Error(`Fez did not return an order number (${data.description || "no details"}).`);
       return { deliveryRef: orderNo, riderUrl: null };
     },
@@ -810,6 +859,37 @@ CREATE INDEX orders_delivery_ref ON orders(delivery_ref);
   {
     "name": "0008_debt_payments_consents_marketing.sql",
     "sql": "-- Sellers can pay a dispute charge straight away through the payment page, instead of only having it\n-- taken from a later payout.\nCREATE TABLE IF NOT EXISTS debt_payments (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  amount INTEGER NOT NULL,\n  tx_ref TEXT NOT NULL UNIQUE,\n  status TEXT NOT NULL,\n  confirm_nonce TEXT,\n  provider_tx_id TEXT,\n  created_at TEXT NOT NULL,\n  paid_at TEXT\n);\n-- What each side confirmed before the deal: the seller's condition pledge (exact wording) and the time\n-- the buyer accepted the change-of-mind notice (its wording is in the order's accepted terms).\nALTER TABLE deals ADD COLUMN condition_confirmed_at TEXT;\nALTER TABLE deals ADD COLUMN condition_pledge TEXT;\nALTER TABLE orders ADD COLUMN buyer_ack_at TEXT;\n-- Opt-ins for TrustGap news and offers (separate from the messages needed to run a deal).\nALTER TABLE sellers ADD COLUMN marketing_opt_in_at TEXT;\nALTER TABLE orders ADD COLUMN buyer_marketing_opt_in_at TEXT;\n"
+  },
+  {
+    "name": "0009_terms_of_service_acceptance.sql",
+    "sql": "-- Acceptance of the TrustGap Terms of Service (a required, unticked checkbox). Sellers accept when\n-- signing up; buyers accept in step 1 of each deal (the version and time are also in the order's\n-- accepted terms).\nALTER TABLE sellers ADD COLUMN terms_accepted_at TEXT;\nALTER TABLE sellers ADD COLUMN terms_version TEXT;\nALTER TABLE orders ADD COLUMN buyer_terms_accepted_at TEXT;\n"
+  },
+  {
+    "name": "0010_returns.sql",
+    "sql": `-- Returns to the seller. The buyer's refund waits until the seller has the item back, confirmed by
+-- the seller's 4-digit return PIN (given to the rider at hand-back), the courier's own record, the
+-- seller's "I've received it" button, or TrustGap staff.
+--   kind 'door':   refused at the door; the same rider takes the parcel straight back.
+--   kind 'pickup': a problem found after delivery; a new courier order collects it from the buyer.
+CREATE TABLE IF NOT EXISTS returns (
+  id INTEGER PRIMARY KEY,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  pin_enc TEXT NOT NULL,
+  pin_attempts INTEGER NOT NULL DEFAULT 0,
+  courier TEXT,
+  delivery_ref TEXT,
+  rider_url TEXT,
+  courier_status TEXT,
+  cost INTEGER,
+  deadline_at TEXT,
+  received_at TEXT,
+  received_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS returns_order ON returns(order_id);
+`
   }
 ];
 
@@ -873,14 +953,16 @@ function formatNaira(kobo) {
 }
 __name(formatNaira, "formatNaira");
 function platformFee(itemPriceKobo, fee) {
-  return Math.max(fee.minKobo, Math.round(itemPriceKobo * fee.percent / 100));
+  const pf = Math.max(fee.minKobo, Math.round(itemPriceKobo * fee.percent / 100));
+  return fee.maxKobo ? Math.min(fee.maxKobo, pf) : pf;
 }
 __name(platformFee, "platformFee");
 var ceilNaira = /* @__PURE__ */ __name((kobo) => Math.ceil(kobo / 100) * 100, "ceilNaira");
 function processingFee({ itemPrice, buyerDelivery, platform, buyerShare }, processing) {
   const r = processing.percent / 100;
   const roundingAllowance = buyerShare === 0.5 ? 200 : 0;
-  return ceilNaira((r * (itemPrice + buyerDelivery + buyerShare * platform + roundingAllowance) + processing.payoutFeeKobo) / (1 - r * buyerShare));
+  const pr = (r * (itemPrice + buyerDelivery + buyerShare * platform + roundingAllowance) + processing.payoutFeeKobo) / (1 - r * buyerShare);
+  return ceilNaira(processing.capKobo ? Math.min(pr, processing.capKobo + processing.payoutFeeKobo) : pr);
 }
 __name(processingFee, "processingFee");
 var buyerPart = /* @__PURE__ */ __name((payer, amount) => payer === "buyer" ? amount : payer === "split" ? Math.ceil(amount / 200) * 100 : 0, "buyerPart");
@@ -957,6 +1039,13 @@ __name(normaliseState, "normaliseState");
 
 // src/lib/terms.js
 var TERMS_VERSION = "2026-10-pilot-1";
+var TOS_VERSION = "2026-10-29";
+var TOS_DOCUMENTS = {
+  seller: ["legal/terms.html", "legal/seller-terms.html", "legal/privacy.html"],
+  buyer: ["legal/terms.html", "legal/disputes.html", "legal/privacy.html"]
+};
+var yes = /* @__PURE__ */ __name((v) => v === true || v === "yes", "yes");
+var acceptedTerms = /* @__PURE__ */ __name((input) => yes(input?.terms_accepted), "acceptedTerms");
 var RULES = /* @__PURE__ */ __name((deal) => [
   "Your payment is held by TrustGap. The seller is not paid until the item is delivered and the inspection period ends.",
   "Check the item at the door. Only give the rider your 4-digit delivery PIN if it matches this description.",
@@ -966,7 +1055,7 @@ var RULES = /* @__PURE__ */ __name((deal) => [
   "If you refuse a correct item, the cost of delivery and return may be deducted from your refund. Every deduction is shown to you in writing.",
   "Disputes are decided by TrustGap staff using evidence from both sides and the courier. You can appeal once by replying to the decision."
 ], "RULES");
-async function snapshotTerms(deal, seller, photoHashes = [], promo = null, acknowledgedAt = null) {
+async function snapshotTerms(deal, seller, photoHashes = [], promo = null, acknowledgedAt = null, tosAcceptedAt = null) {
   const terms = {
     version: TERMS_VERSION,
     deal_token: deal.token,
@@ -1000,7 +1089,9 @@ async function snapshotTerms(deal, seller, photoHashes = [], promo = null, ackno
     inspection_hours: deal.inspection_hours,
     rules: RULES(deal),
     // The change-of-mind notice the buyer accepted in a pop-up before continuing (exact wording).
-    buyer_acknowledgement: acknowledgedAt && { text: fillConsent("buyer", deal.delivery_fee), at: acknowledgedAt }
+    buyer_acknowledgement: acknowledgedAt && { text: fillConsent("buyer", deal.delivery_fee), at: acknowledgedAt },
+    // The buyer ticked "I agree to the TrustGap Terms of Service" in step 1.
+    terms_of_service: tosAcceptedAt && { version: TOS_VERSION, documents: TOS_DOCUMENTS.buyer, at: tosAcceptedAt }
   };
   const json2 = JSON.stringify(terms);
   return { json: json2, hash: await sha256Hex(json2) };
@@ -1495,6 +1586,7 @@ async function publicDealView(ctx, deal) {
       delivery: q.buyerDelivery,
       delivery_full: q.deliveryFee,
       platform_fee: q.buyerPlatformShare,
+      platform_fee_full: q.platformFee,
       processing_fee: q.buyerProcessingShare,
       total: q.buyerTotal
     }
@@ -1513,13 +1605,201 @@ function namesMatch(typedName, accountName) {
 }
 __name(namesMatch, "namesMatch");
 
+// src/core/returns.js
+var RETURN_LABELS = {
+  with_rider: "Rider is taking it back to the seller",
+  booked: "Return booked: a rider will collect it from the buyer",
+  picked_up: "Collected from the buyer",
+  out_for_delivery: "On the way back to the seller",
+  attempt_failed: "Collection attempt failed",
+  received: "Seller has the item back",
+  cancelled: "Return cancelled"
+};
+var OPEN = ["with_rider", "booked", "picked_up", "out_for_delivery", "attempt_failed"];
+var RETURN_STEPS = {
+  picked_up: ["booked", "attempt_failed"],
+  out_for_delivery: ["booked", "picked_up", "attempt_failed"],
+  attempt_failed: ["booked", "picked_up", "out_for_delivery"]
+};
+var activeReturn = /* @__PURE__ */ __name((ctx, orderId) => first(ctx.env, "SELECT * FROM returns WHERE order_id = ? AND status != 'cancelled' ORDER BY id DESC", orderId), "activeReturn");
+var isOpenReturn = /* @__PURE__ */ __name((ret) => Boolean(ret && OPEN.includes(ret.status)), "isOpenReturn");
+var revealReturnPin = /* @__PURE__ */ __name((ctx, ret) => decrypt(ret.pin_enc, ctx.config.appSecret), "revealReturnPin");
+async function returnView(ctx, ret, { withPin = false } = {}) {
+  if (!ret) return null;
+  return {
+    id: ret.id,
+    kind: ret.kind,
+    status: ret.status,
+    label: RETURN_LABELS[ret.status] || ret.status,
+    open: isOpenReturn(ret),
+    deadline_at: ret.deadline_at,
+    received_at: ret.received_at,
+    received_by: ret.received_by,
+    ...withPin && isOpenReturn(ret) ? { pin: await revealReturnPin(ctx, ret) } : {}
+  };
+}
+__name(returnView, "returnView");
+async function newPin(ctx) {
+  const pin = randomDigits(4);
+  return { pin, enc: await encrypt(pin, ctx.config.appSecret) };
+}
+__name(newPin, "newPin");
+var pinSms = /* @__PURE__ */ __name((order, pin) => `Your TrustGap return PIN for order ${order.ref} is ${pin}. Check the returned item first, then give the rider this PIN. If it isn't your item, don't accept it and contact TrustGap.`, "pinSms");
+async function startDoorReturn(ctx, order, { received = false, by = "courier" } = {}) {
+  if (await activeReturn(ctx, order.id)) return null;
+  const { pin, enc: enc2 } = await newPin(ctx);
+  const now = iso(ctx.now());
+  await insert(ctx.env, "returns", {
+    order_id: order.id,
+    kind: "door",
+    status: received ? "received" : "with_rider",
+    pin_enc: enc2,
+    courier: order.courier,
+    delivery_ref: order.delivery_ref,
+    received_at: received ? now : null,
+    received_by: received ? by : null,
+    created_at: now
+  });
+  await logEvent(ctx, order.id, by, received ? "return_received" : "return_started", received ? "returned by the courier" : "refused at the door");
+  if (received) {
+    await update(ctx.env, "orders", order.id, { delivery_status: "returned" });
+  } else {
+    const seller = await getSeller(ctx, order.seller_id);
+    await ctx.notify.send({ orderId: order.id, event: "return_pin", phone: seller.phone, email: seller.email, sms: `TrustGap: the buyer refused order ${order.ref} at the door and the rider is bringing it back. ${pinSms(order, pin)}` });
+  }
+  return activeReturn(ctx, order.id);
+}
+__name(startDoorReturn, "startDoorReturn");
+async function bookPickupReturn(ctx, order) {
+  if (await activeReturn(ctx, order.id)) throw new UserError("A return already exists for this order.");
+  if (!order.delivered_at) throw new UserError("The item never reached the buyer, so there is nothing to collect.");
+  const deal = await getDeal(ctx, order.deal_id);
+  const seller = await getSeller(ctx, order.seller_id);
+  const { pin, enc: enc2 } = await newPin(ctx);
+  const deadline = addHours(ctx.now(), ctx.config.returnPickupDays * 24);
+  const id = await insert(ctx.env, "returns", {
+    order_id: order.id,
+    kind: "pickup",
+    status: "booking",
+    pin_enc: enc2,
+    courier: ctx.logistics.name,
+    deadline_at: iso(deadline),
+    created_at: iso(ctx.now())
+  });
+  let booking;
+  try {
+    const riderToken = await signLink(ctx.config.appSecret, `return-${id}`, addHours(ctx.now(), ctx.config.riderLinkDays * 24));
+    booking = await ctx.logistics.bookReturn({ order, deal, seller, pin, ref: `${order.ref}-R`, riderToken });
+  } catch (err) {
+    await run(ctx.env, "DELETE FROM returns WHERE id = ?", id);
+    throw new UserError(`Could not book the return with the courier: ${err.message}`);
+  }
+  let cost = null;
+  try {
+    cost = (await ctx.logistics.quote({ pickupState: order.delivery_state, dropoffState: deal.pickup_state, weightKg: deal.weight_kg })).feeKobo;
+  } catch {
+  }
+  await update(ctx.env, "returns", id, { status: "booked", delivery_ref: booking.deliveryRef, rider_url: booking.riderUrl || null, cost });
+  if (cost) {
+    await insert(ctx.env, "ledger", { order_id: order.id, kind: "return_cost", amount: cost, counterparty: ctx.logistics.name, status: "pending", created_at: iso(ctx.now()) });
+  }
+  await logEvent(ctx, order.id, "admin", "return_booked", { delivery_ref: booking.deliveryRef });
+  await ctx.notify.send({
+    orderId: order.id,
+    event: "return_booked",
+    phone: order.buyer_phone,
+    email: order.buyer_email,
+    sms: `TrustGap: a rider will collect "${deal.item_title}" from you to return it to the seller (order ${order.ref}). Please have it packed with everything that came with it by ${fmtDate(deadline)}. Your refund is sent once the seller receives it: ${trackUrl(ctx, order)}`
+  });
+  await ctx.notify.send({ orderId: order.id, event: "return_pin", phone: seller.phone, email: seller.email, sms: `TrustGap: the item from order ${order.ref} is being returned to you. ${pinSms(order, pin)}` });
+  return first(ctx.env, "SELECT * FROM returns WHERE id = ?", id);
+}
+__name(bookPickupReturn, "bookPickupReturn");
+async function receiveReturn(ctx, ret, by) {
+  const res = await run(
+    ctx.env,
+    `UPDATE returns SET status = 'received', received_at = ?, received_by = ? WHERE id = ? AND status IN (${OPEN.map(() => "?").join(", ")})`,
+    iso(ctx.now()),
+    by,
+    ret.id,
+    ...OPEN
+  );
+  if (res.meta.changes !== 1) return false;
+  await run(ctx.env, "UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'return_cost'", ret.order_id);
+  if (ret.kind === "door") await update(ctx.env, "orders", ret.order_id, { delivery_status: "returned" });
+  await logEvent(ctx, ret.order_id, by, "return_received");
+  const order = await getOrder(ctx, ret.order_id);
+  if (!await settleAfterReturn(ctx, order)) {
+    await ctx.notify.send({ orderId: order.id, event: "return_received", phone: order.buyer_phone, sms: `TrustGap: the seller has received the returned item for order ${order.ref}. We'll send our decision shortly.` });
+  }
+  return true;
+}
+__name(receiveReturn, "receiveReturn");
+async function verifyReturnPin(ctx, ret, pin, actor) {
+  if (!isOpenReturn(ret)) throw new UserError("This return is already closed.");
+  if (ret.pin_attempts >= ctx.config.pinMaxAttempts) throw new UserError("Too many wrong PINs. Contact TrustGap support to continue.");
+  if (!safeEqual(str(pin), await revealReturnPin(ctx, ret))) {
+    await run(ctx.env, "UPDATE returns SET pin_attempts = pin_attempts + 1 WHERE id = ?", ret.id);
+    await logEvent(ctx, ret.order_id, actor, "wrong_return_pin");
+    throw new UserError(`Wrong PIN. ${ctx.config.pinMaxAttempts - ret.pin_attempts - 1} attempt(s) left.`);
+  }
+  if (!await receiveReturn(ctx, ret, actor)) throw new UserError("This return was already updated.");
+}
+__name(verifyReturnPin, "verifyReturnPin");
+async function applyReturnUpdate(ctx, ret, { status, note, actor }) {
+  const from = RETURN_STEPS[status];
+  if (!from) throw new UserError("Unknown return update.");
+  const reason = str(note).slice(0, 500);
+  if (status === "attempt_failed" && reason.length < 3) throw new UserError("Say what happened.");
+  const res = await run(ctx.env, `UPDATE returns SET status = ? WHERE id = ? AND status IN (${from.map(() => "?").join(", ")})`, status, ret.id, ...from);
+  if (res.meta.changes !== 1) throw new UserError(`Cannot mark "${RETURN_LABELS[status]}" while the return is "${RETURN_LABELS[ret.status] || ret.status}".`);
+  await logEvent(ctx, ret.order_id, actor, "return_" + status, reason || null);
+  if (status === "attempt_failed") {
+    const order = await getOrder(ctx, ret.order_id);
+    await ctx.notify.send({ orderId: order.id, event: "return_attempt_failed", phone: order.buyer_phone, sms: `TrustGap: the rider could not collect the return for order ${order.ref} (${reason}). Your refund waits until the item is back with the seller.` });
+  }
+}
+__name(applyReturnUpdate, "applyReturnUpdate");
+var STAGE_TO_STATUS = { picked_up: "picked_up", out_for_delivery: "out_for_delivery" };
+async function syncReturnStatus(ctx, ret) {
+  if (!isOpenReturn(ret) || ret.kind !== "pickup" || !ret.delivery_ref || ret.courier !== ctx.logistics.name) return null;
+  const st = await ctx.logistics.getStatus(ret.delivery_ref);
+  if (!st) return null;
+  if (st.raw && st.raw !== ret.courier_status) {
+    await update(ctx.env, "returns", ret.id, { courier_status: st.raw });
+    await logEvent(ctx, ret.order_id, "courier", "return_courier_status", st.reason ? `${st.raw}: ${st.reason}` : st.raw);
+  }
+  if (st.stage === "delivered") await receiveReturn(ctx, ret, "courier");
+  else if (STAGE_TO_STATUS[st.stage] && st.stage !== ret.status) await update(ctx.env, "returns", ret.id, { status: STAGE_TO_STATUS[st.stage] });
+  return st;
+}
+__name(syncReturnStatus, "syncReturnStatus");
+async function cancelReturn(ctx, ret, note) {
+  if (!isOpenReturn(ret)) throw new UserError("Only an open return can be cancelled.");
+  const reason = str(note);
+  if (reason.length < 5) throw new UserError("Say why the return is cancelled.");
+  await run(ctx.env, "UPDATE returns SET status = 'cancelled' WHERE id = ?", ret.id);
+  await run(ctx.env, "UPDATE ledger SET status = 'cancelled' WHERE order_id = ? AND kind = 'return_cost' AND status = 'pending'", ret.order_id);
+  await run(ctx.env, "UPDATE disputes SET status = 'open' WHERE order_id = ? AND status = 'awaiting_return'", ret.order_id);
+  await logEvent(ctx, ret.order_id, "admin", "return_cancelled", reason);
+  if (ret.kind === "pickup" && ret.delivery_ref && ctx.logistics.cancel) {
+    try {
+      await ctx.logistics.cancel(ret.delivery_ref, reason);
+    } catch (err) {
+      console.error("courier cancel failed", ret.delivery_ref, err.message);
+    }
+  }
+}
+__name(cancelReturn, "cancelReturn");
+
 // src/core/orders.js
-async function startCheckout(ctx, deal, promoInput, { acknowledged = false } = {}) {
+async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
   const promo = await buyerPromo(ctx, deal, promoInput);
   const ackAt = acknowledged ? iso(ctx.now()) : null;
-  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo, ackAt);
+  const tosAt = termsAccepted ? iso(ctx.now()) : null;
+  const { json: json2, hash } = await snapshotTerms(deal, await getSeller(ctx, deal.seller_id), await dealPhotoHashes(ctx, deal), promo, ackAt, tosAt);
   const id = randomToken(15);
   await insert(ctx.env, "checkouts", { id, deal_id: deal.id, terms_json: json2, terms_hash: hash, created_at: iso(ctx.now()) });
   return { checkout_id: id, terms_hash: hash, total: JSON.parse(json2).money.buyer_total, promo };
@@ -1568,6 +1848,9 @@ async function placeOrder(ctx, { deal, input }) {
   if (!terms.buyer_acknowledgement) {
     throw new UserError("Go back to step 1 and confirm you\u2019ve read what happens if you change your mind.", 409);
   }
+  if (!terms.terms_of_service) {
+    throw new UserError("Go back to step 1 and tick the box to accept the TrustGap Terms of Service.", 409);
+  }
   const money = terms.money;
   const discount = money.promo_discount || 0;
   const total = deal.buyer_total - discount;
@@ -1598,6 +1881,7 @@ async function placeOrder(ctx, { deal, input }) {
     promo_code: promoCode,
     promo_discount: discount,
     buyer_ack_at: terms.buyer_acknowledgement.at,
+    buyer_terms_accepted_at: terms.terms_of_service.at,
     buyer_marketing_opt_in_at: input.marketing_opt_in === true || input.marketing_opt_in === "yes" ? iso(ctx.now()) : null,
     refund_bank_code: bankCode,
     refund_bank_name: bank.name,
@@ -1798,6 +2082,7 @@ var DELIVERY_LABELS = {
 async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   const step = DELIVERY_STEPS[status];
   if (!step) throw new UserError("Unknown delivery update.");
+  if (status === "returned") throw new UserError("Enter the seller\u2019s return PIN to confirm you handed the item back.");
   const reason = str(note).slice(0, 500);
   if (["attempt_failed", "refused"].includes(status) && reason.length < 3) throw new UserError("Say what happened.");
   const res = await stmt(
@@ -1813,6 +2098,7 @@ async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   await logEvent(ctx, order.id, actor, "delivery_" + status, reason || null);
   if (status === "refused") {
     await openDispute(ctx, await getOrder(ctx, order.id), { by: actor, category: "refused_at_door", description: reason });
+    await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: actor });
   } else if (status === "out_for_delivery" || status === "attempt_failed") {
     await ctx.notify.send({
       orderId: order.id,
@@ -1895,6 +2181,9 @@ async function syncCourierStatus(ctx, order) {
         description: `The courier returned the parcel${st.reason ? `: ${st.reason}` : ""}.`
       });
     }
+    const ret = await activeReturn(ctx, order.id);
+    if (!ret) await startDoorReturn(ctx, await getOrder(ctx, order.id), { received: true });
+    else if (ret.kind === "door") await receiveReturn(ctx, ret, "courier");
   }
   return st;
 }
@@ -1954,6 +2243,49 @@ async function resolveDispute(ctx, disputeId, input) {
     throw new UserError(`Refund plus payout cannot exceed the ${formatNaira(order.amount)} collected.`);
   }
   const note = requireLength(input.note, "Decision note", 10, 2e3);
+  const decision = { buyerRefund, sellerPayout, sellerCharge, note };
+  let ret = await activeReturn(ctx, order.id);
+  const returnFirst = input.return_item === true || input.return_item === "yes";
+  if (returnFirst && !ret) {
+    if (!buyerRefund) throw new UserError("A return is only needed when the buyer is refunded.");
+    ret = await bookPickupReturn(ctx, order);
+  }
+  if (isOpenReturn(ret) && buyerRefund > 0) {
+    const res = await run(
+      ctx.env,
+      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ? WHERE id = ? AND status = 'open'",
+      note,
+      buyerRefund,
+      sellerPayout,
+      sellerCharge,
+      dispute.id
+    );
+    if (res.meta.changes !== 1) throw new UserError("This dispute was already decided.");
+    await logEvent(ctx, order.id, "admin", "dispute_decided_after_return", { buyerRefund, sellerPayout, sellerCharge, note });
+    const seller = await getSeller(ctx, order.seller_id);
+    const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
+    await ctx.notify.send({ orderId: order.id, event: "dispute_decided", phone: order.buyer_phone, email: order.buyer_email, sms });
+    await ctx.notify.send({ orderId: order.id, event: "dispute_decided", phone: seller.phone, email: seller.email, sms });
+    return { waiting_for_return: true };
+  }
+  await settleDispute(ctx, order, dispute, decision);
+  return { waiting_for_return: false };
+}
+__name(resolveDispute, "resolveDispute");
+async function settleAfterReturn(ctx, order) {
+  const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? AND status = 'awaiting_return' ORDER BY id DESC", order.id);
+  if (!dispute) return false;
+  await settleDispute(ctx, order, dispute, {
+    buyerRefund: dispute.buyer_refund,
+    sellerPayout: dispute.seller_payout,
+    sellerCharge: dispute.seller_charge,
+    note: dispute.resolution_note
+  });
+  return true;
+}
+__name(settleAfterReturn, "settleAfterReturn");
+var decisionSummary = /* @__PURE__ */ __name(({ buyerRefund, sellerPayout, sellerCharge, note }) => `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ""} Reason: ${note}`, "decisionSummary");
+async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note }) {
   const now = iso(ctx.now());
   const retained = order.amount - buyerRefund - sellerPayout;
   const settles = iso(settlesAt(ctx, order.paid_at));
@@ -1964,7 +2296,7 @@ async function resolveDispute(ctx, disputeId, input) {
     { status: sellerPayout > 0 ? "completed" : "refunded", closed_at: now },
     (h) => [
       h.sql(
-        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ? WHERE id = ? AND status = 'open'",
+        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
         note,
         buyerRefund,
         sellerPayout,
@@ -1983,11 +2315,11 @@ async function resolveDispute(ctx, disputeId, input) {
   if (!won) throw new UserError("This order was already decided.");
   await sendPendingTransfers(ctx, order.id);
   const seller = await getSeller(ctx, order.seller_id);
-  const summary = `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ""} Reason: ${note}`;
+  const summary = decisionSummary({ buyerRefund, sellerPayout, sellerCharge, note });
   await ctx.notify.send({ orderId: order.id, event: "dispute_resolved", phone: order.buyer_phone, email: order.buyer_email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
   await ctx.notify.send({ orderId: order.id, event: "dispute_resolved", phone: seller.phone, email: seller.email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
 }
-__name(resolveDispute, "resolveDispute");
+__name(settleDispute, "settleDispute");
 async function releaseToSeller(ctx, order, reason) {
   if (order.status !== "delivered") throw new UserError("Payment can only be released after delivery.");
   const seller = await getSeller(ctx, order.seller_id);
@@ -2177,7 +2509,7 @@ function publicRoutes(r) {
       headers: { "Content-Type": photo.mime, "Cache-Control": "public, max-age=31536000, immutable", "Content-Security-Policy": "default-src 'none'" }
     });
   });
-  r.post("/api/deals/:token/accept", async ({ ctx, params, body }) => startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code, { acknowledged: body.penalty_acknowledged === true }));
+  r.post("/api/deals/:token/accept", async ({ ctx, params, body }) => startCheckout(ctx, await loadDeal(ctx, params.token), body.promo_code, { acknowledged: body.penalty_acknowledged === true, termsAccepted: body.terms_accepted === true }));
   r.post("/api/deals/:token/pay", async ({ ctx, params, body }) => {
     const deal = await loadDeal(ctx, params.token);
     if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
@@ -2208,6 +2540,8 @@ function publicRoutes(r) {
     if (!hint.signatureValid) console.warn("Fez webhook signature did not verify; re-checking status with Fez anyway", hint.deliveryRef);
     const order = await first(ctx.env, "SELECT * FROM orders WHERE delivery_ref = ?", hint.deliveryRef);
     if (order) await syncCourierStatus(ctx, order);
+    const ret = order ? null : await first(ctx.env, "SELECT * FROM returns WHERE kind = 'pickup' AND delivery_ref = ?", hint.deliveryRef);
+    if (ret) await syncReturnStatus(ctx, ret);
     return new Response("ok");
   });
   r.get("/mock/pay/:txRef", async ({ ctx, params }) => {
@@ -2271,6 +2605,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         can_confirm: o.status === "delivered",
         can_report: canReport
       },
+      return: await returnView(ctx, await activeReturn(ctx, o.id)),
       dispute: dispute && {
         photos: await evidenceUrls(ctx, dispute.id),
         status: dispute.status,
@@ -2327,11 +2662,13 @@ async function signup(ctx, input) {
   const email = validEmail(input.email);
   const existing = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
   if (existing?.phone_verified_at) throw new UserError("An account with this phone number already exists. Log in instead.");
+  if (!acceptedTerms(input)) throw new UserError("Tick the box to accept the TrustGap Terms of Service and Seller Terms. You can\u2019t create an account without accepting them.");
+  const terms = { terms_accepted_at: iso(ctx.now()), terms_version: TOS_VERSION };
   const marketing = input.marketing_opt_in === true || input.marketing_opt_in === "yes" ? iso(ctx.now()) : null;
   if (existing) {
-    await update(ctx.env, "sellers", existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing });
+    await update(ctx.env, "sellers", existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing, ...terms });
   } else {
-    await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, created_at: iso(ctx.now()) });
+    await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
   }
   return { phone, ...await sendCode(ctx, phone, email) };
 }
@@ -2613,8 +2950,19 @@ function sellerRoutes(r) {
         inspection_ends_at: o.inspection_ends_at
       },
       dispute,
+      // Includes the return PIN while the item is on its way back, to give the rider at hand-back.
+      return: await returnView(ctx, await activeReturn(ctx, o.id), { withPin: true }),
       events: await all(ctx.env, "SELECT type, actor, created_at FROM order_events WHERE order_id = ? ORDER BY id", o.id)
     };
+  });
+  r.post("/api/seller/orders/:id/return-received", async ({ ctx, request, params }) => {
+    const { seller } = await requireSeller(ctx, request);
+    const o = await first(ctx.env, "SELECT id FROM orders WHERE id = ? AND seller_id = ?", Number(params.id), seller.id);
+    if (!o) throw notFound("Order not found.");
+    const ret = await activeReturn(ctx, o.id);
+    if (!isOpenReturn(ret)) throw new UserError("There is no return waiting on this order.");
+    await receiveReturn(ctx, ret, "seller");
+    return { ok: true };
   });
   r.post("/api/seller/orders/:id/book", async ({ ctx, request, params, body }) => {
     await bookPickup(ctx, (await requireSeller(ctx, request)).seller, Number(params.id), body.packing_note);
@@ -2652,6 +3000,13 @@ async function runJobs(ctx) {
       if (await syncCourierStatus(ctx, o)) result.couriersChecked++;
     } catch (err) {
       console.error("courier status check failed", o.ref, err.message);
+    }
+  }
+  for (const ret of await all(ctx.env, "SELECT * FROM returns WHERE kind = 'pickup' AND courier = ? AND delivery_ref IS NOT NULL AND status IN ('booked', 'picked_up', 'out_for_delivery', 'attempt_failed') LIMIT 30", ctx.logistics.name)) {
+    try {
+      if (await syncReturnStatus(ctx, ret)) result.couriersChecked++;
+    } catch (err) {
+      console.error("return status check failed", ret.id, err.message);
     }
   }
   for (const l of await all(
@@ -2705,7 +3060,8 @@ var TABS = {
       "Closed at",
       "Created at",
       "Seller confirmed condition at",
-      "Buyer accepted change-of-mind notice at"
+      "Buyer accepted change-of-mind notice at",
+      "Buyer accepted Terms of Service at"
     ],
     row: /* @__PURE__ */ __name((o) => [
       o.ref,
@@ -2723,12 +3079,13 @@ var TABS = {
       o.closed_at,
       o.created_at,
       o.condition_confirmed_at || "",
-      o.buyer_ack_at || ""
+      o.buyer_ack_at || "",
+      o.buyer_terms_accepted_at || ""
     ], "row")
   },
   Sellers: {
     sql: `SELECT * FROM sellers ORDER BY id DESC LIMIT ${ROW_LIMIT}`,
-    header: ["ID", "Business", "Full name", "Phone", "Email", "Phone verified", "ID verified", "Payout bank", "Owes (\u20A6)", "Suspended", "Joined", "News & offers opt-in"],
+    header: ["ID", "Business", "Full name", "Phone", "Email", "Phone verified", "ID verified", "Payout bank", "Owes (\u20A6)", "Suspended", "Joined", "News & offers opt-in", "Accepted Terms of Service at", "Terms version"],
     row: /* @__PURE__ */ __name((s) => [
       s.id,
       s.business_name,
@@ -2741,7 +3098,9 @@ var TABS = {
       naira(s.amount_owed),
       s.suspended_at ? "yes" : "",
       s.created_at,
-      s.marketing_opt_in_at || ""
+      s.marketing_opt_in_at || "",
+      s.terms_accepted_at || "",
+      s.terms_version || ""
     ], "row")
   },
   // Sellers and buyers who ticked "send me TrustGap news and offers". Only these may get newsletters
@@ -2757,6 +3116,22 @@ var TABS = {
           ORDER BY opted_in_at DESC LIMIT ${ROW_LIMIT}`,
     header: ["Role", "Name", "Business", "Phone", "Email", "Opted in at", "Source"],
     row: /* @__PURE__ */ __name((c) => [c.role, c.name, c.business_name || "", c.phone, c.email || "", c.opted_in_at, c.source], "row")
+  },
+  Returns: {
+    sql: `SELECT r.*, o.ref FROM returns r JOIN orders o ON o.id = r.order_id ORDER BY r.id DESC LIMIT ${ROW_LIMIT}`,
+    header: ["Order", "Kind", "Status", "Courier", "Courier ref", "Cost (\u20A6)", "Hand-over deadline", "Received at", "Confirmed by", "Started"],
+    row: /* @__PURE__ */ __name((r) => [
+      r.ref,
+      r.kind === "door" ? "refused at door" : "collected from buyer",
+      r.status,
+      r.courier || "",
+      r.delivery_ref || "",
+      naira(r.cost),
+      r.deadline_at || "",
+      r.received_at || "",
+      r.received_by || "",
+      r.created_at
+    ], "row")
   },
   "Debt payments": {
     sql: `SELECT p.*, s.business_name FROM debt_payments p JOIN sellers s ON s.id = p.seller_id ORDER BY p.id DESC LIMIT ${ROW_LIMIT}`,
@@ -2869,37 +3244,64 @@ async function requireAdmin(ctx, request) {
   if (!session2?.is_admin) throw new UserError("Admin login required.", 401);
 }
 __name(requireAdmin, "requireAdmin");
-async function riderOrder(ctx, token) {
+async function riderJob(ctx, token) {
   const data = await verifyLink(ctx.config.appSecret, token, ctx.now());
+  const invalid = /* @__PURE__ */ __name(() => new UserError("This rider link is invalid or has expired.", 404), "invalid");
+  if (data?.startsWith("return-")) {
+    const ret = await first(ctx.env, "SELECT * FROM returns WHERE id = ?", Number(data.slice(7)));
+    if (!ret) throw invalid();
+    return { order: await getOrder(ctx, ret.order_id), ret };
+  }
   const id = data?.startsWith("rider-") ? Number(data.slice(6)) : null;
   const order = id && await getOrder(ctx, id);
-  if (!order) throw new UserError("This rider link is invalid or has expired.", 404);
+  if (!order) throw invalid();
+  return { order, ret: null };
+}
+__name(riderJob, "riderJob");
+async function riderOrder(ctx, token) {
+  const { order, ret } = await riderJob(ctx, token);
+  if (ret) throw new UserError("This is a return link.");
   return order;
 }
 __name(riderOrder, "riderOrder");
 function riderRoutes(r) {
   r.get("/api/rider/:token", async ({ ctx, params }) => {
-    const o = await riderOrder(ctx, params.token);
+    const { order: o, ret: returnJob } = await riderJob(ctx, params.token);
     const d = await getDeal(ctx, o.deal_id);
     const s = await getSeller(ctx, o.seller_id);
+    const seller = { name: s.business_name, phone: s.phone, address: d.pickup_address };
+    const buyer = { name: o.buyer_name, phone: o.buyer_phone, address: o.delivery_address, landmark: o.delivery_landmark };
+    const ret = returnJob || await activeReturn(ctx, o.id);
+    const doorReturn = !returnJob && ret?.kind === "door" ? await returnView(ctx, ret) : null;
     return {
       order: {
+        mode: returnJob ? "return" : "delivery",
+        return: returnJob ? await returnView(ctx, returnJob) : doorReturn,
         ref: o.ref,
         status: o.status,
         delivery_status: o.delivery_status,
-        delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
+        delivery_label: returnJob ? RETURN_LABELS[returnJob.status] : DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         item_title: d.item_title,
         item_condition: d.item_condition,
         item_description: d.item_description,
         quantity: d.quantity,
         packing_note: o.packing_note,
-        pickup: { name: s.business_name, phone: s.phone, address: d.pickup_address },
-        dropoff: { name: o.buyer_name, phone: o.buyer_phone, address: o.delivery_address, landmark: o.delivery_landmark }
+        pickup: returnJob ? buyer : seller,
+        dropoff: returnJob ? seller : buyer
       }
     };
   });
   r.post("/api/rider/:token/status", async ({ ctx, params, body }) => {
-    await applyDeliveryUpdate(ctx, await riderOrder(ctx, params.token), { status: body.status, note: body.note, actor: "rider" });
+    const { order, ret } = await riderJob(ctx, params.token);
+    if (ret) await applyReturnUpdate(ctx, ret, { status: body.status, note: body.note, actor: "rider" });
+    else await applyDeliveryUpdate(ctx, order, { status: body.status, note: body.note, actor: "rider" });
+    return { ok: true };
+  });
+  r.post("/api/rider/:token/return-pin", async ({ ctx, params, body }) => {
+    const { order, ret } = await riderJob(ctx, params.token);
+    const job = ret || await activeReturn(ctx, order.id);
+    if (!isOpenReturn(job)) throw new UserError("There is no return to confirm on this link.");
+    await verifyReturnPin(ctx, job, body.pin, "rider");
     return { ok: true };
   });
   r.post("/api/rider/:token/pin", async ({ ctx, params, body }) => {
@@ -2957,14 +3359,41 @@ function adminRoutes(r) {
         category_label: DISPUTE_CATEGORIES[x.category] || x.category,
         photos: await evidenceUrls(ctx, x.id)
       }))),
+      return: await (async () => {
+        const ret = await activeReturn(ctx, o.id);
+        return ret && {
+          ...await returnView(ctx, ret),
+          courier: ret.courier,
+          delivery_ref: ret.delivery_ref,
+          rider_url: ret.rider_url,
+          courier_status: ret.courier_status,
+          pin_attempts: ret.pin_attempts,
+          cost: ret.cost,
+          overdue: Boolean(ret.deadline_at && ["booked", "attempt_failed"].includes(ret.status) && new Date(ret.deadline_at) < ctx.now())
+        };
+      })(),
       ledger: await all(ctx.env, "SELECT * FROM ledger WHERE order_id = ? ORDER BY id", o.id),
       events: await all(ctx.env, "SELECT * FROM order_events WHERE order_id = ? ORDER BY id", o.id),
       messages: await all(ctx.env, "SELECT * FROM outbox WHERE order_id = ? ORDER BY id", o.id)
     };
   }));
-  r.post("/api/admin/disputes/:id/resolve", admin(async ({ ctx, params, body }) => {
-    await resolveDispute(ctx, Number(params.id), body);
+  r.post("/api/admin/disputes/:id/resolve", admin(async ({ ctx, params, body }) => ({ ok: true, ...await resolveDispute(ctx, Number(params.id), body) })));
+  const adminReturn = /* @__PURE__ */ __name(async (ctx, id) => {
+    const ret = await first(ctx.env, "SELECT * FROM returns WHERE id = ?", Number(id));
+    if (!ret) throw notFound("Return not found.");
+    return ret;
+  }, "adminReturn");
+  r.post("/api/admin/returns/:id/received", admin(async ({ ctx, params }) => {
+    if (!await receiveReturn(ctx, await adminReturn(ctx, params.id), "admin")) throw new UserError("This return is already closed.");
     return { ok: true };
+  }));
+  r.post("/api/admin/returns/:id/cancel", admin(async ({ ctx, params, body }) => {
+    await cancelReturn(ctx, await adminReturn(ctx, params.id), body.note);
+    return { ok: true };
+  }));
+  r.post("/api/admin/returns/:id/sync-courier", admin(async ({ ctx, params }) => {
+    const st = await syncReturnStatus(ctx, await adminReturn(ctx, params.id));
+    return { status: st?.raw || "no update" };
   }));
   r.get("/api/admin/disputes", admin(async ({ ctx }) => ({
     disputes: (await all(

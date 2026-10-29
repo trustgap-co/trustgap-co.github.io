@@ -5,8 +5,8 @@ import { namesMatch } from '../src/lib/names.js';
 import { encrypt, decrypt, signLink, verifyLink, safeEqual } from '../src/lib/crypto.js';
 import { parseMonnifyDate } from '../src/providers/identity/monnify.js';
 
-const fee = { percent: 1.5, minKobo: 10_000 };
-const processing = { percent: 2, payoutFeeKobo: 5_779 };
+const fee = { percent: 1.5, minKobo: 10_000, maxKobo: 300_000 };
+const processing = { percent: 2, payoutFeeKobo: 5_779, capKobo: 200_000 };
 
 test('nairaToKobo parses amounts people type', () => {
   assert.equal(nairaToKobo('45,000'), 4_500_000);
@@ -16,20 +16,22 @@ test('nairaToKobo parses amounts people type', () => {
   assert.equal(formatNaira(5_023_800), '₦50,238');
 });
 
-test('TrustGap fee has a minimum and no cap', () => {
+test('TrustGap fee has a minimum and a ₦3,000 cap', () => {
   assert.equal(platformFee(500_000, fee), 10_000); // 1.5% of ₦5,000 = ₦75 -> min ₦100
   assert.equal(platformFee(4_500_000, fee), 67_500);
-  assert.equal(platformFee(50_000_000, fee), 750_000); // ₦500,000 deal -> ₦7,500, no ₦2,000 cap
+  assert.equal(platformFee(20_000_000, fee), 300_000); // ₦200,000 -> exactly ₦3,000
+  assert.equal(platformFee(25_000_000, fee), 300_000); // ₦250,000 -> ₦3,750, capped at ₦3,000
+  assert.equal(platformFee(50_000_000, { ...fee, maxKobo: 0 }), 750_000); // cap 0 = no cap
 });
 
 test('quote: totals balance and TrustGap always keeps its fee after Flutterwave costs', () => {
-  for (const itemPrice of [50_000, 4_500_001, 30_000_000]) {
+  for (const itemPrice of [50_000, 4_500_001, 9_500_000, 30_000_000]) {
     for (const deliveryPayer of ['buyer', 'seller']) {
       for (const feePayer of ['buyer', 'seller', 'split']) {
         const q = quote({ itemPrice, deliveryFee: 350_000, deliveryPayer, feePayer }, fee, processing);
         const label = `${itemPrice}/${deliveryPayer}/${feePayer}`;
         assert.equal(q.buyerTotal - q.sellerPayout, q.deliveryFee + q.platformFee + q.processingFee, label);
-        const flutterwaveCost = Math.ceil(q.buyerTotal * 0.02) + processing.payoutFeeKobo;
+        const flutterwaveCost = Math.min(Math.ceil(q.buyerTotal * 0.02), processing.capKobo) + processing.payoutFeeKobo;
         assert.ok(q.processingFee >= flutterwaveCost, `${label}: processing ${q.processingFee} < cost ${flutterwaveCost}`);
         assert.ok(q.processingFee - flutterwaveCost < 200, `${label}: over-charging by more than ₦2`);
       }
@@ -40,6 +42,12 @@ test('quote: totals balance and TrustGap always keeps its fee after Flutterwave 
   assert.equal(q.processingFee, 106_300);
   assert.equal(q.buyerTotal, 5_023_800);
   assert.equal(q.sellerPayout, 4_500_000);
+
+  // A ₦250,000 deal: both fees capped, ₦3,000 + ₦2,000 + the ₦57.79 payout fee (rounded up to ₦2,058).
+  const big = quote({ itemPrice: 25_000_000, deliveryFee: 350_000, deliveryPayer: 'buyer', feePayer: 'buyer' }, fee, processing);
+  assert.equal(big.platformFee, 300_000);
+  assert.equal(big.processingFee, 205_800);
+  assert.equal(big.buyerTotal, 25_000_000 + 350_000 + 505_800);
 });
 
 test('Monnify dates are read correctly', () => {

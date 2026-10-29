@@ -2,6 +2,7 @@ import { all, run } from '../lib/db.js';
 import { deliver } from '../providers/notify/make.js';
 import { confirmPayment, releaseToSeller, openDispute, sendTransfer, settleTransfer, syncCourierStatus } from './orders.js';
 import { iso, logEvent, transition } from './common.js';
+import { syncReturnStatus } from './returns.js';
 
 // Runs on the Cloudflare cron trigger (every 5 minutes) and from the admin "Run timers now" button.
 export async function runJobs(ctx) {
@@ -42,6 +43,15 @@ export async function runJobs(ctx) {
       if (await syncCourierStatus(ctx, o)) result.couriersChecked++;
     } catch (err) {
       console.error('courier status check failed', o.ref, err.message);
+    }
+  }
+
+  // Returns travelling with the courier (Fez): the seller giving their PIN marks them delivered.
+  for (const ret of await all(ctx.env, "SELECT * FROM returns WHERE kind = 'pickup' AND courier = ? AND delivery_ref IS NOT NULL AND status IN ('booked', 'picked_up', 'out_for_delivery', 'attempt_failed') LIMIT 30", ctx.logistics.name)) {
+    try {
+      if (await syncReturnStatus(ctx, ret)) result.couriersChecked++;
+    } catch (err) {
+      console.error('return status check failed', ret.id, err.message);
     }
   }
 
