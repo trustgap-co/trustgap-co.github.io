@@ -11,7 +11,8 @@ async function render() {
     ? [
         ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: o.amount, seller_payout: 0, seller_charge: o.delivery_fee * 2 }],
         ['Buyer refused a correct item: refund minus both delivery trips', { buyer_refund: Math.max(0, o.amount - o.delivery_fee * 2), seller_payout: 0, seller_charge: 0 }],
-        ['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: o.seller_payout, seller_charge: 0 }],
+        // Once the item is back with the seller (or on its way), the seller can't also be paid.
+        ...(ret ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: o.seller_payout, seller_charge: 0 }]]),
       ]
     : [];
 
@@ -65,7 +66,8 @@ async function render() {
           </div>
           <label>Decision note <small>sent to both parties; explain the evidence and the amounts</small><textarea name="note" required rows="3"></textarea></label>
           ${ret?.open
-            ? html`<p class="callout info small">The item is on its way back to the seller (${ret.label}). Any refund waits until the seller has it.</p>`
+            ? html`<p class="callout info small">The item is on its way back to the seller (${ret.label}). Any refund waits until the seller has it, and the seller can’t also be paid.</p>`
+            : ret ? html`<p class="callout info small">The item is back with the seller, so the seller can’t also be paid. Refund the buyer, with or without the delivery deductions.</p>`
             : o.delivered_at && !ret
               ? html`<p class="callout info small">Any refund here books a courier to collect the item from the buyer. The refund is sent only once the seller has it back (return PIN). Every item goes back, whatever it costs.</p>`
               : ''}

@@ -38,7 +38,7 @@ function presets(d) {
   return [
     ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: d.amount, seller_payout: 0, seller_charge: d.delivery_fee * 2 }],
     ['Buyer refused a correct item / changed mind: refund minus both delivery trips', { buyer_refund: Math.max(0, d.amount - d.delivery_fee * 2), seller_payout: 0, seller_charge: 0 }],
-    ['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: d.seller_payout, seller_charge: 0 }],
+    ...(d.item_with_seller ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: d.seller_payout, seller_charge: 0 }]]),
   ];
 }
 
@@ -48,7 +48,8 @@ const decideForm = (d) => html`<section class="card card-warn" id="decide">
     <li>Buyer paid <strong>${money(d.amount)}</strong>. Seller would normally get ${money(d.seller_payout)}. Delivery was ${money(d.delivery_fee)} each way.</li>
     <li>Seller’s condition pledge: ${d.condition_pledge ? html`“${d.condition_pledge}”` : 'not recorded.'}</li>
     <li>Buyer accepted the change-of-mind notice: ${d.buyer_ack_at ? date(d.buyer_ack_at) : 'not recorded'}.</li>
-    ${d.delivered ? html`<li>Any refund books a courier to collect the item; the money moves only when the seller has it back.</li>` : ''}
+    ${d.item_with_seller ? html`<li><strong>The item is back with the seller (or on its way)</strong>, so the seller can’t also be paid: refund the buyer, with or without the delivery deductions.</li>`
+      : d.delivered ? html`<li>Any refund books a courier to collect the item; the money moves only when the seller has it back. A refund and a payout to the seller can’t be combined.</li>` : ''}
   </ul>
   <p class="small">Check the evidence from both sides and the courier first. Presets only fill in the form; follow the manual (Deciding a dispute).</p>
   <form class="form" id="resolve">
