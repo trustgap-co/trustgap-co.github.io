@@ -53,7 +53,7 @@ async function render() {
     ${x.photos?.length ? html`<p class="small"><strong>Buyer’s photos (${x.photos.length})</strong>: tap to open full size</p>${gallery(x.photos, 'Evidence')}`
       : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}
     ${x.status === 'resolved' || x.status === 'awaiting_return'
-      ? html`<p><strong>Decision${x.status === 'awaiting_return' ? ' (money waits for the return)' : ''}:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}</p>`
+      ? html`<p><strong>Decision${x.decided_by?.startsWith('team:') ? ` by ${x.decided_by.slice(5)} (team)` : ''}${x.status === 'awaiting_return' ? ' (money waits for the return)' : ''}:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}</p>`
       : html`<form class="form" id="resolve" data-id="${x.id}">
           <p class="small">Collected ${money(o.amount)}. Whatever isn’t refunded or paid out is kept to cover delivery and fees.
             Check evidence from both sides and the rider before deciding. Presets only fill in the form.</p>
@@ -67,7 +67,7 @@ async function render() {
           ${ret?.open
             ? html`<p class="callout info small">The item is on its way back to the seller (${ret.label}). Any refund waits until the seller has it.</p>`
             : o.delivered_at && !ret
-              ? html`<label class="choice"><input type="checkbox" name="return_item" value="yes" checked> The item must go back to the seller first: book a courier to collect it from the buyer, and send the refund only once the seller confirms with their return PIN <small>(untick for cheap or unsafe items the buyer keeps)</small></label>`
+              ? html`<p class="callout info small">Any refund here books a courier to collect the item from the buyer. The refund is sent only once the seller has it back (return PIN). Every item goes back, whatever it costs.</p>`
               : ''}
           <button class="btn">Decide</button>
         </form>`}
@@ -110,7 +110,7 @@ async function render() {
       for (const k of ['buyer_refund', 'seller_payout', 'seller_charge']) form.elements[k].value = naira(v[k]);
     });
     onSubmit(form, async (data) => {
-      const waits = (data.return_item === 'yes' || ret?.open) && Number(data.buyer_refund) > 0;
+      const waits = (o.delivered_at || ret?.open) && Number(data.buyer_refund) > 0;
       if (!confirm(`Refund buyer ₦${data.buyer_refund}, pay seller ₦${data.seller_payout}, charge seller ₦${data.seller_charge}? ${waits ? 'Money moves once the seller has the item back.' : 'Money moves immediately.'}`)) return;
       const r = await api(`/api/admin/disputes/${form.dataset.id}/resolve`, { method: 'POST', body: data, as: 'admin' });
       flash.set(r.waiting_for_return ? 'Decision recorded. The refund is sent when the seller has the item back.' : 'Decision recorded and transfers sent.');

@@ -281,10 +281,10 @@ function webVitals() {
   });
 }
 
-/** Called once per page by shell(). `area` is public / buyer / seller / admin. */
+/** Called once per page by shell(). `area` is public / buyer / seller / admin / team. */
 export function initAnalytics(area) {
   const page = location.pathname.split('/').pop() || 'index.html';
-  if (area === 'admin' || page === 'rider.html') return; // staff and riders are not tracked
+  if (area === 'admin' || area === 'team' || page === 'rider.html') return; // staff and riders are not tracked
   publicPage = area === 'public';
   if (!GA_ID && !PIXEL_ID && !DEBUG) return;
   enabled = true;

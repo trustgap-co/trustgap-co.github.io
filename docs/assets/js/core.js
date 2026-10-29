@@ -69,7 +69,9 @@ export const auth = {
   setSeller: (t) => local.set('tg_seller', t),
   admin: () => session.get('tg_admin'),
   setAdmin: (t) => session.set('tg_admin', t),
-  clear: () => { local.del('tg_seller'); session.del('tg_admin'); },
+  team: () => session.get('tg_team'),
+  setTeam: (t) => session.set('tg_team', t),
+  clear: () => { local.del('tg_seller'); session.del('tg_admin'); session.del('tg_team'); },
 };
 
 // ---------------------------------------------------------------- API
@@ -80,7 +82,7 @@ export class ApiError extends Error {
 export async function api(path, { method = 'GET', body, as } = {}) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
-  const token = as === 'seller' ? auth.seller() : as === 'admin' ? auth.admin() : null;
+  const token = as === 'seller' ? auth.seller() : as === 'admin' ? auth.admin() : as === 'team' ? auth.team() : null;
   if (token) headers.Authorization = `Bearer ${token}`;
   let res;
   try {
@@ -92,6 +94,7 @@ export async function api(path, { method = 'GET', body, as } = {}) {
   if (res.status === 401 && as) {
     if (as === 'seller') { local.del('tg_seller'); location.href = link(`seller/login.html?next=${encodeURIComponent(location.href)}`); }
     if (as === 'admin') { session.del('tg_admin'); location.href = link('admin/index.html'); }
+    if (as === 'team') { session.del('tg_team'); location.href = link('team/index.html'); }
     throw new ApiError('Please log in.', 401);
   }
   if (!res.ok) throw new ApiError((data.error || 'Something went wrong.') + (data.detail ? ` Details: ${data.detail}` : ''), res.status);
@@ -334,7 +337,12 @@ export async function shell(area) {
     admin: auth.admin()
       ? html`<nav class="nav"><a href="${link('admin/orders.html')}">Orders</a><a href="${link('admin/disputes.html')}">Disputes</a>
         <a href="${link('admin/sellers.html')}">Sellers</a><a href="${link('admin/messages.html')}">Messages</a>
-        <a href="${link('admin/ledger.html')}">Ledger</a><button class="linklike" id="logout">Log out</button></nav>`
+        <a href="${link('admin/ledger.html')}">Ledger</a><a href="${link('admin/team.html')}">Team</a>
+        <a href="${link('team/manual.html')}">Manual</a><button class="linklike" id="logout">Log out</button></nav>`
+      : '',
+    team: auth.team()
+      ? html`<nav class="nav"><a href="${link('team/index.html')}">My tasks</a><a href="${link('team/manual.html')}">Manual</a>
+        <button class="linklike" id="logout">Log out</button></nav>`
       : '',
     buyer: html`<span class="protected">🔒 Protected deal</span>`,
     public: html`<button class="menu-btn" id="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span><span></span><span></span></button>
@@ -367,7 +375,7 @@ export async function shell(area) {
       <span data-site="registeredAddress"></span></p></div>
   </div><div class="container foot-bottom">© ${new Date().getFullYear()} TrustGap, a trading name of <span data-site="legalName"></span> · RC <span data-site="rcNumber"></span>.
     TrustGap is not a bank and does not guarantee items or sellers. See the <a href="${link('legal/terms.html')}">Terms</a>.
-    ${trackingConfigured && area !== 'admin' ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div></footer>`));
+    ${trackingConfigured && !['admin', 'team'].includes(area) ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div></footer>`));
   rememberSource();
   $('.static-links')?.remove(); // plain links for crawlers that don't run JavaScript; the menu replaces them
   document.body.classList.add('has-shell');
@@ -382,9 +390,10 @@ export async function shell(area) {
     menu.setAttribute('aria-expanded', String(open));
   });
   $('#logout')?.addEventListener('click', async () => {
-    await api('/api/auth/logout', { method: 'POST', body: {}, as: area === 'admin' ? 'admin' : 'seller' }).catch(() => {});
+    const as = ['admin', 'team'].includes(area) ? area : 'seller';
+    await api('/api/auth/logout', { method: 'POST', body: {}, as }).catch(() => {});
     auth.clear();
-    location.href = link(area === 'admin' ? 'admin/index.html' : 'index.html');
+    location.href = link(as === 'seller' ? 'index.html' : `${as}/index.html`);
   });
   const message = flash.take();
   // Placed before <main> because each page replaces main's content when it renders.

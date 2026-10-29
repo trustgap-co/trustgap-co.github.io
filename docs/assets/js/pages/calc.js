@@ -6,6 +6,7 @@ import { shell, html, show, money, track, naira, $ } from '../core.js';
 const config = await shell('public');
 const fee = config.fee || { percent: 1.5, minKobo: 10000, maxKobo: 300000 };
 const processing = config.processing || { percent: 2, payoutFeeKobo: 5779, capKobo: 200000 };
+const minMultiple = config.min_price_delivery_multiple ?? 2;
 
 const ceilNaira = (kobo) => Math.ceil(kobo / 100) * 100;
 const buyerPart = (payer, amount) => (payer === 'buyer' ? amount : payer === 'split' ? Math.ceil(amount / 200) * 100 : 0);
@@ -56,6 +57,8 @@ function render() {
     <div class="row2"><span>Payment processing <small class="muted">(${who(f.feePayer)})</small></span><span>${money(q.pr)}</span></div>
     <div class="row2 tot"><span>Buyer pays</span><span>${money(q.buyerTotal)}</span></div>
     <div class="row2 tot"><span>Seller receives</span><span>${money(q.sellerPayout)}</span></div>
+    ${minMultiple && q.itemPrice < minMultiple * q.deliveryFee
+      ? html`<p class="error" style="margin:10px 0 0">Too low for this delivery: the item price must be at least ${money(minMultiple * q.deliveryFee)} (${minMultiple === 2 ? 'twice' : `${minMultiple} times`} the delivery fee), so a return is always covered.</p>` : ''}
     <p class="small muted" style="margin-bottom:0">Estimate only. Payment processing is Flutterwave’s ${processing.percent}%${processing.capKobo ? ` (capped at ${money(processing.capKobo)})` : ''} plus a payout fee of up to
       ${money(processing.payoutFeeKobo)}, passed on at cost. The deal link shows the exact amounts before anyone pays.</p>`);
 }

@@ -3,6 +3,7 @@
 User-agent: *
 Allow: /
 Disallow: /admin/
+Disallow: /team/
 Disallow: /seller/
 Disallow: /pay.html
 Disallow: /track.html
@@ -22,6 +23,7 @@ User-agent: Applebot-Extended
 User-agent: Bingbot
 Allow: /
 Disallow: /admin/
+Disallow: /team/
 Disallow: /seller/
 Disallow: /pay.html
 Disallow: /track.html
