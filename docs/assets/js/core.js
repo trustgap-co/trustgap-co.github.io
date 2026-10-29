@@ -5,6 +5,15 @@ import { initAnalytics, openCookieSettings, trackingConfigured, track, trackThen
 
 export { track, trackThenGo, naira };
 
+// The web font loads without blocking the page (media="print" until now), with no inline script.
+for (const l of document.querySelectorAll('link[data-font]')) l.media = 'all';
+
+// Frame guard: TrustGap pages never run inside another site's frame (clickjacking).
+if (window.top !== window.self) {
+  document.documentElement.style.display = 'none';
+  try { window.top.location = window.self.location.href; } catch { /* the framing site blocked it: stay hidden */ }
+}
+
 // Tolerates a trailing slash in config.js ("…workers.dev/" would otherwise give "//api/…").
 const API_URL = CONFIGURED_API_URL.replace(/\/+$/, '');
 
@@ -79,7 +88,12 @@ export class ApiError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
 
-export async function api(path, { method = 'GET', body, as } = {}) {
+// The last data each page loaded, per address, so live updates can tell when something changed.
+// Signed photo addresses change on every request, so they're left out of the comparison.
+const seen = new Map();
+const comparable = (data) => JSON.stringify(data).replace(/\/api\/evidence\/[^"\\]+/g, '/api/evidence/*');
+
+export async function api(path, { method = 'GET', body, as, peek = false } = {}) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
   const token = as === 'seller' ? auth.seller() : as === 'admin' ? auth.admin() : as === 'team' ? auth.team() : null;
@@ -98,7 +112,65 @@ export async function api(path, { method = 'GET', body, as } = {}) {
     throw new ApiError('Please log in.', 401);
   }
   if (!res.ok) throw new ApiError((data.error || 'Something went wrong.') + (data.detail ? ` Details: ${data.detail}` : ''), res.status);
+  if (method === 'GET' && !peek) seen.set(path, comparable(data));
   return data;
+}
+
+// ---------------------------------------------------------------- live updates
+// Every 30 seconds while the page is on screen, checks `path` for changes and redraws with `render`.
+// If the person is in the middle of something (typing, a photo added, a choice made, a pop-up open),
+// it doesn't redraw under them: a bar offers the update instead. A line shows when it last checked.
+const clock = () => new Date().toLocaleTimeString('en-NG', { hour: 'numeric', minute: '2-digit' });
+
+function busyOnPage() {
+  if (document.querySelector('dialog[open], main details[open] form .photo-grid figure')) return true;
+  const a = document.activeElement;
+  if (a?.closest?.('main form') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+  for (const el of document.querySelectorAll('main input, main textarea, main select')) {
+    if (['hidden', 'file', 'button', 'submit'].includes(el.type)) continue;
+    if (el.type === 'checkbox' || el.type === 'radio') { if (el.checked !== el.defaultChecked) return true; }
+    else if (el.tagName === 'SELECT') { const first = [...el.options].find((o) => o.defaultSelected) || el.options[0]; if (first && !first.selected) return true; }
+    else if (el.value !== el.defaultValue) return true;
+  }
+  return Boolean(document.querySelector('main .photo-grid figure .photo-del'));
+}
+
+export function keepFresh(path, render, { as, every = 30_000 } = {}) {
+  let line = $('.live-line');
+  if (!line) {
+    line = Object.assign(document.createElement('p'), { className: 'live-line' });
+    line.innerHTML = '<span class="live-dot" aria-hidden="true"></span> Live · updated <time></time> · <button type="button" class="linklike">Refresh</button>';
+    $('main').before(line);
+  }
+  const stamp = () => { line.querySelector('time').textContent = clock(); };
+  const redraw = async () => {
+    $('.live-bar')?.remove();
+    await render();
+    stamp();
+  };
+  const offer = () => {
+    if ($('.live-bar')) return;
+    const bar = Object.assign(document.createElement('div'), { className: 'live-bar', role: 'status' });
+    bar.innerHTML = '<span>New update on this page.</span> <button type="button" class="btn btn-small btn-light">Show it</button>';
+    bar.querySelector('button').addEventListener('click', redraw);
+    document.body.appendChild(bar);
+  };
+  let checking = false;
+  const tick = async () => {
+    if (checking || document.hidden) return;
+    checking = true;
+    try {
+      const data = await api(path, { as, peek: true });
+      if (comparable(data) === seen.get(path)) stamp();
+      else if (busyOnPage()) offer();
+      else await redraw();
+    } catch { /* offline or a hiccup: try again next time */ } finally { checking = false; }
+  };
+  stamp();
+  line.querySelector('button').onclick = redraw;
+  clearInterval(keepFresh.timer);
+  keepFresh.timer = setInterval(tick, every);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
 }
 
 // Site settings from the API. Kept for 10 minutes in this tab so later pages don't wait for it.
@@ -211,6 +283,16 @@ export const evidencePhotos = (photos, label = 'Evidence') => (photos?.length ? 
     ? html`<span class="ok">✓ Taken with the TrustGap camera (stamp ${p.stamp_code}, ${date(p.captured_at)})</span>`
     : html`<span class="warn">⚠ ${p.warnings.join(' · ')}</span>`}</li>`)}</ul>` : '');
 
+// The accounts in an open case (first report, then each side's), for every page that shows a case.
+// Staff see photos with their checks; buyers and sellers see their own photos.
+const PARCEL_TEXT = { rider: 'the rider has the parcel', buyer: 'the parcel is with the buyer' };
+export const caseAccounts = (c, { staff = false, me = null } = {}) => (c?.statements?.length ? html`
+  ${staff && c.parcel_conflict ? html`<p class="callout warn small"><strong>The accounts differ on where the parcel is:</strong> ${c.parcel_conflict}. Check with the rider and buyer; book a return from the buyer if needed.</p>` : ''}
+  <ul class="accounts">${c.statements.map((s) => html`<li class="account account-${s.party}">
+    <p class="account-head"><strong>${s.party === me ? 'You' : s.party_label}</strong>${s.opening ? ' (first report)' : ''} <span class="muted small">${date(s.created_at)}${s.parcel_location ? ` · says ${PARCEL_TEXT[s.parcel_location]}` : ''}</span></p>
+    <p class="pre">${s.body}</p>
+    ${s.photos?.length ? (staff ? evidencePhotos(s.photos) : gallery(s.photos, 'Photo')) : ''}</li>`)}</ul>` : '');
+
 export const errorBox = (msg) => (msg ? html`<div class="error" role="alert">${msg}</div>` : '');
 export const flash = {
   set: (m) => session.set('tg_flash', m),
@@ -255,12 +337,12 @@ export const bankOptions = (banks, selected) =>
 
 // Which bank accounts work while testing: TrustGap's own simulator, or Flutterwave's test mode.
 export const testAccountsHint = (config) =>
-  config.test_mode && config.payment_provider === 'mock'
+  config.test_accounts === 'simulator'
     ? html`<details class="hint"><summary>Test mode: use a test account number</summary><ul>
         <li>0000000001: Adebayo Oluwaseun John</li><li>0000000002: Chioma Ngozi Okafor</li>
         <li>0000000003: Musa Ibrahim Bello</li><li>0000000004: Funmilayo Grace Adeyemi</li>
         <li>0000000005: Emeka Peter Nwosu</li></ul><p>Pick any bank. The name must match.</p></details>`
-    : config.payment_provider === 'flutterwave' && config.payment_test
+    : config.test_accounts === 'flutterwave'
       ? html`<details class="hint"><summary>Flutterwave test mode: use a Flutterwave test account</summary>
           <p>Real account numbers don’t work with test keys. Choose <strong>Access Bank</strong> and account
           <strong>0690000032</strong> (or 0690000031 to 0690000040). The name must match the account’s name:

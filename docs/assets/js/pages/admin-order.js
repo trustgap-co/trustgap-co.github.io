@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos, caseAccounts , keepFresh } from '../core.js';
 
 await shell('admin');
 const id = encodeURIComponent(params.get('id'));
@@ -51,8 +51,10 @@ async function render() {
   ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''} ${x.status === 'superseded' ? 'card-muted' : ''}">
     <h2>Dispute #${x.id}: ${x.category_label} (${x.status})</h2>
     <p class="small muted">Opened by ${x.opened_by} · ${date(x.created_at)}${x.parcel_location ? ` · parcel: ${x.parcel_location === 'rider' ? 'rider took it back' : 'left with the buyer'}` : ''}</p>
-    <p class="pre">${x.description}</p>
-    ${x.photos?.length ? evidencePhotos(x.photos) : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}
+    ${x.case?.statements?.length > 1 ? '' : html`<p class="pre">${x.description}</p>`}
+    ${x.case?.statements?.length > 1 ? html`<h3>Accounts</h3>${caseAccounts(x.case, { staff: true })}`
+      : html`${x.photos?.length ? evidencePhotos(x.photos) : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}`}
+    ${x.case && x.status === 'open' && x.case.parties_heard.length < 3 ? html`<p class="small muted">Not heard from yet: ${['buyer', 'seller', 'rider'].filter((p) => !x.case.parties_heard.includes(p) && !(p === 'rider' && x.case.parties_heard.includes('courier'))).join(', ') || 'nobody'}.</p>` : ''}
     ${x.status === 'superseded'
       ? html`<p class="small muted">Set aside: the seller reported the returned item isn’t what was delivered (see the newer dispute below).${x.resolution_note ? html` Earlier decision: ${x.resolution_note} (refund ${money(x.buyer_refund)}).` : ''}</p>`
       : x.status === 'resolved' || x.status === 'awaiting_return'
@@ -158,4 +160,4 @@ async function render() {
     });
   }
 }
-render().catch(fail);
+render().then(() => keepFresh(`/api/admin/orders/${id}`, render, { as: 'admin' })).catch(fail);

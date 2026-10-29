@@ -1,12 +1,23 @@
-import { api, html, show, shell, money, date, orderBadge, link, params, flash, fail, $ } from '../core.js';
+import { api, html, show, shell, money, date, orderBadge, link, params, flash, fail, keepFresh, $ } from '../core.js';
 
 await shell('admin');
 const FILTERS = ['', 'awaiting_payment', 'paid', 'shipping', 'delivered', 'disputed', 'completed', 'refunded', 'cancelled'];
 
+// Health and risky settings, so a misconfiguration is seen as soon as the admin logs in.
+const settingsBox = (h) => (!h ? '' : !h.ok || h.warnings?.length ? html`<section class="card ${h.ok && !h.warnings.some((w) => w.level === 'danger') ? '' : 'card-warn'}">
+  <h2>Settings check</h2>
+  ${h.ok ? '' : html`<p class="error">${h.database !== 'connected' ? h.database : h.settings}</p>`}
+  <ul class="photo-checks">${(h.warnings || []).map((w) => html`<li class="${w.level === 'danger' ? 'warn' : ''}">${w.level === 'danger' ? '⚠ ' : '• '}${w.text}</li>`)}</ul>
+  <p class="small muted">Change these under Cloudflare → your Worker → Settings → Variables and Secrets. SETUP.md explains each one.</p>
+</section>` : '');
+
 async function render() {
   const status = params.get('status') || '';
-  const { orders, counts } = await api(`/api/admin/orders?status=${encodeURIComponent(status)}`, { as: 'admin' });
-  show('#app', html`<div class="spread"><h1>Orders</h1>
+  const [{ orders, counts }, health] = await Promise.all([
+    api(`/api/admin/orders?status=${encodeURIComponent(status)}`, { as: 'admin' }),
+    api('/api/admin/health', { as: 'admin', peek: true }).catch(() => null),
+  ]);
+  show('#app', html`${settingsBox(health)}<div class="spread"><h1>Orders</h1>
       <div class="actions"><button class="btn btn-small btn-secondary" id="jobs">Run timers now</button>
       <button class="btn btn-small btn-secondary" id="sync">Copy to Google Sheets now</button>
       <button class="btn btn-small btn-secondary" id="fezhook">Register Fez webhook</button></div></div>
@@ -38,4 +49,4 @@ async function render() {
     location.reload();
   });
 }
-render().catch(fail);
+render().then(() => keepFresh(`/api/admin/orders?status=${encodeURIComponent(params.get('status') || '')}`, render, { as: 'admin' })).catch(fail);

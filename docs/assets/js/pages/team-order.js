@@ -1,5 +1,5 @@
 // Team: one order, read only (only orders one of your tasks is about). No bank details, no PINs.
-import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, evidencePhotos, fail, $ } from '../core.js';
+import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, evidencePhotos, caseAccounts, fail, keepFresh, $ } from '../core.js';
 
 const naira = (kobo) => String(kobo / 100);
 
@@ -22,7 +22,7 @@ async function render() {
       <span class="small">Ship by ${date(o.ship_by)}${o.delivered_at ? ` · delivered ${date(o.delivered_at)}` : ''}${o.inspection_ends_at ? ` · inspection ends ${date(o.inspection_ends_at)}` : ''}</span></p>
     ${o.packing_note ? html`<p class="small"><strong>Packing note:</strong> ${o.packing_note}</p>` : ''}
     ${disputes.map((x) => html`<div class="callout ${x.status === 'open' ? 'warn' : 'info'}"><strong>Dispute: ${x.category_label}</strong> (${x.status.replace('_', ' ')}) · opened by ${x.opened_by} · ${date(x.created_at)}<br>${x.description}
-      ${evidencePhotos(x.photos)}
+      ${x.case?.statements?.length > 1 ? caseAccounts(x.case, { staff: true }) : evidencePhotos(x.photos)}
       ${x.resolution_note ? html`<br><strong>Decision${x.decided_by ? ` (${x.decided_by.replace('team:', '')})` : ''}:</strong> ${x.resolution_note} (refund ${money(x.buyer_refund || 0)} · seller ${money(x.seller_payout || 0)} · seller charge ${money(x.seller_charge || 0)})` : ''}</div>`)}
     ${decide ? decideForm(decide) : ''}
     ${ret ? html`<div class="callout info"><strong>Return (${ret.kind === 'door' ? 'refused at the door' : 'collected from the buyer'}):</strong> ${ret.label}
@@ -81,4 +81,4 @@ function wireDecision(d) {
     location.href = link('team/index.html');
   });
 }
-render().catch(fail);
+render().then(() => keepFresh(`/api/team/orders/${encodeURIComponent(params.get('id'))}`, render, { as: 'team' })).catch(fail);

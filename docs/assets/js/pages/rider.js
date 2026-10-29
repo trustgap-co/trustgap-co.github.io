@@ -1,9 +1,20 @@
 // Private rider page (signed link, expires after 14 days): parcel updates and the buyer's PIN, or for a
 // return, collection from the buyer and the seller's return PIN at hand-back.
-import { api, html, show, onSubmit, shell, params, flash, fail, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, params, flash, fail, keepFresh, $ } from '../core.js';
 
 await shell('buyer');
 const path = `/api/rider/${encodeURIComponent(params.get('t') || '')}`;
+
+// The rider's account of a reported problem (one case: the buyer may have reported it first).
+const accountForm = (o, intro) => html`${intro ? html`<div class="callout info"><strong>A problem has been reported on this delivery.</strong> Add what you saw, so TrustGap has your account too.</div>` : ''}
+  ${o.case.mine.length ? html`<ul class="small">${o.case.mine.map((m) => html`<li>Your account: ${m.body}</li>`)}</ul>` : ''}
+  <form class="form" id="account">
+    <fieldset><legend>Where is the parcel now?</legend>
+      <div class="choices"><label class="choice"><input type="radio" name="parcel" value="rider"> I have it</label>
+      <label class="choice"><input type="radio" name="parcel" value="buyer"> I left it with the buyer</label></div></fieldset>
+    <label>What happened <textarea name="body" required rows="3" maxlength="2000"></textarea></label>
+    <button class="btn">Add my account</button>
+  </form>`;
 
 async function render() {
   const { order: o } = await api(path);
@@ -32,7 +43,10 @@ async function render() {
           <p class="small">Let the seller check the item. They give you their return PIN only if it’s their item.</p>
           <label>Seller’s 4-digit return PIN <input name="pin" class="codeinput" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
           <button class="btn btn-block">Confirm hand-back to seller</button>
-        </form>`
+        </form>
+        ${o.mode === 'delivery' && o.case?.open ? html`<details class="rules"><summary>Add what you saw at the door</summary>${accountForm(o, false)}</details>` : ''}`
+      : o.case?.open
+        ? accountForm(o, true)
       : o.mode === 'return'
         ? html`<p class="muted">${o.return?.status === 'received' ? 'Handed back. Nothing more to do.' : 'Nothing to do for this return.'}</p>`
       : o.status === 'shipping'
@@ -55,6 +69,13 @@ async function render() {
       location.reload();
     });
   }
+  if ($('#account')) {
+    onSubmit($('#account'), async (data) => {
+      await api(path + '/statement', { method: 'POST', body: data });
+      flash.set('Your account was added. Thank you.');
+      location.reload();
+    });
+  }
   if ($('#return-pin')) {
     onSubmit($('#return-pin'), async (data) => {
       await api(path + '/return-pin', { method: 'POST', body: data });
@@ -70,4 +91,4 @@ async function render() {
     });
   }
 }
-render().catch(fail);
+render().then(() => keepFresh(path, render)).catch(fail);

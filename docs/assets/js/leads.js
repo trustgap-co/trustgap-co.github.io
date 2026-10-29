@@ -1,14 +1,16 @@
-// Survey and early-access answers go straight from the browser to a Make.com webhook, which adds a
-// row to a Google Sheet. Nothing goes through the TrustGap Worker.
-//
-// The data is sent as an ordinary form post (no special headers), which Make accepts from any website.
-// The reply can't be read from another site, so "sent" means the request reached Make. Each response
-// carries a submission_id, so a rare duplicate can be spotted in the sheet.
+// Survey and early-access answers go to the TrustGap Worker (POST /api/leads), which checks them and
+// forwards them to the Make.com webhook that adds a row to the Google Sheet. The Make address is a
+// Worker secret (LEADS_WEBHOOK_URL), never in the website. Each response carries a submission_id, so
+// a resend after a poor connection isn't saved twice.
 // If the phone is offline, the response waits on this device and is sent when the connection is back.
 import { SITE } from './site-info.js';
+import { API_URL } from './config.js';
 
 const OUTBOX = 'tg_leads_outbox';
-export const webhookReady = /^https:\/\/hook\.[a-z0-9.-]+\.make\.com\//i.test(SITE.leadsWebhookUrl || '');
+export const webhookReady = true; // the Worker says if the sheet isn't connected yet
+
+// The Worker refused the response (e.g. too many from this connection): shown, not queued.
+class Refused extends Error {}
 
 export const STATES = ['Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta',
   'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT (Abuja)', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara',
@@ -50,7 +52,15 @@ export const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.no
 const flatten = (data) => Object.fromEntries(Object.entries(data).map(([k, v]) => [k, Array.isArray(v) ? v.join(' | ') : v ?? '']));
 
 async function post(payload) {
-  await fetch(SITE.leadsWebhookUrl, { method: 'POST', mode: 'no-cors', body: new URLSearchParams(payload), keepalive: true });
+  const res = await fetch(`${API_URL}/api/leads`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), keepalive: true,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    // A temporary problem saving it: keep it and try again later. Anything else: tell the person.
+    if (res.status >= 500 && res.status !== 503) throw new Error('retry');
+    throw new Refused(data.error || 'Sorry, your answers couldn’t be saved. Please try again later.');
+  }
 }
 
 /** Sends one response. Resolves 'sent', or 'queued' if the phone is offline (sent later). */
@@ -63,14 +73,11 @@ export async function sendLead(data) {
     page: location.pathname.split('/').pop(),
     device: matchMedia('(max-width: 760px)').matches ? 'mobile' : 'desktop',
   });
-  if (!webhookReady) {
-    console.warn('[leads] Make webhook URL not set in site-info.js; nothing was saved:', payload);
-    throw new Error('Sorry, this form is not connected yet, so your answers could not be saved. Please try again later.');
-  }
   try {
     await post(payload);
     return 'sent';
-  } catch {
+  } catch (err) {
+    if (err instanceof Refused) throw err;
     const box = store.get(OUTBOX) || [];
     box.push(payload);
     store.set(OUTBOX, box.slice(-10));
@@ -84,7 +91,7 @@ export async function flushOutbox() {
   if (!box.length || !webhookReady || !navigator.onLine) return;
   const left = [];
   for (const p of box) {
-    try { await post(p); } catch { left.push(p); }
+    try { await post(p); } catch (err) { if (!(err instanceof Refused)) left.push(p); }
   }
   if (left.length) store.set(OUTBOX, left);
   else store.del(OUTBOX);

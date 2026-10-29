@@ -1,5 +1,5 @@
 import { SITE } from '../site-info.js';
-import { api, html, show, link, shell, money, date, orderBadge, dealBadge, fail, params, track, trackThenGo, $ } from '../core.js';
+import { api, html, show, link, shell, money, date, orderBadge, dealBadge, fail, params, track, trackThenGo, keepFresh, $ } from '../core.js';
 
 await shell('seller');
 try {
@@ -50,6 +50,7 @@ try {
     }
   });
   if (params.get('debt')) track('debt_payment_result', { result: params.get('debt') });
+  keepFresh('/api/seller/dashboard', () => location.reload(), { as: 'seller' });
 } catch (err) {
   fail(err);
 }

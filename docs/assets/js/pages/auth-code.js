@@ -4,7 +4,9 @@ import { api, auth, html, show, onSubmit, link, params, trackThenGo, $ } from '.
 export function codeStep(phone, sent, { next, flow }) {
   show('#app', html`<section class="card narrow">
     <h1>Enter your code</h1>
-    <p class="muted">We sent a 6-digit code by SMS to <strong>${phone}</strong>. It expires in 10 minutes.</p>
+    <p class="muted">${flow === 'login'
+      ? html`If <strong>${phone}</strong> has a seller account, we’ve sent it a 6-digit code by SMS. It expires in 10 minutes. No code? Check the number, or <a href="${link('seller/signup.html')}">create an account</a>.`
+      : html`We sent a 6-digit code by SMS to <strong>${phone}</strong>. It expires in 10 minutes.`}</p>
     ${sent.dev_code ? html`<p class="devcode">Test mode: no SMS is sent. Your code is <strong>${sent.dev_code}</strong></p>` : ''}
     <form class="form" id="code">
       <label>Code <input name="code" class="codeinput" required inputmode="numeric" autocomplete="one-time-code" pattern="\\d{6}" maxlength="6"></label>

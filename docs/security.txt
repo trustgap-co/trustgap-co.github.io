@@ -1,0 +1,9 @@
+# TrustGap security contact (RFC 9116). Found a security problem? Please tell us privately first.
+# Replace [SECURITY EMAIL] with a mailbox you check before launch, and update Expires every year.
+Contact: mailto:[SECURITY EMAIL]
+Expires: 2027-10-31T23:00:00.000Z
+Preferred-Languages: en
+Canonical: https://trustgap-co.github.io/.well-known/security.txt
+Policy: https://trustgap-co.github.io/legal/terms.html
+# Please don't access other people's data, run denial-of-service tests, or make real payments while
+# testing. Give us a reasonable time to fix a problem before you publish it. Thank you.

@@ -1,13 +1,13 @@
 // The buyer's private tracking page: status, delivery PIN, confirm or report a problem.
 import { photoPicker } from '../photos.js';
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, $ } from '../core.js';
 
 await shell('buyer');
 const token = params.get('t') || '';
 const path = `/api/track/${encodeURIComponent(token)}`;
 
 async function render() {
-  const [{ order: o, dispute, return: ret, events }, config] = await Promise.all([api(path), getConfig()]);
+  const [{ order: o, dispute, return: ret, case: kase, events }, config] = await Promise.all([api(path), getConfig()]);
   measure(o, dispute);
   show('#app', html`<section class="card">
     <div class="spread"><h1>Order ${o.ref}</h1>${orderBadge(o.status)}</div>
@@ -52,6 +52,23 @@ async function render() {
             : html`<br>The rider is taking the item back to the seller.`}
           <br><span class="small">Your refund is sent once the seller confirms they have it back.</span></div>`
       : ret?.status === 'received' ? html`<div class="callout ok">The seller has the item back${ret.received_at ? ` (${date(ret.received_at)})` : ''}.</div>` : ''}
+    ${kase ? html`<section class="case-box"><h2>What’s been said</h2>
+      <p class="small muted">One case for this problem. Each side adds their account; TrustGap reads them all before deciding.</p>
+      ${caseAccounts(kase, { me: 'buyer' })}
+      <details class="rules"><summary>${kase.parties_heard.includes('buyer') ? 'Add more to your side' : 'Add your side'}</summary>
+        <form class="form" id="side">
+          ${o.dispatched && !o.delivered_at && !ret ? html`<fieldset><legend>Where is the parcel now?</legend>
+            <div class="choices"><label class="choice"><input type="radio" name="parcel" value="rider"> The rider took it back</label>
+            <label class="choice"><input type="radio" name="parcel" value="buyer"> I still have it</label></div></fieldset>` : ''}
+          <label>What happened <small>in your own words</small><textarea name="body" required rows="3" maxlength="2000"></textarea></label>
+          <div class="photo-grid" id="sd-grid"></div>
+          <button type="button" class="btn btn-secondary photo-add" id="sd-camera">📷 Add photos with the TrustGap camera</button>
+          <details class="cam-fallback" id="sd-fallback"><summary>Can’t use the camera?</summary>
+            <label class="btn btn-secondary btn-small photo-add" id="sd-add">Choose a photo
+              <input type="file" accept="image/*" capture="environment" id="sd-input" class="visually-hidden"></label></details>
+          <p class="muted small" id="sd-note" aria-live="polite"></p>
+          <button class="btn">Add to the case</button>
+        </form></details></section>` : ''}
     ${o.status === 'duplicate_refunded' ? html`<div class="callout info">This deal was already paid, so this payment was refunded in full to ${o.refund_account}.</div>` : ''}
     ${o.can_report
       ? html`<details class="rules"><summary>Report a problem</summary>
@@ -97,6 +114,16 @@ async function render() {
       await api(path + '/accept', { method: 'POST', body: {} });
       flash.set('Thank you. The seller has been paid.');
       trackThenGo('delivery_accepted', { transaction_id: o.ref }, location.href);
+    });
+  }
+  if ($('#side')) {
+    const side = photoPicker({ grid: $('#sd-grid'), input: $('#sd-input'), add: $('#sd-add'), note: $('#sd-note'), max: config.max_dispute_photos || 2,
+      hint: 'Photos are optional here, but help.', cameraButton: $('#sd-camera'), fallback: $('#sd-fallback'),
+      getStamp: async () => (await api(path + '/photo-stamp')).stamp });
+    onSubmit($('#side'), async (data) => {
+      await api(path + '/statement', { method: 'POST', body: { ...data, photos: side.list() } });
+      flash.set('Added to the case. TrustGap will read it with the others.');
+      location.reload();
     });
   }
   if ($('#dispute')) {
@@ -148,5 +175,5 @@ if (!token) {
   show('#app', html`<section class="card narrow"><h1>Open your tracking link</h1>
     <p>This page needs the tracking link from your SMS or WhatsApp message. Please open that link again.</p></section>`);
 } else {
-  render().catch(fail);
+  render().then(() => keepFresh(path, render)).catch(fail);
 }

@@ -1,5 +1,5 @@
 // Admin: team members (accounts, password resets) and the tasks assigned to them.
-import { api, html, show, onSubmit, shell, link, date, flash, fail, params, $, $$ } from '../core.js';
+import { api, html, show, onSubmit, shell, link, date, flash, fail, params, $, $$, keepFresh } from '../core.js';
 
 await shell('admin');
 
@@ -114,4 +114,4 @@ async function render() {
     });
   }
 }
-render().catch(fail);
+render().then(() => keepFresh('/api/admin/team', render, { as: 'admin' })).catch(fail);

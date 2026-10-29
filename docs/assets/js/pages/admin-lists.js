@@ -1,5 +1,5 @@
 // Admin list pages: disputes, sellers, messages, ledger. Which one is chosen by <main data-list>.
-import { api, html, show, shell, money, date, link, flash, fail, $, $$ } from '../core.js';
+import { api, html, show, shell, money, date, link, flash, fail, $, $$, keepFresh } from '../core.js';
 
 await shell('admin');
 const list = $('main').dataset.list;
@@ -44,9 +44,13 @@ const pages = {
   },
 };
 
+const LIST_PATHS = { disputes: '/api/admin/disputes', sellers: '/api/admin/sellers', messages: '/api/admin/outbox', ledger: '/api/admin/ledger' };
+
 pages[list]()
   .then((content) => {
     show('#app', content);
+    // Lists have no forms to protect, so a change simply reloads the page.
+    if (LIST_PATHS[list]) keepFresh(LIST_PATHS[list], () => location.reload(), { as: 'admin' });
     for (const b of $$('[data-seller]')) {
       b.addEventListener('click', async () => {
         await api(`/api/admin/sellers/${b.dataset.seller}`, { method: 'POST', body: { action: b.dataset.action }, as: 'admin' });

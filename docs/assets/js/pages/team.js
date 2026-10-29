@@ -1,5 +1,5 @@
 // Team portal: sign in, set your own password, and work through the tasks the admin assigned you.
-import { api, auth, html, show, onSubmit, shell, link, date, flash, fail, $, $$ } from '../core.js';
+import { api, auth, html, show, onSubmit, shell, link, date, flash, fail, $, $$, keepFresh } from '../core.js';
 
 await shell('team');
 
@@ -84,6 +84,7 @@ async function render() {
   if (!auth.team()) return loginView();
   const { staff: me } = await api('/api/team/me', { as: 'team' });
   if (me.must_change_password) return passwordView(me);
-  return tasksView();
+  await tasksView();
+  keepFresh('/api/team/tasks', tasksView, { as: 'team' });
 }
 render().catch(fail);

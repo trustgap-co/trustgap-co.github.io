@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, trackThenGo, gallery, confirmModal, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, trackThenGo, gallery, confirmModal, caseAccounts, keepFresh, $ } from '../core.js';
 import { photoPicker } from '../photos.js';
 
 const orderPath = `/api/seller/orders/${encodeURIComponent(params.get('id'))}`;
@@ -6,7 +6,7 @@ const orderPath = `/api/seller/orders/${encodeURIComponent(params.get('id'))}`;
 await shell('seller');
 
 async function render() {
-  const { order: o, dispute, return: ret, events } = await api(`/api/seller/orders/${encodeURIComponent(params.get('id'))}`, { as: 'seller' });
+  const { order: o, dispute, return: ret, case: kase, events } = await api(`/api/seller/orders/${encodeURIComponent(params.get('id'))}`, { as: 'seller' });
   show('#app', html`<section class="card">
     <div class="spread"><h1>Order ${o.ref}</h1>${orderBadge(o.status)}</div>
     <p><strong>${o.item_title}</strong> · ${money(o.seller_payout)} to you after delivery</p>
@@ -26,7 +26,7 @@ async function render() {
       ? html`<div class="callout ${dispute.status === 'open' ? 'warn' : 'info'}">
           <strong>${dispute.status === 'open' ? 'Under review' : dispute.status === 'awaiting_return' ? 'Decided, waiting for the return' : 'Decided'}:</strong> ${dispute.description}
           ${dispute.resolution_note ? html`<br><strong>Decision:</strong> ${dispute.resolution_note} (paid to you: ${money(dispute.seller_payout || 0)})` : ''}
-          ${dispute.status === 'open' ? html`<br><small>Send photos, your packing video or chat screenshots to TrustGap support, quoting ${o.ref}.</small>` : ''}
+          ${dispute.status === 'open' && !kase ? html`<br><small>Send photos, your packing video or chat screenshots to TrustGap support, quoting ${o.ref}.</small>` : ''}
         </div>`
       : ''}
     ${ret?.open
@@ -55,8 +55,33 @@ async function render() {
       : ret?.problem ? html`<div class="callout warn"><strong>You reported the returned item isn’t right.</strong> TrustGap is reviewing; the buyer’s refund is on hold.
           ${ret.pin ? html`<br>If a courier rider is still waiting, give them your return PIN so they can close the job: <strong class="pin-inline">${ret.pin}</strong>` : ''}</div>`
       : ret?.status === 'received' ? html`<p class="ok-text">Item back with you${ret.received_at ? ` (${date(ret.received_at)})` : ''}.</p>` : ''}
+    ${kase ? html`<section class="case-box"><h2>What’s been said</h2>
+      <p class="small muted">One case for this problem. Add your side with photos (your packing photos or video help most). TrustGap reads every account before deciding.</p>
+      ${caseAccounts(kase, { me: 'seller' })}
+      <details class="rules" ${kase.parties_heard.includes('seller') ? '' : 'open'}><summary>${kase.parties_heard.includes('seller') ? 'Add more to your side' : 'Add your side'}</summary>
+        <form class="form" id="side">
+          <label>What happened <small>what you sent, how it was packed, anything the buyer or rider said</small><textarea name="body" required rows="3" maxlength="2000"></textarea></label>
+          <div class="photo-grid" id="sd-grid"></div>
+          <button type="button" class="btn btn-secondary photo-add" id="sd-camera">📷 Add photos with the TrustGap camera</button>
+          <details class="cam-fallback" id="sd-fallback"><summary>Have photos from when you packed it?</summary>
+            <p class="small muted">Choose them from your phone. They’re marked as not taken with the TrustGap camera, which is fine for packing photos taken earlier.</p>
+            <label class="btn btn-secondary btn-small photo-add" id="sd-add">Choose a photo
+              <input type="file" accept="image/*" id="sd-input" class="visually-hidden"></label></details>
+          <p class="muted small" id="sd-note" aria-live="polite"></p>
+          <button class="btn">Add to the case</button>
+        </form></details></section>` : ''}
     <h2>Timeline</h2>${timeline(events)}
   </section>`);
+  if ($('#side')) {
+    const side = photoPicker({ grid: $('#sd-grid'), input: $('#sd-input'), add: $('#sd-add'), note: $('#sd-note'), max: 2,
+      hint: 'Up to 2 photos.', cameraButton: $('#sd-camera'), fallback: $('#sd-fallback'),
+      getStamp: async () => (await api(orderPath + '/photo-stamp', { as: 'seller' })).stamp });
+    onSubmit($('#side'), async (data) => {
+      await api(orderPath + '/statement', { method: 'POST', body: { ...data, photos: side.list() }, as: 'seller' });
+      flash.set('Added to the case.');
+      location.reload();
+    });
+  }
   if ($('#return-problem')) {
     const picker = photoPicker({ grid: $('#rp-grid'), input: $('#rp-input'), add: $('#rp-add'), note: $('#rp-note'), max: 3,
       hint: 'Add 1 to 3 photos of what came back.', cameraButton: $('#rp-camera'), fallback: $('#rp-fallback'),
@@ -90,4 +115,4 @@ async function render() {
     });
   }
 }
-render().catch(fail);
+render().then(() => keepFresh(orderPath, render, { as: 'seller' })).catch(fail);
