@@ -576,3 +576,9 @@ body.is-live .when-prelaunch { display: none !important; }
 /* The seller's return PIN on their order page. */
 .return-box .return-pin-label { margin: 12px 0 2px; font-weight: 600; }
 .return-box .pin { margin: 0 0 8px; }
+
+/* How it works: the two return paths, side by side. */
+.returns-grid { align-items: stretch; }
+.returns-grid .steps-long { margin-top: 16px; }
+.returns-grid .steps-long h4 { margin: 0 0 2px; font-size: 1rem; }
+.returns-grid .steps-long li:last-child { padding-bottom: 0; }

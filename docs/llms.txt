@@ -14,7 +14,7 @@ Key facts:
 - Wrong, damaged, fake or not-as-described items: the buyer reports it with photos; TrustGap reviews the evidence; upheld claims get a full refund and the seller pays delivery and return.
 - Changing your mind after paying, or refusing a correct item: the delivery and return cost (twice the delivery fee) comes out of the buyer's refund.
 - Payments are processed by Flutterwave; deliveries by Fez Delivery or the courier shown on the deal. TrustGap is not a bank and does not guarantee items or sellers; it runs a published process.
-- Operator: TrustGap is a trading name of Tubalcain Ads Enterprise (Nigeria). Team: Alajayibo Mystery (CEO and CTO), Bethanie Olivia Mbanefo (COO), Kristofer Kingz (Lead Engineer), Judith Ogochukwu Machie (CMO).
+- Operator: TrustGap is a trading name of Tubalcain Ads Enterprise (Nigeria). Team: Alajayibo Mystery (CEO and CTO), Bethanie-Olivia Mbanefo (COO), Kristofer Kingz (Lead Engineer), Judith Ogochukwu Machie (CMO).
 
 ## Main pages
 - [How TrustGap works](https://trustgap-co.github.io/how.html): every step, what "payment secured" means, order statuses, the inspection window, and what happens when things go wrong
