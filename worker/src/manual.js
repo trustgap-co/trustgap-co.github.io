@@ -171,7 +171,7 @@ export const MANUAL = {
 <tr><td>The item matches the description and the buyer refused it or changed their mind</td><td><em>Buyer refused a correct item</em>: refund minus both delivery trips (the buyer accepted this before paying).</td></tr>
 <tr><td>No real problem shown (e.g. normal wear, a size the buyer chose, no evidence)</td><td><em>Claim not supported</em>: the seller is paid as normal.</td></tr>
 </table>
-<p>The presets only fill in the amounts; you can adjust them for a partial problem (e.g. one of two items wrong). The system refuses amounts that add up to more than the buyer paid.</p>
+<p>The presets only fill in the amounts; you can adjust the deductions or the seller charge. The system refuses amounts that add up to more than the buyer paid. <strong>When the item goes back to the seller</strong> (refused at the door, or any refund after delivery), the seller can’t also be paid: they get the item back instead. So on a door refusal there is no “pay the seller” option: if the item was correct, use <em>Buyer refused a correct item</em>.</p>
 <h3>The decision note</h3>
 <p>Both sides get it by SMS, so write it plainly: what the evidence showed and why these amounts. Example: “The buyer’s photos show a torn sole on the left shoe, and the seller’s packing note doesn’t mention damage. Full refund; the seller pays both delivery trips.” Never write anything rude, personal or a guess.</p>
 <h3>After you decide</h3>

@@ -2281,6 +2281,9 @@ async function resolveDispute(ctx, disputeId, input, { by = "admin" } = {}) {
   const note = requireLength(input.note, "Decision note", 10, 2e3);
   const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
   let ret = await activeReturn(ctx, order.id);
+  if (sellerPayout > 0 && (ret || buyerRefund > 0 && order.delivered_at)) {
+    throw new UserError(ret ? "The item is back with the seller (or on its way), so the seller can\u2019t also be paid. Refund the buyer, with or without the delivery deductions." : "A refund means the item goes back to the seller, so the seller can\u2019t also be paid. Choose a refund or a payout, not both.");
+  }
   if (buyerRefund > 0 && order.delivered_at && !ret) ret = await bookPickupReturn(ctx, order);
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(
@@ -3729,6 +3732,7 @@ async function teamOrderView(ctx, staff, orderId) {
       seller_payout: o.seller_payout,
       delivery_fee: o.delivery_fee,
       delivered: Boolean(o.delivered_at),
+      item_with_seller: Boolean(await activeReturn(ctx, o.id)),
       condition_pledge: d.condition_pledge,
       buyer_ack_at: o.buyer_ack_at
     },
@@ -3927,7 +3931,7 @@ var MANUAL = {
 <tr><td>The item matches the description and the buyer refused it or changed their mind</td><td><em>Buyer refused a correct item</em>: refund minus both delivery trips (the buyer accepted this before paying).</td></tr>
 <tr><td>No real problem shown (e.g. normal wear, a size the buyer chose, no evidence)</td><td><em>Claim not supported</em>: the seller is paid as normal.</td></tr>
 </table>
-<p>The presets only fill in the amounts; you can adjust them for a partial problem (e.g. one of two items wrong). The system refuses amounts that add up to more than the buyer paid.</p>
+<p>The presets only fill in the amounts; you can adjust the deductions or the seller charge. The system refuses amounts that add up to more than the buyer paid. <strong>When the item goes back to the seller</strong> (refused at the door, or any refund after delivery), the seller can\u2019t also be paid: they get the item back instead. So on a door refusal there is no \u201Cpay the seller\u201D option: if the item was correct, use <em>Buyer refused a correct item</em>.</p>
 <h3>The decision note</h3>
 <p>Both sides get it by SMS, so write it plainly: what the evidence showed and why these amounts. Example: \u201CThe buyer\u2019s photos show a torn sole on the left shoe, and the seller\u2019s packing note doesn\u2019t mention damage. Full refund; the seller pays both delivery trips.\u201D Never write anything rude, personal or a guess.</p>
 <h3>After you decide</h3>

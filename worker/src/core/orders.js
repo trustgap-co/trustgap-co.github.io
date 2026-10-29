@@ -500,6 +500,13 @@ export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {
   const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
 
   let ret = await activeReturn(ctx, order.id);
+  // When the item goes back to the seller (refused at the door, or any refund after delivery), the
+  // sale didn't happen: the seller gets the item, never money as well.
+  if (sellerPayout > 0 && (ret || (buyerRefund > 0 && order.delivered_at))) {
+    throw new UserError(ret
+      ? 'The item is back with the seller (or on its way), so the seller can’t also be paid. Refund the buyer, with or without the delivery deductions.'
+      : 'A refund means the item goes back to the seller, so the seller can’t also be paid. Choose a refund or a payout, not both.');
+  }
   if (buyerRefund > 0 && order.delivered_at && !ret) ret = await bookPickupReturn(ctx, order);
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(

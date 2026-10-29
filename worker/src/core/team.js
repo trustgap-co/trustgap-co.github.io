@@ -233,6 +233,7 @@ export async function teamOrderView(ctx, staff, orderId) {
       task_id: decideTask.id,
       dispute_id: disputes.find((x) => x.status === 'open')?.id,
       amount: o.amount, seller_payout: o.seller_payout, delivery_fee: o.delivery_fee, delivered: Boolean(o.delivered_at),
+      item_with_seller: Boolean(await activeReturn(ctx, o.id)),
       condition_pledge: d.condition_pledge, buyer_ack_at: o.buyer_ack_at,
     },
     return: await returnView(ctx, await activeReturn(ctx, o.id)),

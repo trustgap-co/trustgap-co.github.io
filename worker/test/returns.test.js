@@ -114,3 +114,32 @@ describe('returns after delivery', () => {
     assert.equal((await lastOrder(t)).status, 'refunded');
   });
 });
+
+describe('the seller is never paid as well as getting the item back', () => {
+  test('door refusal: once the parcel is going back, a payout to the seller is refused', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller);
+    await buyerPays(t, deal.token);
+    let order = await lastOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box' }, seller);
+    order = await lastOrder(t);
+    const rt = tokenOf(order.rider_url);
+    await t.post(`/api/rider/${rt}/status`, { status: 'out_for_delivery' });
+    await t.post(`/api/rider/${rt}/status`, { status: 'refused', note: 'Buyer changed their mind' });
+    const admin = await adminToken(t);
+    const dispute = await t.one('SELECT * FROM disputes');
+    const pay = await decide(t, admin, dispute, { buyer_refund: '0', seller_payout: '45000', seller_charge: '0', note: 'Item was correct, pay the seller.' });
+    assert.equal(pay.status, 400);
+    assert.match(pay.data.error, /back with the seller.*can’t also be paid/);
+    const ok = await decide(t, admin, dispute, { buyer_refund: String((order.amount - 2 * order.delivery_fee) / 100), seller_payout: '0', seller_charge: '0', note: 'Correct item refused: refund minus both trips.' });
+    assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  });
+
+  test('after delivery: a refund and a seller payout can’t be combined', async () => {
+    const { t, admin, dispute } = await deliveredThenReported(await boot());
+    const both = await decide(t, admin, dispute, { buyer_refund: '20000', seller_payout: '20000', note: 'Split it down the middle somehow.' });
+    assert.match(both.data.error, /refund means the item goes back.*not both/);
+    assert.equal((await t.one('SELECT COUNT(*) n FROM returns')).n, 0, 'nothing booked');
+  });
+});
