@@ -49,7 +49,7 @@ export const SITE = {
   tracking: {
     ga4Id: 'G-XPCY6S38PQ',
     metaPixelId: '000000000000000',
-    requireConsent: false,
+    requireConsent: true,
   },
   // Set to true only after your lawyer approves the policy pages: removes the "draft" notice.
   policiesApproved: true,
