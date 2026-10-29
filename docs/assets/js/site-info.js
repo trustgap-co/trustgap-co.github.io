@@ -47,7 +47,7 @@ export const SITE = {
   // requireConsent: false = trackers load on every visit (no banner); visitors can switch them off
   // with "Cookie settings" in the footer. true = they load only after a visitor taps Accept.
   tracking: {
-    ga4Id: 'G-XXXXXXXXXX',
+    ga4Id: 'G-XPCY6S38PQ',
     metaPixelId: '000000000000000',
     requireConsent: false,
   },
