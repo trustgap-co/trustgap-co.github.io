@@ -575,6 +575,9 @@ The site now makes it easy for them to understand TrustGap; mentions elsewhere m
 
 ## 13. Security protections (built in)
 
+- **Where the test bar shows:** only on the deal pages (payment, tracking, rider, seller, admin, team). The
+  public site (home, survey, early access, policies) never shows it, so you can keep `TEST_MODE = "true"`
+  and test deals while promoting the survey.
 - **Test simulators only in test mode:** with `TEST_MODE = "false"`, the payment simulator
   (`PAYMENT_PROVIDER = mock`) and the NIN simulator (`IDENTITY_PROVIDER = mock`) refuse every action and
   the test checkout pages return "not found", so a pretend payment can never look real. To test end to

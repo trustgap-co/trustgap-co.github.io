@@ -501,7 +501,10 @@ export async function shell(area) {
   });
   initAnalytics(area);
   const config = await configReady;
-  if (config.test_mode) {
+  // The test bar shows only on the deal pages (payment, tracking, rider, seller, admin, team), never on
+  // the public site (home, survey, early access, policies…), which stays clean while being promoted.
+  const innerPage = area !== 'public' || location.pathname.includes('/seller/');
+  if (config.test_mode && innerPage) {
     document.body.insertAdjacentHTML('beforeend', '<div class="testbar" role="note">TEST MODE: a demonstration. No real money moves; payments and couriers are simulated.</div>');
     document.body.classList.add('has-testbar');
   }
