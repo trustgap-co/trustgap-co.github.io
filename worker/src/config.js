@@ -35,6 +35,9 @@ export function loadConfig(env) {
     maxTransferAttempts: 3,
     maxIdentityAttempts: 3,
     maxDealKobo: num(env.MAX_DEAL_NAIRA, 300000) * 100,
+    // The item price must be at least this many times the delivery fee, so a buyer who refuses a
+    // correct item has paid enough to cover both delivery trips. 0 turns the rule off.
+    minPriceDeliveryMultiple: num(env.MIN_PRICE_DELIVERY_MULTIPLE, 2),
     // Delivery prices used when LOGISTICS_PROVIDER=manual (your own riders). With Fez, the price
     // comes from Fez's /order/cost for the buyer's state instead.
     manualDelivery: {

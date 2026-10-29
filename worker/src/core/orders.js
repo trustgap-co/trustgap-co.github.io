@@ -481,9 +481,11 @@ export async function evidenceUrls(ctx, disputeId) {
   return Promise.all(rows.map(async (r) => `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`));
 }
 
-// Staff decide a dispute. When the buyer is refunded and the item has to go back to the seller, the
-// decision is saved and the money waits until the seller has the item (settleAfterReturn).
-export async function resolveDispute(ctx, disputeId, input) {
+// Staff decide a dispute. Any refund for an item the buyer received (or refused at the door) needs
+// the item back with the seller first, however cheap: the decision is saved, a return is booked if
+// one isn't already under way, and the money waits until the seller has the item (settleAfterReturn).
+// `by` is who decided: 'admin', or 'team:<name>' for a team member with a "Decide a dispute" task.
+export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {}) {
   const dispute = await first(ctx.env, 'SELECT * FROM disputes WHERE id = ?', disputeId);
   if (!dispute || dispute.status !== 'open') throw new UserError('Dispute not found or already resolved.');
   const order = await getOrder(ctx, dispute.order_id);
@@ -495,22 +497,18 @@ export async function resolveDispute(ctx, disputeId, input) {
     throw new UserError(`Refund plus payout cannot exceed the ${formatNaira(order.amount)} collected.`);
   }
   const note = requireLength(input.note, 'Decision note', 10, 2000);
-  const decision = { buyerRefund, sellerPayout, sellerCharge, note };
+  const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
 
   let ret = await activeReturn(ctx, order.id);
-  const returnFirst = input.return_item === true || input.return_item === 'yes';
-  if (returnFirst && !ret) {
-    if (!buyerRefund) throw new UserError('A return is only needed when the buyer is refunded.');
-    ret = await bookPickupReturn(ctx, order);
-  }
+  if (buyerRefund > 0 && order.delivered_at && !ret) ret = await bookPickupReturn(ctx, order);
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(
       ctx.env,
-      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ? WHERE id = ? AND status = 'open'",
-      note, buyerRefund, sellerPayout, sellerCharge, dispute.id,
+      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, decided_by = ? WHERE id = ? AND status = 'open'",
+      note, buyerRefund, sellerPayout, sellerCharge, by, dispute.id,
     );
     if (res.meta.changes !== 1) throw new UserError('This dispute was already decided.');
-    await logEvent(ctx, order.id, 'admin', 'dispute_decided_after_return', { buyerRefund, sellerPayout, sellerCharge, note });
+    await logEvent(ctx, order.id, by, 'dispute_decided_after_return', { buyerRefund, sellerPayout, sellerCharge, note });
     const seller = await getSeller(ctx, order.seller_id);
     const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
     await ctx.notify.send({ orderId: order.id, event: 'dispute_decided', phone: order.buyer_phone, email: order.buyer_email, sms });
@@ -526,7 +524,7 @@ export async function settleAfterReturn(ctx, order) {
   const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? AND status = 'awaiting_return' ORDER BY id DESC", order.id);
   if (!dispute) return false;
   await settleDispute(ctx, order, dispute, {
-    buyerRefund: dispute.buyer_refund, sellerPayout: dispute.seller_payout, sellerCharge: dispute.seller_charge, note: dispute.resolution_note,
+    buyerRefund: dispute.buyer_refund, sellerPayout: dispute.seller_payout, sellerCharge: dispute.seller_charge, note: dispute.resolution_note, by: dispute.decided_by || 'admin',
   });
   return true;
 }
@@ -536,7 +534,7 @@ const decisionSummary = ({ buyerRefund, sellerPayout, sellerCharge, note }) =>
     sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ''
   } Reason: ${note}`;
 
-async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note }) {
+async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note, by = 'admin' }) {
   const now = iso(ctx.now());
   const retained = order.amount - buyerRefund - sellerPayout;
   const settles = iso(settlesAt(ctx, order.paid_at));
@@ -548,15 +546,15 @@ async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, s
     { status: sellerPayout > 0 ? 'completed' : 'refunded', closed_at: now },
     (h) => [
       h.sql(
-        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
-        note, buyerRefund, sellerPayout, sellerCharge, now, dispute.id,
+        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ?, decided_by = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
+        note, buyerRefund, sellerPayout, sellerCharge, now, by, dispute.id,
       ),
       h.sql('UPDATE sellers SET amount_owed = amount_owed + ? WHERE id = ?', sellerCharge, order.seller_id),
       h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'delivery_cost'", order.id),
       ...(buyerRefund > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'buyer_refund', buyerRefund, 'buyer', 'pending', settles))] : []),
       ...(sellerPayout > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'seller_payout', sellerPayout, 'seller', 'pending', settles))] : []),
       ...(retained > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'platform_retained', retained, 'trustgap', 'success'))] : []),
-      h.event('admin', 'dispute_resolved', { buyerRefund, sellerPayout, sellerCharge, note }),
+      h.event(by, 'dispute_resolved', { buyerRefund, sellerPayout, sellerCharge, note }),
     ],
   );
   if (!won) throw new UserError('This order was already decided.');

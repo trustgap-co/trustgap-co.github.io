@@ -75,6 +75,7 @@ export function publicRoutes(r) {
     fee: ctx.config.fee,
     processing: ctx.config.processing,
     max_deal: ctx.config.maxDealKobo,
+    min_price_delivery_multiple: ctx.config.minPriceDeliveryMultiple,
     inspection_hours: ctx.config.inspectionHours,
     states: STATES,
     courier: ctx.logistics.name,

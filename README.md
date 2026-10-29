@@ -59,14 +59,27 @@ shown to admin on the order page and copied to Google Sheets.
    The seller gets a 4-digit **return PIN** (SMS and their order page) and gives it to the rider after
    checking the item, like the buyer's delivery PIN in reverse.
    - **Refused at the door**: the same rider takes it straight back and enters the seller's PIN.
-   - **Problem found after delivery**: when admin decides, "the item must go back first" (ticked by
-     default) books a new courier order from the buyer to the seller (with Fez, a new Fez order
-     carrying the seller's PIN). The decision is saved and the money waits.
+   - **Problem found after delivery**: any refund admin decides books a new courier order from the
+     buyer to the seller (with Fez, a new Fez order carrying the seller's PIN). Every item goes back,
+     however cheap; there is no "refund and keep it". The decision is saved and the money waits.
+   - **Refused at the door**: admin reviews it like any dispute and decides the split; the money
+     moves once the seller has the item back and the decision is made.
    - Fallbacks: the seller can tap **I already have it back**; admin can **mark it received** or
      **cancel the return and decide again** (buyer never handed it over, or the item came back swapped).
 
+10. **Team portal and manual** (`/team/`): the admin adds team members on **Admin → Team** (name,
+   email, phone, temporary password) and assigns them tasks, optionally about an order. Members log
+   in with their own email and password (stored hashed; must change the temporary one first), see
+   only their tasks, add notes, mark them done, and open the orders their tasks are about read only
+   (no bank details or PINs). A **Decide a dispute** task lets the member decide that order's open
+   dispute while the task is open (same rules, checks and return rule as the admin; recorded as
+   `team:<name>` on the dispute and in the timeline; the task closes itself). The **team manual** (how TrustGap works end to end,
+   statuses, fees, disputes, returns, answers to common questions, team rules) is served by the
+   Worker only to the admin and signed-in members; it isn't a public page. Edit it in
+   `worker/src/manual.js`.
+
 **Fees**, shown as two lines on every link: **TrustGap fee** 1.5% of the item price (minimum ₦100,
-maximum ₦3,000) and **Payment processing**, Flutterwave's charges passed on at cost (2%, capped at ₦2,000,
+maximum ₦3,000; the item price must be at least twice the delivery fee) and **Payment processing**, Flutterwave's charges passed on at cost (2%, capped at ₦2,000,
 plus the ₦57.79 payout fee). About 3.9% in total and never more than ₦5,058;
 the seller and buyer agree who pays (buyer, seller or 50/50). Seller payouts go out the next working
 day after the buyer paid, once Flutterwave has settled the money.

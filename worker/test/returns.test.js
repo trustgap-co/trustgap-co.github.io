@@ -30,7 +30,7 @@ const decide = (t, admin, dispute, body) => t.post(`/api/admin/disputes/${disput
 describe('returns after delivery', () => {
   test('a refund that needs the item back waits until the seller enters the return PIN', async () => {
     const { t, seller, admin, order, dispute, trackToken } = await deliveredThenReported(await boot());
-    const r = await decide(t, admin, dispute, { return_item: 'yes' });
+    const r = await decide(t, admin, dispute, {});
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.equal(r.data.waiting_for_return, true);
     assert.equal((await lastOrder(t)).status, 'disputed');
@@ -73,7 +73,7 @@ describe('returns after delivery', () => {
 
   test('the seller can confirm they have it back themselves', async () => {
     const { t, seller, admin, order, dispute } = await deliveredThenReported(await boot());
-    await decide(t, admin, dispute, { return_item: 'yes' });
+    await decide(t, admin, dispute, {});
     assert.equal((await t.post(`/api/seller/orders/${order.id}/return-received`, {}, seller)).status, 200);
     assert.equal((await lastOrder(t)).status, 'refunded');
     assert.equal((await t.post(`/api/seller/orders/${order.id}/return-received`, {}, seller)).status, 400, 'only once');
@@ -81,7 +81,7 @@ describe('returns after delivery', () => {
 
   test('staff can cancel a return (buyer never handed it over) and decide again', async () => {
     const { t, admin, dispute } = await deliveredThenReported(await boot());
-    await decide(t, admin, dispute, { return_item: 'yes' });
+    await decide(t, admin, dispute, {});
     const ret = await t.one('SELECT * FROM returns');
     assert.equal((await t.post(`/api/admin/returns/${ret.id}/cancel`, { note: 'x' }, admin)).status, 400, 'needs a reason');
     assert.equal((await t.post(`/api/admin/returns/${ret.id}/cancel`, { note: 'Buyer did not hand it over in 3 days' }, admin)).status, 200);
@@ -91,18 +91,21 @@ describe('returns after delivery', () => {
     assert.equal((await lastOrder(t)).status, 'completed');
   });
 
-  test('without "return first", or with no refund, money moves straight away', async () => {
+  test('every refund after delivery needs the item back; paying the seller moves money at once', async () => {
     const { t, admin, dispute } = await deliveredThenReported(await boot());
-    assert.match((await decide(t, admin, dispute, { return_item: 'yes', buyer_refund: '0', seller_payout: '45000' })).data.error, /only needed when the buyer is refunded/);
-    const r = await decide(t, admin, dispute, {});
-    assert.equal(r.data.waiting_for_return, false);
-    assert.equal((await lastOrder(t)).status, 'refunded');
-    assert.equal((await t.one('SELECT COUNT(*) n FROM returns')).n, 0);
+    const r = await decide(t, admin, dispute, { buyer_refund: '1000', note: 'Small refund, still needs the item back.' });
+    assert.equal(r.data.waiting_for_return, true, 'no way to refund and let the buyer keep it');
+    assert.equal((await t.one('SELECT COUNT(*) n FROM returns')).n, 1);
+    const ret = await t.one('SELECT * FROM returns');
+    await t.post(`/api/admin/returns/${ret.id}/cancel`, { note: 'Buyer did not hand it over' }, admin);
+    const paySeller = await decide(t, admin, dispute, { buyer_refund: '0', seller_payout: '45000', seller_charge: '0', note: 'Buyer kept the item; seller is paid.' });
+    assert.equal(paySeller.data.waiting_for_return, false);
+    assert.equal((await lastOrder(t)).status, 'completed');
   });
 
   test('staff can mark a return received', async () => {
     const { t, admin, dispute } = await deliveredThenReported(await boot());
-    await decide(t, admin, dispute, { return_item: 'yes' });
+    await decide(t, admin, dispute, {});
     const ret = await t.one('SELECT * FROM returns');
     const view = (await t.get(`/api/admin/orders/${ret.order_id}`, admin)).data.return;
     assert.equal(view.status, 'booked');

@@ -226,7 +226,7 @@ describe('Fez', () => {
     const admin = (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
     const dispute = await t.one('SELECT * FROM disputes');
     const r = await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
-      { buyer_refund: '1000', seller_payout: '0', seller_charge: '0', note: 'Torn sole in photos; item goes back.', return_item: 'yes' }, admin);
+      { buyer_refund: '1000', seller_payout: '0', seller_charge: '0', note: 'Torn sole in photos; item goes back.' }, admin);
     assert.equal(r.data.waiting_for_return, true, JSON.stringify(r.data));
 
     const pin = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.pin;
@@ -295,5 +295,27 @@ describe('Fez', () => {
     assert.equal(mapFezStatus('Returned'), 'returned');
     assert.equal(mapFezStatus('Failed Pick-Up'), 'problem');
     assert.equal(mapFezStatus('Rejected At Drop-off'), 'problem');
+  });
+});
+
+describe('minimum price for the delivery', () => {
+  test('the item price must be at least twice the delivery fee, so both trips are always covered', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    // Lagos → Lagos manual delivery is ₦3,225, so the minimum is ₦6,450.
+    const low = await t.post('/api/seller/quote', { ...DEAL, item_price: '6,449' }, seller);
+    assert.equal(low.status, 400);
+    assert.match(low.data.error, /For delivery to Lagos \(₦3,225\), the item price must be at least ₦6,450: twice the delivery fee/);
+    assert.match((await t.post('/api/seller/deals', { ...DEAL, item_price: '6,000' }, seller)).data.error, /at least ₦6,450/);
+    assert.equal((await t.post('/api/seller/quote', { ...DEAL, item_price: '6,450' }, seller)).status, 200);
+    // Another state costs more, so the minimum rises with it.
+    const far = await t.post('/api/seller/quote', { ...DEAL, item_price: '10,000', delivery_state: 'Kano' }, seller);
+    assert.match(far.data.error, /Kano \(₦6,450\).*at least ₦12,900/);
+  });
+
+  test('can be turned off', async () => {
+    const t = boot({ MIN_PRICE_DELIVERY_MULTIPLE: '0' });
+    const seller = await onboardSeller(t);
+    assert.equal((await t.post('/api/seller/quote', { ...DEAL, item_price: '1,000', delivery_payer: 'buyer' }, seller)).status, 200);
   });
 });

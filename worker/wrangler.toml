@@ -25,6 +25,7 @@ FEZ_API_BASE = "https://apisandbox.fezdelivery.co/v1"
 REQUIRE_SELLER_ID = "true"
 FEE_PERCENT = "1.5"               # TrustGap fee
 FEE_MIN_NAIRA = "100"
+MIN_PRICE_DELIVERY_MULTIPLE = "2"  # item price must be at least this × delivery fee (0 = off)
 FEE_CAP_NAIRA = "3000"            # TrustGap fee never more than this per deal (0 = no cap)
 PROCESSING_CAP_NAIRA = "2000"     # Flutterwave's cap on its percentage per payment (0 = no cap)
 PROCESSING_PERCENT = "2"          # Flutterwave on local NGN collections

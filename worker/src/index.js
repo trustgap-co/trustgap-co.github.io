@@ -3,6 +3,7 @@ import { createContext } from './context.js';
 import { publicRoutes } from './routes/public.js';
 import { sellerRoutes } from './routes/seller.js';
 import { adminRoutes, riderRoutes } from './routes/admin.js';
+import { teamRoutes } from './routes/team.js';
 import { runJobs } from './core/jobs.js';
 import { syncSheets } from './providers/sheets.js';
 import { ensureSchema } from './lib/migrate.js';
@@ -12,6 +13,7 @@ publicRoutes(router);
 sellerRoutes(router);
 riderRoutes(router);
 adminRoutes(router);
+teamRoutes(router);
 
 export default {
   async fetch(request, env, execCtx) {

@@ -77,3 +77,19 @@ export async function decrypt(payload, secret) {
   const [iv, data] = String(payload).split('.').map(fromB64url);
   return dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, await aesKey(secret), data));
 }
+
+// Team-member passwords: PBKDF2-SHA256 with a random salt (100,000 rounds, the most Workers allow).
+const PBKDF2_ROUNDS = 100_000;
+async function pbkdf2(password, salt) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  return b64url(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ROUNDS }, key, 256));
+}
+export async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  return `pbkdf2$${PBKDF2_ROUNDS}$${b64url(salt)}$${await pbkdf2(password, salt)}`;
+}
+export async function checkPassword(password, stored) {
+  const [scheme, rounds, salt, hash] = String(stored || '').split('$');
+  if (scheme !== 'pbkdf2' || Number(rounds) !== PBKDF2_ROUNDS) return false;
+  return safeEqual(await pbkdf2(String(password), fromB64url(salt)), hash);
+}

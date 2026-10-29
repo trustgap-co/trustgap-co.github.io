@@ -40,6 +40,12 @@ async function priceDeal(ctx, p, { promo = false } = {}) {
   } catch (err) {
     throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
   }
+  // If the buyer refuses a correct item, both delivery trips come out of their refund; the price
+  // has to be big enough for that to be covered by what they paid.
+  const minPrice = ctx.config.minPriceDeliveryMultiple * deliveryFee;
+  if (minPrice && p.itemPrice < minPrice) {
+    throw new UserError(`For delivery to ${p.deliveryState} (${formatNaira(deliveryFee)}), the item price must be at least ${formatNaira(minPrice)}: ${ctx.config.minPriceDeliveryMultiple === 2 ? 'twice' : `${ctx.config.minPriceDeliveryMultiple} times`} the delivery fee, so a return is always covered.`);
+  }
   const pf = promo ? 0 : platformFee(p.itemPrice, ctx.config.fee);
   const buyerShare = p.feePayer === 'buyer' ? 1 : p.feePayer === 'split' ? 0.5 : 0;
   const pr = processingFee(

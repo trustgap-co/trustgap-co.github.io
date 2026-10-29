@@ -107,6 +107,9 @@ function loadConfig(env) {
     maxTransferAttempts: 3,
     maxIdentityAttempts: 3,
     maxDealKobo: num(env.MAX_DEAL_NAIRA, 3e5) * 100,
+    // The item price must be at least this many times the delivery fee, so a buyer who refuses a
+    // correct item has paid enough to cover both delivery trips. 0 turns the rule off.
+    minPriceDeliveryMultiple: num(env.MIN_PRICE_DELIVERY_MULTIPLE, 2),
     // Delivery prices used when LOGISTICS_PROVIDER=manual (your own riders). With Fez, the price
     // comes from Fez's /order/cost for the buyer's state instead.
     manualDelivery: {
@@ -311,6 +314,23 @@ async function decrypt(payload, secret) {
   return dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, await aesKey(secret), data));
 }
 __name(decrypt, "decrypt");
+var PBKDF2_ROUNDS = 1e5;
+async function pbkdf2(password, salt) {
+  const key = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  return b64url(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: PBKDF2_ROUNDS }, key, 256));
+}
+__name(pbkdf2, "pbkdf2");
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  return `pbkdf2$${PBKDF2_ROUNDS}$${b64url(salt)}$${await pbkdf2(password, salt)}`;
+}
+__name(hashPassword, "hashPassword");
+async function checkPassword(password, stored) {
+  const [scheme, rounds, salt, hash] = String(stored || "").split("$");
+  if (scheme !== "pbkdf2" || Number(rounds) !== PBKDF2_ROUNDS) return false;
+  return safeEqual(await pbkdf2(String(password), fromB64url(salt)), hash);
+}
+__name(checkPassword, "checkPassword");
 
 // src/providers/payments/flutterwave.js
 function createFlutterwavePayments(ctx) {
@@ -890,6 +910,18 @@ CREATE TABLE IF NOT EXISTS returns (
 );
 CREATE INDEX IF NOT EXISTS returns_order ON returns(order_id);
 `
+  },
+  {
+    "name": "0011_team_and_tasks.sql",
+    "sql": "-- Team members (e.g. customer relations) with their own password, and tasks the admin assigns them.\nCREATE TABLE IF NOT EXISTS staff (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  phone TEXT,\n  role TEXT NOT NULL,\n  password_hash TEXT NOT NULL,\n  must_change_password INTEGER NOT NULL DEFAULT 1,\n  disabled_at TEXT,\n  last_login_at TEXT,\n  created_at TEXT NOT NULL\n);\nALTER TABLE sessions ADD COLUMN staff_id INTEGER;\n\nCREATE TABLE IF NOT EXISTS tasks (\n  id INTEGER PRIMARY KEY,\n  title TEXT NOT NULL,\n  details TEXT,\n  order_id INTEGER REFERENCES orders(id),\n  assigned_to INTEGER REFERENCES staff(id),\n  priority TEXT NOT NULL DEFAULT 'normal',\n  status TEXT NOT NULL DEFAULT 'todo',\n  due_at TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  completed_at TEXT\n);\nCREATE INDEX IF NOT EXISTS tasks_assignee ON tasks(assigned_to, status);\n\nCREATE TABLE IF NOT EXISTS task_notes (\n  id INTEGER PRIMARY KEY,\n  task_id INTEGER NOT NULL REFERENCES tasks(id),\n  author TEXT NOT NULL,\n  body TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS task_notes_task ON task_notes(task_id);\n"
+  },
+  {
+    "name": "0012_team_dispute_decisions.sql",
+    "sql": `-- "Decide a dispute" tasks: the admin can let a team member decide one order's dispute. Each
+-- decision records who made it.
+ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE disputes ADD COLUMN decided_by TEXT;
+`
   }
 ];
 
@@ -1400,6 +1432,10 @@ async function priceDeal(ctx, p, { promo = false } = {}) {
     ({ feeKobo: deliveryFee } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
   } catch (err) {
     throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
+  }
+  const minPrice = ctx.config.minPriceDeliveryMultiple * deliveryFee;
+  if (minPrice && p.itemPrice < minPrice) {
+    throw new UserError(`For delivery to ${p.deliveryState} (${formatNaira(deliveryFee)}), the item price must be at least ${formatNaira(minPrice)}: ${ctx.config.minPriceDeliveryMultiple === 2 ? "twice" : `${ctx.config.minPriceDeliveryMultiple} times`} the delivery fee, so a return is always covered.`);
   }
   const pf = promo ? 0 : platformFee(p.itemPrice, ctx.config.fee);
   const buyerShare = p.feePayer === "buyer" ? 1 : p.feePayer === "split" ? 0.5 : 0;
@@ -2231,7 +2267,7 @@ async function evidenceUrls(ctx, disputeId) {
   return Promise.all(rows.map(async (r) => `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`));
 }
 __name(evidenceUrls, "evidenceUrls");
-async function resolveDispute(ctx, disputeId, input) {
+async function resolveDispute(ctx, disputeId, input, { by = "admin" } = {}) {
   const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE id = ?", disputeId);
   if (!dispute || dispute.status !== "open") throw new UserError("Dispute not found or already resolved.");
   const order = await getOrder(ctx, dispute.order_id);
@@ -2243,25 +2279,22 @@ async function resolveDispute(ctx, disputeId, input) {
     throw new UserError(`Refund plus payout cannot exceed the ${formatNaira(order.amount)} collected.`);
   }
   const note = requireLength(input.note, "Decision note", 10, 2e3);
-  const decision = { buyerRefund, sellerPayout, sellerCharge, note };
+  const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
   let ret = await activeReturn(ctx, order.id);
-  const returnFirst = input.return_item === true || input.return_item === "yes";
-  if (returnFirst && !ret) {
-    if (!buyerRefund) throw new UserError("A return is only needed when the buyer is refunded.");
-    ret = await bookPickupReturn(ctx, order);
-  }
+  if (buyerRefund > 0 && order.delivered_at && !ret) ret = await bookPickupReturn(ctx, order);
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(
       ctx.env,
-      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ? WHERE id = ? AND status = 'open'",
+      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, decided_by = ? WHERE id = ? AND status = 'open'",
       note,
       buyerRefund,
       sellerPayout,
       sellerCharge,
+      by,
       dispute.id
     );
     if (res.meta.changes !== 1) throw new UserError("This dispute was already decided.");
-    await logEvent(ctx, order.id, "admin", "dispute_decided_after_return", { buyerRefund, sellerPayout, sellerCharge, note });
+    await logEvent(ctx, order.id, by, "dispute_decided_after_return", { buyerRefund, sellerPayout, sellerCharge, note });
     const seller = await getSeller(ctx, order.seller_id);
     const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
     await ctx.notify.send({ orderId: order.id, event: "dispute_decided", phone: order.buyer_phone, email: order.buyer_email, sms });
@@ -2279,13 +2312,14 @@ async function settleAfterReturn(ctx, order) {
     buyerRefund: dispute.buyer_refund,
     sellerPayout: dispute.seller_payout,
     sellerCharge: dispute.seller_charge,
-    note: dispute.resolution_note
+    note: dispute.resolution_note,
+    by: dispute.decided_by || "admin"
   });
   return true;
 }
 __name(settleAfterReturn, "settleAfterReturn");
 var decisionSummary = /* @__PURE__ */ __name(({ buyerRefund, sellerPayout, sellerCharge, note }) => `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ""} Reason: ${note}`, "decisionSummary");
-async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note }) {
+async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note, by = "admin" }) {
   const now = iso(ctx.now());
   const retained = order.amount - buyerRefund - sellerPayout;
   const settles = iso(settlesAt(ctx, order.paid_at));
@@ -2296,12 +2330,13 @@ async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, s
     { status: sellerPayout > 0 ? "completed" : "refunded", closed_at: now },
     (h) => [
       h.sql(
-        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
+        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ?, decided_by = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
         note,
         buyerRefund,
         sellerPayout,
         sellerCharge,
         now,
+        by,
         dispute.id
       ),
       h.sql("UPDATE sellers SET amount_owed = amount_owed + ? WHERE id = ?", sellerCharge, order.seller_id),
@@ -2309,7 +2344,7 @@ async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, s
       ...buyerRefund > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "buyer_refund", buyerRefund, "buyer", "pending", settles))] : [],
       ...sellerPayout > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "seller_payout", sellerPayout, "seller", "pending", settles))] : [],
       ...retained > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "platform_retained", retained, "trustgap", "success"))] : [],
-      h.event("admin", "dispute_resolved", { buyerRefund, sellerPayout, sellerCharge, note })
+      h.event(by, "dispute_resolved", { buyerRefund, sellerPayout, sellerCharge, note })
     ]
   );
   if (!won) throw new UserError("This order was already decided.");
@@ -2477,6 +2512,7 @@ function publicRoutes(r) {
     fee: ctx.config.fee,
     processing: ctx.config.processing,
     max_deal: ctx.config.maxDealKobo,
+    min_price_delivery_multiple: ctx.config.minPriceDeliveryMultiple,
     inspection_hours: ctx.config.inspectionHours,
     states: STATES,
     courier: ctx.logistics.name,
@@ -2704,13 +2740,14 @@ async function verifyCode(ctx, input) {
   return { token: await createSession(ctx, { sellerId: seller.id }) };
 }
 __name(verifyCode, "verifyCode");
-async function createSession(ctx, { sellerId = null, isAdmin = false }) {
+async function createSession(ctx, { sellerId = null, isAdmin = false, staffId = null }) {
   const token = randomToken(32);
-  const hours = isAdmin ? 12 : ctx.config.sessionDays * 24;
+  const hours = isAdmin || staffId ? 12 : ctx.config.sessionDays * 24;
   await insert(ctx.env, "sessions", {
     token_hash: await sha256Hex(token),
     seller_id: sellerId,
     is_admin: isAdmin,
+    ...staffId ? { staff_id: staffId } : {},
     expires_at: iso(new Date(ctx.now().getTime() + hours * 36e5)),
     created_at: iso(ctx.now())
   });
@@ -3447,12 +3484,593 @@ function adminRoutes(r) {
 }
 __name(adminRoutes, "adminRoutes");
 
+// src/core/team.js
+var ROLES = { customer_relations: "Customer relations" };
+var TASK_STATUSES = { todo: "To do", in_progress: "In progress", done: "Done" };
+var PRIORITIES = { normal: "Normal", high: "High" };
+var TASK_KINDS = { general: "General", decide_dispute: "Decide a dispute" };
+var MIN_PASSWORD = 10;
+var staffView = /* @__PURE__ */ __name((s) => ({
+  id: s.id,
+  name: s.name,
+  email: s.email,
+  phone: s.phone,
+  role: s.role,
+  role_label: ROLES[s.role] || s.role,
+  must_change_password: Boolean(s.must_change_password),
+  disabled: Boolean(s.disabled_at),
+  last_login_at: s.last_login_at,
+  created_at: s.created_at
+}), "staffView");
+function newPassword(input, label = "Password") {
+  const p = String(input ?? "");
+  if (p.length < MIN_PASSWORD) throw new UserError(`${label} must be at least ${MIN_PASSWORD} characters.`);
+  if (p.length > 200) throw new UserError(`${label} is too long.`);
+  return p;
+}
+__name(newPassword, "newPassword");
+async function listStaff(ctx) {
+  return (await all(ctx.env, "SELECT * FROM staff ORDER BY disabled_at IS NOT NULL, name")).map(staffView);
+}
+__name(listStaff, "listStaff");
+async function createStaff(ctx, input) {
+  const name = requireLength(input.name, "Name", 2, 100);
+  const email = validEmail(input.email);
+  const phone = str(input.phone) ? normalisePhone(input.phone) : null;
+  const role = ROLES[input.role] ? input.role : "customer_relations";
+  const password = newPassword(input.password, "Temporary password");
+  if (await first(ctx.env, "SELECT id FROM staff WHERE email = ?", email)) throw new UserError("A team member with this email already exists.");
+  const id = await insert(ctx.env, "staff", {
+    name,
+    email,
+    phone,
+    role,
+    password_hash: await hashPassword(password),
+    must_change_password: 1,
+    created_at: iso(ctx.now())
+  });
+  return staffView(await first(ctx.env, "SELECT * FROM staff WHERE id = ?", id));
+}
+__name(createStaff, "createStaff");
+async function updateStaff(ctx, id, input) {
+  const s = await first(ctx.env, "SELECT * FROM staff WHERE id = ?", Number(id));
+  if (!s) throw new UserError("Team member not found.", 404);
+  const fields = {};
+  if (input.password !== void 0) Object.assign(fields, { password_hash: await hashPassword(newPassword(input.password, "Temporary password")), must_change_password: 1 });
+  if (input.disabled === true) fields.disabled_at = iso(ctx.now());
+  if (input.disabled === false) fields.disabled_at = null;
+  if (!Object.keys(fields).length) throw new UserError("Nothing to change.");
+  await update(ctx.env, "staff", s.id, fields);
+  if (fields.password_hash || fields.disabled_at) await run(ctx.env, "DELETE FROM sessions WHERE staff_id = ?", s.id);
+  return staffView(await first(ctx.env, "SELECT * FROM staff WHERE id = ?", s.id));
+}
+__name(updateStaff, "updateStaff");
+async function staffLogin(ctx, input) {
+  const email = str(input.email).toLowerCase();
+  const key = `team_fails:${email}`;
+  const windowStart = iso(new Date(ctx.now().getTime() - 15 * 6e4));
+  const fails = JSON.parse((await first(ctx.env, "SELECT value FROM meta WHERE key = ?", key))?.value || "[]").filter((t) => t > windowStart);
+  if (fails.length >= 8) throw new UserError("Too many attempts. Try again in 15 minutes.", 429);
+  const s = await first(ctx.env, "SELECT * FROM staff WHERE lower(email) = ?", email);
+  if (!s || s.disabled_at || !await checkPassword(input.password, s.password_hash)) {
+    fails.push(iso(ctx.now()));
+    await run(ctx.env, "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, JSON.stringify(fails));
+    throw new UserError("Wrong email or password.", 401);
+  }
+  await update(ctx.env, "staff", s.id, { last_login_at: iso(ctx.now()) });
+  return { token: await createSession(ctx, { staffId: s.id }), staff: staffView(s) };
+}
+__name(staffLogin, "staffLogin");
+async function changeOwnPassword(ctx, staff, input) {
+  if (!await checkPassword(input.current_password, staff.password_hash)) throw new UserError("Your current password is wrong.");
+  const next = newPassword(input.new_password, "New password");
+  if (next === input.current_password) throw new UserError("Choose a password you haven\u2019t used here before.");
+  await update(ctx.env, "staff", staff.id, { password_hash: await hashPassword(next), must_change_password: 0 });
+  return staffView(await first(ctx.env, "SELECT * FROM staff WHERE id = ?", staff.id));
+}
+__name(changeOwnPassword, "changeOwnPassword");
+var meView = staffView;
+async function taskRows(ctx, where, ...args) {
+  const rows = await all(ctx.env, `SELECT t.*, s.name AS assignee_name, o.ref AS order_ref FROM tasks t
+    LEFT JOIN staff s ON s.id = t.assigned_to LEFT JOIN orders o ON o.id = t.order_id
+    WHERE ${where} ORDER BY t.status = 'done', t.priority = 'high' DESC, COALESCE(t.due_at, '9999') , t.id DESC LIMIT 300`, ...args);
+  const notes = rows.length ? await all(ctx.env, `SELECT * FROM task_notes WHERE task_id IN (${rows.map(() => "?").join(", ")}) ORDER BY id`, ...rows.map((r) => r.id)) : [];
+  return rows.map((t) => ({
+    ...t,
+    status_label: TASK_STATUSES[t.status] || t.status,
+    kind_label: TASK_KINDS[t.kind] || t.kind,
+    overdue: Boolean(t.due_at && t.status !== "done" && new Date(t.due_at) < ctx.now()),
+    notes: notes.filter((n) => n.task_id === t.id)
+  }));
+}
+__name(taskRows, "taskRows");
+var allTasks = /* @__PURE__ */ __name((ctx) => taskRows(ctx, "1 = 1"), "allTasks");
+var tasksFor = /* @__PURE__ */ __name((ctx, staffId) => taskRows(ctx, "t.assigned_to = ?", staffId), "tasksFor");
+async function orderIdFromRef(ctx, ref) {
+  const r = str(ref).toUpperCase();
+  if (!r) return null;
+  const o = await first(ctx.env, "SELECT id FROM orders WHERE ref = ?", r);
+  if (!o) throw new UserError(`No order with reference ${r}.`);
+  return o.id;
+}
+__name(orderIdFromRef, "orderIdFromRef");
+function dueDate(input) {
+  if (!str(input)) return null;
+  const d = /* @__PURE__ */ new Date(`${str(input)}T18:00:00+01:00`);
+  if (Number.isNaN(d.getTime())) throw new UserError("Choose a valid due date.");
+  return iso(d);
+}
+__name(dueDate, "dueDate");
+async function createTask(ctx, input) {
+  const title = requireLength(input.title, "Task title", 3, 160);
+  const details = str(input.details).slice(0, 4e3) || null;
+  const assignee = await first(ctx.env, "SELECT * FROM staff WHERE id = ? AND disabled_at IS NULL", Number(input.assigned_to));
+  if (!assignee) throw new UserError("Choose who the task is for.");
+  const now = iso(ctx.now());
+  const orderId = await orderIdFromRef(ctx, input.order_ref);
+  const kind = TASK_KINDS[input.kind] ? input.kind : "general";
+  if (kind === "decide_dispute") await requireOpenDispute(ctx, orderId);
+  const id = await insert(ctx.env, "tasks", {
+    title,
+    details,
+    kind,
+    order_id: orderId,
+    assigned_to: assignee.id,
+    priority: PRIORITIES[input.priority] ? input.priority : "normal",
+    status: "todo",
+    due_at: dueDate(input.due_date),
+    created_at: now,
+    updated_at: now
+  });
+  await notifyAssignee(ctx, assignee, `TrustGap: new task for you: "${title}". Open the team portal: ${ctx.config.siteUrl}/team/index.html`);
+  return (await taskRows(ctx, "t.id = ?", id))[0];
+}
+__name(createTask, "createTask");
+async function requireOpenDispute(ctx, orderId) {
+  if (!orderId) throw new UserError('A "Decide a dispute" task needs the order reference.');
+  if (!await first(ctx.env, "SELECT id FROM disputes WHERE order_id = ? AND status = 'open'", orderId)) {
+    throw new UserError("That order has no open dispute to decide.");
+  }
+}
+__name(requireOpenDispute, "requireOpenDispute");
+async function notifyAssignee(ctx, staff, sms) {
+  if (!staff.phone && !staff.email) return;
+  await ctx.notify.send({ event: "task_assigned", phone: staff.phone, email: staff.email, sms, emailSubject: "New TrustGap task" });
+}
+__name(notifyAssignee, "notifyAssignee");
+async function updateTask(ctx, id, input) {
+  const t = await first(ctx.env, "SELECT * FROM tasks WHERE id = ?", Number(id));
+  if (!t) throw new UserError("Task not found.", 404);
+  const fields = { updated_at: iso(ctx.now()) };
+  if (input.title !== void 0) fields.title = requireLength(input.title, "Task title", 3, 160);
+  if (input.details !== void 0) fields.details = str(input.details).slice(0, 4e3) || null;
+  if (input.priority !== void 0 && PRIORITIES[input.priority]) fields.priority = input.priority;
+  if (input.due_date !== void 0) fields.due_at = dueDate(input.due_date);
+  if (input.order_ref !== void 0) fields.order_id = await orderIdFromRef(ctx, input.order_ref);
+  if (input.kind !== void 0 && TASK_KINDS[input.kind]) fields.kind = input.kind;
+  if ((fields.kind || t.kind) === "decide_dispute" && (fields.kind || fields.order_id !== void 0)) {
+    await requireOpenDispute(ctx, fields.order_id !== void 0 ? fields.order_id : t.order_id);
+  }
+  if (input.status !== void 0) Object.assign(fields, statusFields(ctx, input.status));
+  let newAssignee = null;
+  if (input.assigned_to !== void 0 && Number(input.assigned_to) !== t.assigned_to) {
+    newAssignee = await first(ctx.env, "SELECT * FROM staff WHERE id = ? AND disabled_at IS NULL", Number(input.assigned_to));
+    if (!newAssignee) throw new UserError("Choose who the task is for.");
+    fields.assigned_to = newAssignee.id;
+  }
+  await update(ctx.env, "tasks", t.id, fields);
+  if (newAssignee) await notifyAssignee(ctx, newAssignee, `TrustGap: a task was passed to you: "${fields.title || t.title}". ${ctx.config.siteUrl}/team/index.html`);
+  return (await taskRows(ctx, "t.id = ?", t.id))[0];
+}
+__name(updateTask, "updateTask");
+function statusFields(ctx, status) {
+  if (!TASK_STATUSES[status]) throw new UserError("Unknown task status.");
+  return { status, completed_at: status === "done" ? iso(ctx.now()) : null };
+}
+__name(statusFields, "statusFields");
+async function setTaskStatus(ctx, staff, id, status) {
+  const t = await first(ctx.env, "SELECT * FROM tasks WHERE id = ? AND assigned_to = ?", Number(id), staff.id);
+  if (!t) throw new UserError("Task not found.", 404);
+  await update(ctx.env, "tasks", t.id, { ...statusFields(ctx, status), updated_at: iso(ctx.now()) });
+  await addNote(ctx, t.id, staff.name, `Marked "${TASK_STATUSES[status]}".`);
+  return (await taskRows(ctx, "t.id = ?", t.id))[0];
+}
+__name(setTaskStatus, "setTaskStatus");
+async function addNote(ctx, taskId, author, body) {
+  const text = requireLength(body, "Note", 2, 2e3);
+  await insert(ctx.env, "task_notes", { task_id: taskId, author, body: text, created_at: iso(ctx.now()) });
+  await run(ctx.env, "UPDATE tasks SET updated_at = ? WHERE id = ?", iso(ctx.now()), taskId);
+}
+__name(addNote, "addNote");
+async function staffNote(ctx, staff, id, body) {
+  const t = await first(ctx.env, "SELECT id FROM tasks WHERE id = ? AND assigned_to = ?", Number(id), staff.id);
+  if (!t) throw new UserError("Task not found.", 404);
+  await addNote(ctx, t.id, staff.name, body);
+  return (await taskRows(ctx, "t.id = ?", t.id))[0];
+}
+__name(staffNote, "staffNote");
+async function teamOrderView(ctx, staff, orderId) {
+  const linked = await first(ctx.env, "SELECT id FROM tasks WHERE order_id = ? AND assigned_to = ?", Number(orderId), staff.id);
+  if (!linked) throw new UserError("You can only open orders that one of your tasks is about.", 403);
+  const o = await getOrder(ctx, Number(orderId));
+  const d = await getDeal(ctx, o.deal_id);
+  const s = await getSeller(ctx, o.seller_id);
+  const disputes = await all(ctx.env, "SELECT id, opened_by, category, description, status, resolution_note, buyer_refund, seller_payout, seller_charge, decided_by, created_at FROM disputes WHERE order_id = ? ORDER BY id", o.id);
+  const decideTask = await decisionTask(ctx, staff, o.id);
+  return {
+    order: {
+      id: o.id,
+      ref: o.ref,
+      status: o.status,
+      amount: o.amount,
+      created_at: o.created_at,
+      paid_at: o.paid_at,
+      item_title: d.item_title,
+      item_condition: d.item_condition,
+      item_description: d.item_description,
+      quantity: d.quantity,
+      delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
+      courier: o.courier,
+      delivery_ref: o.delivery_ref,
+      courier_status: o.courier_status,
+      ship_by: o.ship_by,
+      delivered_at: o.delivered_at,
+      inspection_ends_at: o.inspection_ends_at,
+      packing_note: o.packing_note,
+      buyer: { name: o.buyer_name, phone: o.buyer_phone, email: o.buyer_email, state: o.delivery_state, address: o.delivery_address },
+      seller: { business_name: s.business_name, name: s.full_name, phone: s.phone, email: s.email, identity_verified: Boolean(s.identity_verified_at) }
+    },
+    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceUrls(ctx, x.id) }))),
+    // Present only while she holds an open "Decide a dispute" task for this order: what the decision form needs.
+    decide: decideTask && {
+      task_id: decideTask.id,
+      dispute_id: disputes.find((x) => x.status === "open")?.id,
+      amount: o.amount,
+      seller_payout: o.seller_payout,
+      delivery_fee: o.delivery_fee,
+      delivered: Boolean(o.delivered_at),
+      condition_pledge: d.condition_pledge,
+      buyer_ack_at: o.buyer_ack_at
+    },
+    return: await returnView(ctx, await activeReturn(ctx, o.id)),
+    events: await all(ctx.env, "SELECT type, actor, created_at FROM order_events WHERE order_id = ? ORDER BY id", o.id)
+  };
+}
+__name(teamOrderView, "teamOrderView");
+async function decisionTask(ctx, staff, orderId) {
+  const task = await first(ctx.env, "SELECT * FROM tasks WHERE order_id = ? AND assigned_to = ? AND kind = 'decide_dispute' AND status != 'done' ORDER BY id DESC", orderId, staff.id);
+  if (!task) return null;
+  return await first(ctx.env, "SELECT id FROM disputes WHERE order_id = ? AND status = 'open'", orderId) ? task : null;
+}
+__name(decisionTask, "decisionTask");
+async function teamResolveDispute(ctx, staff, disputeId, input) {
+  const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE id = ?", Number(disputeId));
+  const task = dispute && await decisionTask(ctx, staff, dispute.order_id);
+  if (!task || dispute.status !== "open") throw new UserError("You can only decide a dispute the admin has asked you to decide, while it is open.", 403);
+  const result = await resolveDispute(ctx, dispute.id, input, { by: `team:${staff.name}` });
+  const d = await first(ctx.env, "SELECT * FROM disputes WHERE id = ?", dispute.id);
+  const naira2 = /* @__PURE__ */ __name((k) => "\u20A6" + (k / 100).toLocaleString("en-NG"), "naira");
+  await addNote(ctx, task.id, staff.name, `Decided: refund ${naira2(d.buyer_refund)}, seller paid ${naira2(d.seller_payout)}, seller charged ${naira2(d.seller_charge)}.${result.waiting_for_return ? " Money moves once the seller has the item back." : ""} Reason: ${d.resolution_note}`);
+  await update(ctx.env, "tasks", task.id, { status: "done", completed_at: iso(ctx.now()), updated_at: iso(ctx.now()) });
+  return result;
+}
+__name(teamResolveDispute, "teamResolveDispute");
+
+// src/manual.js
+var MANUAL = {
+  updated: "2026-10-29",
+  // decide-a-dispute tasks added
+  sections: [
+    {
+      id: "start",
+      title: "Start here",
+      html: `
+<p>This manual explains how TrustGap works from end to end, so you can answer buyers and sellers, follow an order and know when to pass something to the admin. Read it once fully, then keep it open while you work.</p>
+<h3>TrustGap in one paragraph</h3>
+<p>Buyers on WhatsApp and Instagram are afraid to pay first; sellers are afraid to ship first. TrustGap sits in the middle. The seller sends a TrustGap payment link. The buyer reviews the deal and pays TrustGap. The money is held while the item is delivered and checked. The seller is paid only after delivery and the inspection window. If something goes wrong, TrustGap reviews the evidence and decides who gets what, using rules both sides agreed to before paying.</p>
+<h3>Your role</h3>
+<ul>
+<li>You talk to buyers and sellers, find out what happened, collect evidence and keep them informed.</li>
+<li>You work through the tasks the admin assigns you on the team portal.</li>
+<li><strong>You decide a dispute only when the admin gives you a \u201CDecide a dispute\u201D task for that order.</strong> Then you can decide that one dispute, with the same rules and checks as the admin, until the task is done. Every decision is recorded under your name. Otherwise you never decide or move money: you tell people what the rules say and what happens next, not what the decision will be.</li>
+</ul>
+<h3>Words we use, and words we never use</h3>
+<ul>
+<li>Say: \u201Cpayment secured\u201D, \u201Cheld by TrustGap\u201D, \u201Creleased to the seller\u201D, \u201Crefunded to your account\u201D.</li>
+<li>Never say \u201Cescrow\u201D, \u201Cguaranteed\u201D or \u201Cinsured\u201D. TrustGap is not a bank and does not guarantee items or sellers. It runs a defined process.</li>
+<li>Never promise an outcome (\u201Cyou will definitely get your money back\u201D). Say what the rules are and that TrustGap reviews the evidence.</li>
+</ul>`
+    },
+    {
+      id: "people",
+      title: "Who is involved",
+      html: `
+<table>
+<tr><th>Who</th><th>What they do</th></tr>
+<tr><td>Seller</td><td>Signs up, verifies their identity (NIN) and payout bank account, creates payment links, packs and hands the item to the courier.</td></tr>
+<tr><td>Buyer</td><td>Gets a link from the seller. No account. Reviews the deal, pays, gives the rider a PIN after checking the item, reports problems.</td></tr>
+<tr><td>Rider / courier</td><td>Fez Delivery (or our own rider during the pilot). Collects from the seller, delivers, takes the buyer\u2019s PIN, brings returns back.</td></tr>
+<tr><td>Admin</td><td>Runs TrustGap: decides disputes, moves money, manages sellers, assigns your tasks.</td></tr>
+<tr><td>You (team)</td><td>Customer relations: contact, follow-up, evidence, explaining the process.</td></tr>
+</table>
+<h3>Partners behind the scenes</h3>
+<ul>
+<li><strong>Flutterwave</strong>: takes the buyer\u2019s payment and sends payouts and refunds. Its checkout page shows our registered business name, <em>Tubalcain Ads Enterprise</em>, not \u201CTrustGap\u201D. That is normal; reassure buyers it is us.</li>
+<li><strong>Monnify</strong>: checks a seller\u2019s NIN matches their name.</li>
+<li><strong>Fez Delivery</strong>: the courier. Each delivery and each return is a Fez order.</li>
+<li><strong>Make.com and KudiSMS</strong>: send our SMS and emails.</li>
+<li><strong>Google Sheets</strong>: a read-only copy of the data for reports. Changing the sheet changes nothing in the system.</li>
+</ul>`
+    },
+    {
+      id: "deal",
+      title: "A deal from start to finish",
+      html: `
+<ol>
+<li><strong>Seller signs up.</strong> Name, business name, phone and email; ticks the Terms of Service and Seller Terms (required). Logs in with a code by SMS, no password. Adds a payout account in their own name and verifies their NIN.</li>
+<li><strong>Seller creates a link.</strong> Item, condition, price, 1 to 4 photos, the buyer\u2019s delivery address, parcel weight, who pays delivery and fees, how many days to hand it to the courier (1 to 7), and when the link expires (1, 6, 24 or 72 hours). They confirm in a pop-up that the item is in the condition described, and that if it isn\u2019t they pay both delivery trips. The deal amount is limited to \u20A6300,000 during the pilot.</li>
+<li><strong>Buyer, step 1: review.</strong> The buyer sees the item, photos, seller, address, every fee and the rules. They must tick \u201CI agree to the Terms of Service\u2026\u201D and accept a pop-up: changing their mind or refusing a correct item costs twice the delivery fee (the naira amount is shown). Both are saved with the order.</li>
+<li><strong>Buyer, step 2: pay.</strong> Name, phone, email and a refund account in their own name (we check the name matches). They pay on Flutterwave\u2019s page.</li>
+<li><strong>Payment secured.</strong> Both get an SMS. The buyer gets a 4-digit delivery PIN (SMS and tracking page). The seller must book pickup before the ship-by time.</li>
+<li><strong>Seller books pickup.</strong> They write a packing note (serial number, colour, size, what is in the box). That note is evidence later.</li>
+<li><strong>Delivery.</strong> The buyer checks the item at the door, then gives the rider the PIN. That marks it delivered.</li>
+<li><strong>Inspection window</strong> (currently 24 hours) starts at delivery. The buyer can confirm everything is fine, or report a problem.</li>
+<li><strong>Seller paid.</strong> When the buyer confirms or the window ends with no report, the payout goes to the seller\u2019s account. Flutterwave settles our collections the next working day, so payouts go out the working day after the buyer paid, at the earliest.</li>
+</ol>
+<p>If anyone asks \u201Cwhere is my money?\u201D, find the order and tell them which of these steps it is at.</p>`
+    },
+    {
+      id: "statuses",
+      title: "Order statuses",
+      html: `
+<table>
+<tr><th>Status</th><th>Means</th><th>What to tell people</th></tr>
+<tr><td>Awaiting payment</td><td>The buyer started paying but it hasn\u2019t been confirmed.</td><td>If they paid, it usually confirms within minutes. Checkouts not paid within about 2 hours are cancelled; the buyer can try again from the link if it hasn\u2019t expired.</td></tr>
+<tr><td>Paid</td><td>Money held. Waiting for the seller to book pickup.</td><td>Seller: book pickup before the ship-by time. Buyer: the seller has until that time.</td></tr>
+<tr><td>Shipping</td><td>With the courier.</td><td>Check the item before giving the PIN.</td></tr>
+<tr><td>Delivered</td><td>PIN given; inspection window running.</td><td>Report any problem before the window ends, with photos.</td></tr>
+<tr><td>Disputed</td><td>A problem was reported, or the seller missed the ship-by time, or the parcel was refused or returned. Money held.</td><td>TrustGap is reviewing. Collect their evidence for the admin.</td></tr>
+<tr><td>Completed</td><td>The seller has been paid (or paid part, after a decision).</td><td>Payout timing as above.</td></tr>
+<tr><td>Refunded</td><td>The buyer has been refunded (in full or in part).</td><td>Refunds go to the account they gave in step 2. Allow up to a working day after settlement.</td></tr>
+<tr><td>Cancelled</td><td>Checkout never paid.</td><td>Nothing was taken.</td></tr>
+<tr><td>Duplicate refunded</td><td>The deal was paid twice; the second payment was refunded in full.</td><td>The refund is automatic.</td></tr>
+</table>`
+    },
+    {
+      id: "fees",
+      title: "Fees and the early-access code",
+      html: `
+<ul>
+<li><strong>TrustGap fee:</strong> 1.5% of the item price, minimum \u20A6100, maximum \u20A63,000.</li>
+<li><strong>Payment processing:</strong> Flutterwave\u2019s charge passed on at cost: 2% (capped at \u20A62,000) plus up to \u20A657.79 payout fee.</li>
+<li>The two together are never more than \u20A65,058, however big the deal.</li>
+<li><strong>Delivery:</strong> the courier\u2019s price for the route and weight, shown before the link is sent.</li>
+<li><strong>Minimum price:</strong> the item price must be at least twice the delivery fee for that route, so if a buyer refuses a correct item, what they paid covers both delivery trips. Sellers see the minimum on the create-link screen.</li>
+<li>For each of delivery and fees, the seller chooses who pays: the buyer, the seller, or half each. The buyer sees it all before paying.</li>
+</ul>
+<h3>Early-access code EARLYGAP</h3>
+<ul>
+<li>Removes the TrustGap fee (never the processing or delivery) from one deal.</li>
+<li>A seller can use it on one link; a buyer on one order (it removes the buyer\u2019s share of the fee only).</li>
+<li>It doesn\u2019t work if the seller pays the fee, or the link already has no TrustGap fee. It ends on 31 January 2027 or after 1,000 uses.</li>
+</ul>`
+    },
+    {
+      id: "problems",
+      title: "Problems and disputes",
+      html: `
+<h3>How a problem is reported</h3>
+<ul>
+<li>The buyer uses <strong>Report a problem</strong> on their tracking page: before delivery, or within the inspection window after it.</li>
+<li>For wrong, damaged, fake or not-as-described items, at least one photo is required (up to 2).</li>
+<li>Disputes also open automatically when the seller misses the ship-by time, when the buyer refuses the parcel at the door, or when the courier returns it.</li>
+</ul>
+<h3>What you do</h3>
+<ol>
+<li>Contact both sides. Be neutral; don\u2019t take sides.</li>
+<li>Ask for evidence: clear photos or a short video of the item, label and packaging; the chat where the item was described; for the seller, their packing photos or video.</li>
+<li>Write what you found in the task notes, with dates and who said what.</li>
+<li>Mark the task done and tell the admin it is ready to decide.</li>
+</ol>
+<h3>How disputes are decided (by the admin, or by you with a \u201CDecide a dispute\u201D task)</h3>
+<table>
+<tr><th>Finding</th><th>Usual outcome</th></tr>
+<tr><td>Seller at fault (wrong, fake, damaged, not as described, didn\u2019t ship)</td><td>Full refund to the buyer. The seller is charged both delivery trips, added to what they owe.</td></tr>
+<tr><td>Buyer refused a correct item, or changed their mind</td><td>Refund minus twice the delivery fee (the buyer accepted this in step 1).</td></tr>
+<tr><td>Claim not supported</td><td>The seller is paid as normal.</td></tr>
+</table>
+<p>A seller who owes a charge sees <strong>Pay now</strong> on their dashboard; otherwise it comes out of their next payout. They can\u2019t create new links while they owe money.</p>`
+    },
+    {
+      id: "returns",
+      title: "Returns",
+      html: `
+<p><strong>Every item goes back to the seller before any refund is paid, whatever it costs.</strong> No refund while the buyer still has the item. Nobody sends anything back on their own: TrustGap books every return.</p>
+<h3>The return PIN</h3>
+<p>It works like delivery in reverse. The seller gets a 4-digit return PIN by SMS and on their order page. When the item arrives, they check it, then give the rider the PIN. That is the record that they have it back, and it releases any refund that was waiting.</p>
+<h3>Refused at the door</h3>
+<ol>
+<li>The buyer checks the item, keeps their delivery PIN and refuses. The rider records why.</li>
+<li>The same rider takes it straight back. The seller gives the return PIN on arrival.</li>
+<li>The admin reviews and decides who pays what. Money moves once the seller has it back and the decision is made.</li>
+</ol>
+<h3>Problem found during the inspection window</h3>
+<ol>
+<li>The buyer reports it with photos. The admin reviews and decides.</li>
+<li>If the buyer is to be refunded, TrustGap books a courier to collect the item from the buyer. The buyer has <strong>3 days</strong> to hand it over, packed with everything that came with it.</li>
+<li>The seller checks it and gives the rider the return PIN. The refund is then sent automatically.</li>
+</ol>
+<h3>When a return gets stuck</h3>
+<ul>
+<li><strong>Buyer not handing it over:</strong> remind them the refund waits for the item. After 3 days the admin page shows it as overdue; tell the admin.</li>
+<li><strong>Seller not confirming:</strong> the seller can also tap \u201CI already have it back\u201D. If they say they have it but won\u2019t confirm, tell the admin, who can mark it received.</li>
+<li><strong>Item that came back isn\u2019t right</strong> (swapped, damaged on the way back): the seller must not accept it or give the PIN. Collect photos and tell the admin, who can cancel the return and decide again.</li>
+</ul>`
+    },
+    {
+      id: "deciding",
+      title: "Deciding a dispute",
+      html: `
+<p>Only when the admin has assigned you a <strong>Decide a dispute</strong> task for that order. The task\u2019s button opens the order with the evidence and the decision form. Your decision moves real money, so take your time.</p>
+<h3>Before you decide</h3>
+<ol>
+<li><strong>Read the report</strong>: the category, the buyer\u2019s description and their photos (tap to open full size).</li>
+<li><strong>Read the deal</strong>: the item description and condition, the seller\u2019s packing note, and the seller\u2019s condition pledge.</li>
+<li><strong>Check delivery</strong>: when it was delivered, the courier\u2019s status, the rider\u2019s note if it was refused.</li>
+<li><strong>Hear the seller</strong>: ask for their packing photos or video and the chat where they described the item. Give them a fair chance to answer (a few hours, or a day if not urgent).</li>
+<li><strong>Write down what you found</strong> in the task notes before deciding.</li>
+</ol>
+<h3>Choosing the outcome</h3>
+<table>
+<tr><th>What the evidence shows</th><th>Preset to use</th></tr>
+<tr><td>Wrong item, fake, damaged, not as described, missing parts, or the seller didn\u2019t ship</td><td><em>Seller at fault</em>: full refund, seller charged both delivery trips.</td></tr>
+<tr><td>The item matches the description and the buyer refused it or changed their mind</td><td><em>Buyer refused a correct item</em>: refund minus both delivery trips (the buyer accepted this before paying).</td></tr>
+<tr><td>No real problem shown (e.g. normal wear, a size the buyer chose, no evidence)</td><td><em>Claim not supported</em>: the seller is paid as normal.</td></tr>
+</table>
+<p>The presets only fill in the amounts; you can adjust them for a partial problem (e.g. one of two items wrong). The system refuses amounts that add up to more than the buyer paid.</p>
+<h3>The decision note</h3>
+<p>Both sides get it by SMS, so write it plainly: what the evidence showed and why these amounts. Example: \u201CThe buyer\u2019s photos show a torn sole on the left shoe, and the seller\u2019s packing note doesn\u2019t mention damage. Full refund; the seller pays both delivery trips.\u201D Never write anything rude, personal or a guess.</p>
+<h3>After you decide</h3>
+<ul>
+<li>If the buyer is refunded and had the item, a courier is booked to collect it, and the refund is sent once the seller has it back (see Returns).</li>
+<li>Your task is marked done automatically, with the decision in its notes. The decision shows your name on the order.</li>
+<li>A decision can\u2019t be undone. If you\u2019re unsure, add a note to the task and ask the admin instead of deciding.</li>
+</ul>`
+    },
+    {
+      id: "scripts",
+      title: "Common questions and how to answer",
+      html: `
+<dl>
+<dt>\u201CThe payment page says Tubalcain Ads Enterprise. Is this a scam?\u201D</dt>
+<dd>No. Tubalcain Ads Enterprise is the registered business that runs TrustGap; Flutterwave shows the registered name. Only pay through the TrustGap link the seller sent.</dd>
+<dt>\u201CI\u2019ve paid. Where is my item?\u201D</dt>
+<dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
+<dt>\u201CI lost my delivery PIN.\u201D</dt>
+<dd>It is in their SMS and on their tracking page (the link in their SMS). <strong>Never ask for the PIN and never read it out</strong>; only the buyer gives it to the rider.</dd>
+<dt>\u201CThe rider wants the PIN before I see the item.\u201D</dt>
+<dd>Don\u2019t give it. Check the item first. If the rider won\u2019t wait, refuse the delivery and contact us.</dd>
+<dt>\u201CThe seller asked me to pay them directly to make it faster.\u201D</dt>
+<dd>Don\u2019t. Outside the TrustGap link we can\u2019t help. Note the seller in your task so the admin can review them.</dd>
+<dt>\u201CWhen will I get my refund?\u201D</dt>
+<dd>After the decision and, if the item is coming back, once the seller has it. Then it goes out once Flutterwave has settled the original payment (the working day after it was paid, at the earliest), to the account they gave in step 2.</dd>
+<dt>\u201CWhen will I get paid?\u201D (seller)</dt>
+<dd>When the buyer confirms, or automatically when the inspection window ends with no problem reported. Then the next working day after settlement. Weekends and holidays add time.</dd>
+<dt>\u201CCan I cancel?\u201D (buyer, before dispatch)</dt>
+<dd>Take the details and pass to the admin. Once dispatched, they follow the refusal or return process instead.</dd>
+</dl>`
+    },
+    {
+      id: "rules",
+      title: "Rules for the team",
+      html: `
+<ul>
+<li><strong>Never ask for</strong> a card PIN, OTP, password, delivery PIN, return PIN or login code. Nobody at TrustGap ever needs them.</li>
+<li><strong>Privacy:</strong> never give a buyer\u2019s address, phone or refund account to the seller, or the seller\u2019s details to the buyer, beyond what the order already shows them. Don\u2019t copy customer data into personal chats or notes.</li>
+<li>Use the official TrustGap phone or WhatsApp and email, not your personal accounts.</li>
+<li>Write everything important in the task notes: who you spoke to, when, what they said, what evidence you got. The notes are the record if a case is challenged.</li>
+<li>Be polite and neutral. Don\u2019t argue, don\u2019t blame, don\u2019t promise outcomes.</li>
+<li>Decide a dispute only with a \u201CDecide a dispute\u201D task for that order, and never one involving a friend, relative or a business you have a link to. If that happens, tell the admin and don\u2019t decide it.</li>
+<li><strong>Pass to the admin straight away</strong> if: someone threatens legal action or the police; you suspect fraud or a fake identity; someone asks to change bank details; a payment looks missing or doubled; anyone is in danger; a journalist or regulator contacts you.</li>
+<li>Marketing messages go only to people who ticked \u201CSend me TrustGap news and offers\u201D (the Marketing contacts tab). Never add anyone else.</li>
+</ul>`
+    },
+    {
+      id: "portal",
+      title: "Using the team portal",
+      html: `
+<ol>
+<li>Log in at <strong>/team/</strong> with your email and password. The first time, and after a reset, you must choose a new password (at least 10 characters).</li>
+<li><strong>My tasks</strong> shows what the admin assigned you: high priority and soonest due first. Overdue tasks are marked.</li>
+<li>Move a task to <em>In progress</em> when you start and <em>Done</em> when finished. Add notes as you go.</li>
+<li>A <strong>Decide a dispute</strong> task has a button <em>Review evidence and decide</em>. See the section \u201CDeciding a dispute\u201D.</li>
+<li>If a task is about an order, <strong>Open order</strong> shows its status, item, both sides\u2019 contact details, delivery, any dispute and return, and the timeline. It is read only, and you can only open orders your tasks are about.</li>
+<li>Log out when you finish, especially on a shared device. Sessions end after 12 hours.</li>
+</ol>
+<p>Forgot your password? Ask the admin to reset it.</p>`
+    },
+    {
+      id: "glossary",
+      title: "Glossary",
+      html: `
+<dl>
+<dt>Deal link</dt><dd>The payment link a seller creates for one item and one buyer.</dd>
+<dt>Delivery PIN</dt><dd>The buyer\u2019s 4-digit code given to the rider after checking the item. Marks the order delivered.</dd>
+<dt>Return PIN</dt><dd>The seller\u2019s 4-digit code given to the rider when a returned item reaches them.</dd>
+<dt>Inspection window</dt><dd>Time after delivery (currently 24 hours) to report a hidden problem.</dd>
+<dt>Ship-by time</dt><dd>The deadline for the seller to hand the item to the courier.</dd>
+<dt>Packing note</dt><dd>The seller\u2019s description of what they packed, written when booking pickup.</dd>
+<dt>Settlement</dt><dd>Flutterwave moving the buyer\u2019s payment into our account, the next working day.</dd>
+<dt>Seller charge / debt</dt><dd>An amount a seller owes after losing a dispute. Paid on the dashboard or taken from the next payout.</dd>
+<dt>Test mode</dt><dd>A demonstration setup where no real money moves. A yellow bar shows at the bottom of every page.</dd>
+</dl>`
+    }
+  ]
+};
+
+// src/routes/team.js
+async function requireStaff(ctx, request, { allowPasswordChange = false } = {}) {
+  const session2 = await authenticate(ctx, request);
+  const staff = session2?.staff_id && await first(ctx.env, "SELECT * FROM staff WHERE id = ? AND disabled_at IS NULL", session2.staff_id);
+  if (!staff) throw new UserError("Please log in.", 401);
+  if (staff.must_change_password && !allowPasswordChange) throw new UserError("Choose a new password first.", 403);
+  return staff;
+}
+__name(requireStaff, "requireStaff");
+async function requireAdmin2(ctx, request) {
+  const session2 = await authenticate(ctx, request);
+  if (!session2?.is_admin) throw new UserError("Admin login required.", 401);
+}
+__name(requireAdmin2, "requireAdmin");
+function teamRoutes(r) {
+  r.post("/api/team/login", ({ ctx, body }) => staffLogin(ctx, body));
+  r.get("/api/team/me", async ({ ctx, request }) => ({ staff: meView(await requireStaff(ctx, request, { allowPasswordChange: true })) }));
+  r.post("/api/team/password", async ({ ctx, request, body }) => ({ staff: await changeOwnPassword(ctx, await requireStaff(ctx, request, { allowPasswordChange: true }), body) }));
+  r.get("/api/team/tasks", async ({ ctx, request }) => {
+    const staff = await requireStaff(ctx, request);
+    return { tasks: await tasksFor(ctx, staff.id), statuses: TASK_STATUSES };
+  });
+  r.post("/api/team/tasks/:id/status", async ({ ctx, request, params, body }) => ({ task: await setTaskStatus(ctx, await requireStaff(ctx, request), params.id, body.status) }));
+  r.post("/api/team/tasks/:id/notes", async ({ ctx, request, params, body }) => ({ task: await staffNote(ctx, await requireStaff(ctx, request), params.id, body.body) }));
+  r.get("/api/team/orders/:id", async ({ ctx, request, params }) => teamOrderView(ctx, await requireStaff(ctx, request), params.id));
+  r.post("/api/team/disputes/:id/resolve", async ({ ctx, request, params, body }) => ({ ok: true, ...await teamResolveDispute(ctx, await requireStaff(ctx, request), params.id, body) }));
+  r.get("/api/manual", async ({ ctx, request }) => {
+    const session2 = await authenticate(ctx, request);
+    if (!session2?.is_admin) await requireStaff(ctx, request);
+    return { manual: MANUAL };
+  });
+  const admin = /* @__PURE__ */ __name((handler) => async (args) => {
+    await requireAdmin2(args.ctx, args.request);
+    return handler(args);
+  }, "admin");
+  r.get("/api/admin/team", admin(async ({ ctx }) => ({
+    staff: await listStaff(ctx),
+    tasks: await allTasks(ctx),
+    roles: ROLES,
+    statuses: TASK_STATUSES,
+    priorities: PRIORITIES,
+    kinds: TASK_KINDS
+  })));
+  r.post("/api/admin/team", admin(async ({ ctx, body }) => ({ staff: await createStaff(ctx, body) })));
+  r.post("/api/admin/team/:id", admin(async ({ ctx, params, body }) => ({ staff: await updateStaff(ctx, params.id, body) })));
+  r.post("/api/admin/tasks", admin(async ({ ctx, body }) => ({ task: await createTask(ctx, body) })));
+  r.post("/api/admin/tasks/:id", admin(async ({ ctx, params, body }) => ({ task: await updateTask(ctx, params.id, body) })));
+  r.post("/api/admin/tasks/:id/notes", admin(async ({ ctx, params, body }) => {
+    const t = await first(ctx.env, "SELECT id FROM tasks WHERE id = ?", Number(params.id));
+    if (!t) throw new UserError("Task not found.", 404);
+    await addNote(ctx, t.id, "Admin", body.body);
+    return { ok: true };
+  }));
+}
+__name(teamRoutes, "teamRoutes");
+
 // src/index.js
 var router = new Router();
 publicRoutes(router);
 sellerRoutes(router);
 riderRoutes(router);
 adminRoutes(router);
+teamRoutes(router);
 var index_default = {
   async fetch(request, env, execCtx) {
     const cors = corsHeaders(env, request);

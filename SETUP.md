@@ -203,6 +203,8 @@ pays sellers with the **Transfers API** once delivery is confirmed. The app alre
   payout fee, passed on at cost). The two fees together never exceed ₦5,058 per deal. Change
   `FEE_CAP_NAIRA`, `PROCESSING_PERCENT`, `PROCESSING_CAP_NAIRA` or `PAYOUT_FEE_NAIRA` (Text variables in
   Cloudflare) if you change your cap or your merchant agreement differs; `0` means no cap.
+  `MIN_PRICE_DELIVERY_MULTIPLE` (default 2): the item price must be at least that many times the delivery
+  fee, so a refused correct item's two delivery trips are always covered by what the buyer paid (`0` = off).
   **Check the ₦2,000 cap against your own Flutterwave pricing** (Dashboard, Settings, Fees): if your account
   has no cap, set `PROCESSING_CAP_NAIRA` to `0`, or buyers will be charged less than Flutterwave takes.
 - **Payouts wait for settlement**: a payout is scheduled for the next working day after the buyer
@@ -533,7 +535,28 @@ What makes AI assistants actually recommend TrustGap over time is other websites
 press articles, business directories, blog posts, Nairaland threads, partner pages and reviews.
 The site now makes it easy for them to understand TrustGap; mentions elsewhere make them trust it.
 
-## 12. Going live checklist
+## 12. Team members, tasks and the manual
+
+- **Add a team member:** Admin → **Team** → *Add a team member*: name, email (their login), phone (for
+  task SMS) and a temporary password of at least 10 characters. Tell them the password by phone or in
+  person. They log in at `https://<your-site>/team/` and must choose their own password first.
+- **Assign work:** *Assign a task* with a title, details, an optional order reference (lets them open
+  that order, read only), a due date and priority. They get an SMS and email through Make (the
+  event is `task_assigned`; add it to your Make scenario's SMS route if you filter by event).
+- **Forgotten password / someone leaves:** *Reset password* (signs them out; they set a new one) or
+  *Turn off* (signs them out and blocks login). Accounts are never deleted, so task history stays.
+- **Deciding disputes while you're away:** assign a task with **Type: Decide a dispute** and the order
+  reference (the order must have an open dispute). Until that task is done, the member can see the
+  evidence and decide that one dispute with the same presets, checks and return rule as you. The
+  decision moves money exactly like yours, shows "Decision by <name> (team)" on the order, and closes
+  the task with the amounts in its notes.
+- **What members can't do:** decide any other dispute, change orders, see bank or refund accounts,
+  PINs, or orders their tasks aren't about. Admin pages refuse their login.
+- **The manual** is at `/team/manual.html` (Admin → Manual). The page itself is public, but its text
+  comes from the Worker only after login, so nobody else can read it. To change it, edit
+  `worker/src/manual.js`, change `updated`, and redeploy the Worker.
+
+## 13. Going live checklist
 
 - [ ] Lawyer advises on holding customer funds (Flutterwave confirmed TrustGap is the custodian)
 - [ ] Lawyer reviews the policy pages in `docs/legal/` and the buyer rules in `worker/src/lib/terms.js`;

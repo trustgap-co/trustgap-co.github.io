@@ -83,13 +83,14 @@ export async function verifyCode(ctx, input) {
 
 // ---------------------------------------------------------------- sessions (bearer tokens)
 
-export async function createSession(ctx, { sellerId = null, isAdmin = false }) {
+export async function createSession(ctx, { sellerId = null, isAdmin = false, staffId = null }) {
   const token = randomToken(32);
-  const hours = isAdmin ? 12 : ctx.config.sessionDays * 24;
+  const hours = isAdmin || staffId ? 12 : ctx.config.sessionDays * 24;
   await insert(ctx.env, 'sessions', {
     token_hash: await sha256Hex(token),
     seller_id: sellerId,
     is_admin: isAdmin,
+    ...(staffId ? { staff_id: staffId } : {}),
     expires_at: iso(new Date(ctx.now().getTime() + hours * 3_600_000)),
     created_at: iso(ctx.now()),
   });

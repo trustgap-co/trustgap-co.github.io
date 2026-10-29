@@ -39,5 +39,13 @@ export const MIGRATIONS = [
   {
     "name": "0010_returns.sql",
     "sql": "-- Returns to the seller. The buyer's refund waits until the seller has the item back, confirmed by\n-- the seller's 4-digit return PIN (given to the rider at hand-back), the courier's own record, the\n-- seller's \"I've received it\" button, or TrustGap staff.\n--   kind 'door':   refused at the door; the same rider takes the parcel straight back.\n--   kind 'pickup': a problem found after delivery; a new courier order collects it from the buyer.\nCREATE TABLE IF NOT EXISTS returns (\n  id INTEGER PRIMARY KEY,\n  order_id INTEGER NOT NULL REFERENCES orders(id),\n  kind TEXT NOT NULL,\n  status TEXT NOT NULL,\n  pin_enc TEXT NOT NULL,\n  pin_attempts INTEGER NOT NULL DEFAULT 0,\n  courier TEXT,\n  delivery_ref TEXT,\n  rider_url TEXT,\n  courier_status TEXT,\n  cost INTEGER,\n  deadline_at TEXT,\n  received_at TEXT,\n  received_by TEXT,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS returns_order ON returns(order_id);\n"
+  },
+  {
+    "name": "0011_team_and_tasks.sql",
+    "sql": "-- Team members (e.g. customer relations) with their own password, and tasks the admin assigns them.\nCREATE TABLE IF NOT EXISTS staff (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  phone TEXT,\n  role TEXT NOT NULL,\n  password_hash TEXT NOT NULL,\n  must_change_password INTEGER NOT NULL DEFAULT 1,\n  disabled_at TEXT,\n  last_login_at TEXT,\n  created_at TEXT NOT NULL\n);\nALTER TABLE sessions ADD COLUMN staff_id INTEGER;\n\nCREATE TABLE IF NOT EXISTS tasks (\n  id INTEGER PRIMARY KEY,\n  title TEXT NOT NULL,\n  details TEXT,\n  order_id INTEGER REFERENCES orders(id),\n  assigned_to INTEGER REFERENCES staff(id),\n  priority TEXT NOT NULL DEFAULT 'normal',\n  status TEXT NOT NULL DEFAULT 'todo',\n  due_at TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  completed_at TEXT\n);\nCREATE INDEX IF NOT EXISTS tasks_assignee ON tasks(assigned_to, status);\n\nCREATE TABLE IF NOT EXISTS task_notes (\n  id INTEGER PRIMARY KEY,\n  task_id INTEGER NOT NULL REFERENCES tasks(id),\n  author TEXT NOT NULL,\n  body TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS task_notes_task ON task_notes(task_id);\n"
+  },
+  {
+    "name": "0012_team_dispute_decisions.sql",
+    "sql": "-- \"Decide a dispute\" tasks: the admin can let a team member decide one order's dispute. Each\n-- decision records who made it.\nALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'general';\nALTER TABLE disputes ADD COLUMN decided_by TEXT;\n"
   }
 ];
