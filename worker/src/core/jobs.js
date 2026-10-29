@@ -37,8 +37,10 @@ export async function runJobs(ctx) {
     result.notShipped++;
   }
 
-  // Parcels with the courier (Fez): read their status, in case a webhook was missed.
-  for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'shipping' AND courier = ? AND delivery_ref IS NOT NULL LIMIT 30", ctx.logistics.name)) {
+  // Parcels with the courier (Fez): read their status, in case a webhook was missed. Includes refused
+  // parcels the courier is still carrying back on the original order (order under review, door return open).
+  for (const o of await all(ctx.env, `SELECT * FROM orders o WHERE o.courier = ? AND o.delivery_ref IS NOT NULL AND (o.status = 'shipping'
+      OR (o.status = 'disputed' AND EXISTS (SELECT 1 FROM returns r WHERE r.order_id = o.id AND r.kind = 'door' AND r.status = 'with_rider'))) LIMIT 30`, ctx.logistics.name)) {
     try {
       if (await syncCourierStatus(ctx, o)) result.couriersChecked++;
     } catch (err) {

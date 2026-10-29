@@ -226,3 +226,69 @@ describe('evidence photo checks', () => {
     assert.ok(shown[1].warnings.includes('No camera details: could be a screenshot, a forwarded or edited picture'));
   });
 });
+
+describe('the buyer refuses during delivery (from their tracking page)', () => {
+  async function outForDelivery(t) {
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller);
+    const { trackToken } = await buyerPays(t, deal.token);
+    let order = await lastOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box, size tag 42' }, seller);
+    order = await lastOrder(t);
+    const rt = tokenOf(order.rider_url);
+    await t.post(`/api/rider/${rt}/status`, { status: 'out_for_delivery' });
+    return { seller, trackToken, order, rt, admin: await adminToken(t) };
+  }
+  const report = (t, trackToken, extra = {}) => t.post(`/api/track/${trackToken}/dispute`,
+    { category: 'not_as_described', description: 'Size tag says 40, not 42', photos: [PHOTO], ...extra });
+
+  test('they must say where the parcel is', async () => {
+    const t = boot();
+    const { trackToken } = await outForDelivery(t);
+    assert.match((await report(t, trackToken)).data.error, /where the parcel is now/);
+    assert.equal((await lastOrder(t)).status, 'shipping');
+  });
+
+  test('"I still have it": a collection is booked straight away, and the refund waits for it', async () => {
+    const t = boot();
+    const { seller, trackToken, order, admin } = await outForDelivery(t);
+    assert.equal((await report(t, trackToken, { parcel: 'buyer' })).status, 200);
+    const ret = await t.one('SELECT * FROM returns');
+    assert.deepEqual([ret.kind, ret.status], ['pickup', 'booked']);
+    assert.equal((await t.get(`/api/track/${trackToken}`)).data.return.status, 'booked');
+    assert.ok((await t.db('SELECT sms FROM outbox')).some((m) => /a rider will collect/.test(m.sms)));
+    const dispute = await t.one('SELECT * FROM disputes');
+    assert.equal(dispute.parcel_location, 'buyer');
+    const r = await decide(t, admin, dispute, {});
+    assert.equal(r.data.waiting_for_return, true, 'no refund while the buyer still has it');
+    const pin = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.pin;
+    assert.equal((await t.post(`/api/rider/${tokenOf(ret.rider_url)}/return-pin`, { pin })).status, 200);
+    assert.equal((await lastOrder(t)).status, 'refunded');
+  });
+
+  test('"The rider took it back": the rider’s page switches to the hand-back with the seller’s PIN', async () => {
+    const t = boot();
+    const { seller, trackToken, order, rt } = await outForDelivery(t);
+    assert.equal((await report(t, trackToken, { parcel: 'rider' })).status, 200);
+    const ret = await t.one('SELECT * FROM returns');
+    assert.deepEqual([ret.kind, ret.status], ['door', 'with_rider']);
+    assert.equal((await lastOrder(t)).delivery_status, 'refused');
+    const job = (await t.get(`/api/rider/${rt}`)).data.order;
+    assert.equal(job.return.open, true);
+    const pin = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.pin;
+    assert.equal((await t.post(`/api/rider/${rt}/return-pin`, { pin })).status, 200);
+    assert.equal((await t.one('SELECT status FROM returns')).status, 'received');
+  });
+
+  test('staff can book a collection by hand for an order stuck without one', async () => {
+    const t = boot();
+    const { trackToken, order, admin } = await outForDelivery(t);
+    // "Item not delivered" doesn't ask about the parcel; it turns out the buyer has it.
+    await t.post(`/api/track/${trackToken}/dispute`, { category: 'not_delivered', description: 'Rider says delivered but it was left at the gate' });
+    assert.equal((await t.one('SELECT COUNT(*) n FROM returns')).n, 0);
+    const r = await t.post(`/api/admin/orders/${order.id}/book-return`, {}, admin);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal((await t.one('SELECT status FROM returns')).status, 'booked');
+    assert.match((await t.post(`/api/admin/orders/${order.id}/book-return`, {}, admin)).data.error, /already exists/);
+  });
+});

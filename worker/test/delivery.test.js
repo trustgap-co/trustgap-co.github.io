@@ -215,6 +215,23 @@ describe('Fez', () => {
     assert.deepEqual([ret.kind, ret.status, ret.received_by], ['door', 'received', 'courier']);
   });
 
+  test('a refusal recorded by Fez’s rider opens a dispute and starts the return; Returned completes it', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const { seller, order } = await paidFezOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box' }, seller);
+    fez.state.status = 'Rejected';
+    fez.state.reason = 'Customer rejected item';
+    await t.scheduled();
+    const o = await t.one('SELECT status, delivery_status FROM orders');
+    assert.deepEqual([o.status, o.delivery_status], ['disputed', 'refused']);
+    assert.equal((await t.one('SELECT category FROM disputes')).category, 'refused_at_door');
+    assert.equal((await t.one('SELECT status FROM returns')).status, 'with_rider');
+    fez.state.status = 'Returned';
+    await t.scheduled();
+    assert.deepEqual({ ...(await t.one('SELECT kind, status, received_by FROM returns')) }, { kind: 'door', status: 'received', received_by: 'courier' });
+  });
+
   test('a return after delivery is a new Fez order carrying the seller’s PIN; Delivered releases the refund', async () => {
     const fez = fakeFez();
     const t = boot(FEZ);

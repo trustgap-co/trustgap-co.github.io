@@ -134,8 +134,9 @@ export const MANUAL = {
 <p>It works like delivery in reverse. The seller gets a 4-digit return PIN by SMS and on their order page. When the item arrives, they check it, then give the rider the PIN. That is the record that they have it back, and it releases any refund that was waiting.</p>
 <h3>Refused at the door</h3>
 <ol>
-<li>The buyer checks the item, keeps their delivery PIN and refuses. The rider records why.</li>
-<li>The same rider takes it straight back. The seller gives the return PIN on arrival.</li>
+<li>The buyer checks the item, keeps their delivery PIN and refuses: the rider records it, or the buyer reports it on their tracking page and says where the parcel is.</li>
+<li>If the rider has it, the same rider takes it straight back. If it was left with the buyer, a collection is booked automatically. The seller gives the return PIN on arrival.</li>
+<li>If a refused parcel is with the buyer and no return shows on the order (e.g. a courier error), the admin uses <strong>Book a return from the buyer</strong> on the order page.</li>
 <li>The admin reviews and decides who pays what. Money moves once the seller has it back and the decision is made.</li>
 </ol>
 <h3>Problem found during the inspection window</h3>

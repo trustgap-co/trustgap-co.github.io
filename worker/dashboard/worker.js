@@ -926,6 +926,10 @@ ALTER TABLE disputes ADD COLUMN decided_by TEXT;
   {
     "name": "0013_photo_evidence.sql",
     "sql": "-- How each evidence photo was taken, and what TrustGap's checks found:\n--   source       'camera' (TrustGap's in-page camera, stamped) or 'upload' (chosen from the phone)\n--   stamp_code   the code stamped on a camera photo; captured_at is when TrustGap issued it\n--   phash        a 64-bit picture fingerprint, to spot a photo copied from the listing or reused\n--   flags        JSON list of warnings for whoever decides (e.g. old photo, copy of listing photo)\nALTER TABLE dispute_photos ADD COLUMN source TEXT;\nALTER TABLE dispute_photos ADD COLUMN stamp_code TEXT;\nALTER TABLE dispute_photos ADD COLUMN captured_at TEXT;\nALTER TABLE dispute_photos ADD COLUMN phash TEXT;\nALTER TABLE dispute_photos ADD COLUMN flags TEXT;\nALTER TABLE deal_photos ADD COLUMN phash TEXT;\n-- A return the seller accepted but reported as not the item that was delivered.\nALTER TABLE returns ADD COLUMN problem_at TEXT;\nALTER TABLE returns ADD COLUMN problem_note TEXT;\n"
+  },
+  {
+    "name": "0014_parcel_location.sql",
+    "sql": "-- Where the parcel was when the buyer reported a problem during delivery: 'rider' (refused at the\n-- door, the rider took it back) or 'buyer' (the rider left it with them). Decides which return starts.\nALTER TABLE disputes ADD COLUMN parcel_location TEXT;\n"
   }
 ];
 
@@ -1795,9 +1799,9 @@ async function startDoorReturn(ctx, order, { received = false, by = "courier" } 
   return activeReturn(ctx, order.id);
 }
 __name(startDoorReturn, "startDoorReturn");
-async function bookPickupReturn(ctx, order) {
+async function bookPickupReturn(ctx, order, { parcelWithBuyer = false, by = "admin" } = {}) {
   if (await activeReturn(ctx, order.id)) throw new UserError("A return already exists for this order.");
-  if (!order.delivered_at) throw new UserError("The item never reached the buyer, so there is nothing to collect.");
+  if (!order.delivered_at && !parcelWithBuyer) throw new UserError("The item never reached the buyer, so there is nothing to collect.");
   const deal = await getDeal(ctx, order.deal_id);
   const seller = await getSeller(ctx, order.seller_id);
   const { pin, enc: enc2 } = await newPin(ctx);
@@ -1828,7 +1832,7 @@ async function bookPickupReturn(ctx, order) {
   if (cost) {
     await insert(ctx.env, "ledger", { order_id: order.id, kind: "return_cost", amount: cost, counterparty: ctx.logistics.name, status: "pending", created_at: iso(ctx.now()) });
   }
-  await logEvent(ctx, order.id, "admin", "return_booked", { delivery_ref: booking.deliveryRef });
+  await logEvent(ctx, order.id, by, "return_booked", { delivery_ref: booking.deliveryRef });
   await ctx.notify.send({
     orderId: order.id,
     event: "return_booked",
@@ -2341,6 +2345,10 @@ async function syncCourierStatus(ctx, order) {
         sms: `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.`
       });
     }
+  } else if (st.stage === "problem" && /reject|refus/i.test(st.raw || "") && order.status === "shipping") {
+    await openDispute(ctx, order, { by: "courier", category: "refused_at_door", description: `Refused at the door (courier: ${st.raw}${st.reason ? `: ${st.reason}` : ""}).` });
+    await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
+    await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: "courier" });
   } else if (st.stage === "returned" && order.delivery_status !== "returned") {
     await update(ctx.env, "orders", order.id, { delivery_status: "returned" });
     if (order.status === "shipping") {
@@ -2359,8 +2367,11 @@ async function syncCourierStatus(ctx, order) {
 __name(syncCourierStatus, "syncCourierStatus");
 var PHOTO_REQUIRED = ["wrong_item", "damaged", "not_as_described", "counterfeit"];
 var MAX_DISPUTE_PHOTOS = 2;
-async function openDispute(ctx, order, { by, category, description, photos: photoInput }) {
+var PARCEL_LOCATIONS = { rider: "The rider took it back", buyer: "I still have it" };
+async function openDispute(ctx, order, { by, category, description, photos: photoInput, parcel }) {
   if (!DISPUTE_CATEGORIES[category]) throw new UserError("Choose what went wrong.");
+  const duringDelivery = by === "buyer" && order.status === "shipping" && category !== "not_delivered";
+  if (duringDelivery && !PARCEL_LOCATIONS[parcel]) throw new UserError("Tell us where the parcel is now: did the rider take it back, or do you still have it?");
   const text = str(description).slice(0, 2e3);
   if (text.length < 3) throw new UserError("Describe the problem.");
   const photos = await checkedEvidence(ctx, order, await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS));
@@ -2372,7 +2383,7 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
     throw new UserError("The inspection period has ended.");
   }
   const won = await transition(ctx, order.id, [order.status], { status: "disputed" }, (h) => [
-    h.insert("disputes", { order_id: order.id, opened_by: by, category, description: text, status: "open", created_at: iso(ctx.now()) }),
+    h.insert("disputes", { order_id: order.id, opened_by: by, category, description: text, status: "open", parcel_location: duringDelivery ? parcel : null, created_at: iso(ctx.now()) }),
     // Saved in the same step as the dispute, so a report never exists without its photos.
     ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
     h.event(by, "dispute_opened", { category, description: text, photos: photos.length })
@@ -2382,8 +2393,22 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
   const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.`;
   await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: order.buyer_phone, sms });
   await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: seller.phone, sms });
+  if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
 }
 __name(openDispute, "openDispute");
+async function startReturnAfterRefusal(ctx, order, parcel) {
+  try {
+    if (parcel === "rider") {
+      await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
+      await startDoorReturn(ctx, order, { by: "buyer" });
+    } else {
+      await bookPickupReturn(ctx, order, { parcelWithBuyer: true, by: "buyer" });
+    }
+  } catch (err) {
+    await logEvent(ctx, order.id, "system", "return_booking_failed", err.message);
+  }
+}
+__name(startReturnAfterRefusal, "startReturnAfterRefusal");
 async function checkedEvidence(ctx, order, photos) {
   if (!photos.length) return photos;
   const listing = await all(ctx.env, "SELECT position, phash FROM deal_photos WHERE deal_id = ? AND phash IS NOT NULL", order.deal_id);
@@ -2442,10 +2467,11 @@ async function resolveDispute(ctx, disputeId, input, { by = "admin" } = {}) {
   const note = requireLength(input.note, "Decision note", 10, 2e3);
   const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
   let ret = await activeReturn(ctx, order.id);
-  if (sellerPayout > 0 && (ret && !ret.problem_at || buyerRefund > 0 && order.delivered_at && !ret)) {
+  const withBuyer = Boolean(order.delivered_at) || dispute.parcel_location === "buyer";
+  if (sellerPayout > 0 && (ret && !ret.problem_at || buyerRefund > 0 && withBuyer && !ret)) {
     throw new UserError(ret ? "The item is back with the seller (or on its way), so the seller can\u2019t also be paid. Refund the buyer, with or without the delivery deductions." : "A refund means the item goes back to the seller, so the seller can\u2019t also be paid. Choose a refund or a payout, not both.");
   }
-  if (buyerRefund > 0 && order.delivered_at && !ret) ret = await bookPickupReturn(ctx, order);
+  if (buyerRefund > 0 && withBuyer && !ret) ret = await bookPickupReturn(ctx, order, { parcelWithBuyer: true });
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(
       ctx.env,
@@ -2826,7 +2852,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
   r.get("/api/track/:token/photo-stamp", async ({ ctx, params }) => ({ stamp: await issueStamp(ctx, await loadOrderByBuyerToken(ctx, params.token)) }));
   r.post("/api/track/:token/dispute", async ({ ctx, params, body }) => {
     if (!BUYER_DISPUTE_CATEGORIES[body.category]) throw new UserError("Choose what went wrong.");
-    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: "buyer", category: body.category, description: body.description, photos: body.photos });
+    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: "buyer", category: body.category, description: body.description, photos: body.photos, parcel: body.parcel });
     return { ok: true };
   });
 }
@@ -3212,7 +3238,8 @@ async function runJobs(ctx) {
     await openDispute(ctx, o, { by: "system", category: "not_shipped", description: "The seller did not book pickup within the agreed time." });
     result.notShipped++;
   }
-  for (const o of await all(ctx.env, "SELECT * FROM orders WHERE status = 'shipping' AND courier = ? AND delivery_ref IS NOT NULL LIMIT 30", ctx.logistics.name)) {
+  for (const o of await all(ctx.env, `SELECT * FROM orders o WHERE o.courier = ? AND o.delivery_ref IS NOT NULL AND (o.status = 'shipping'
+      OR (o.status = 'disputed' AND EXISTS (SELECT 1 FROM returns r WHERE r.order_id = o.id AND r.kind = 'door' AND r.status = 'with_rider'))) LIMIT 30`, ctx.logistics.name)) {
     try {
       if (await syncCourierStatus(ctx, o)) result.couriersChecked++;
     } catch (err) {
@@ -3603,6 +3630,13 @@ function adminRoutes(r) {
   r.post("/api/admin/returns/:id/received", admin(async ({ ctx, params }) => {
     if (!await receiveReturn(ctx, await adminReturn(ctx, params.id), "admin")) throw new UserError("This return is already closed.");
     return { ok: true };
+  }));
+  r.post("/api/admin/orders/:id/book-return", admin(async ({ ctx, params }) => {
+    const order = await getOrder(ctx, Number(params.id));
+    if (!order) throw notFound("Order not found.");
+    if (!["disputed", "shipping"].includes(order.status) || !order.dispatched_at) throw new UserError("A return can only be booked for a shipped order under review.");
+    const ret = await bookPickupReturn(ctx, order, { parcelWithBuyer: true });
+    return { ok: true, return_id: ret.id };
   }));
   r.post("/api/admin/returns/:id/cancel", admin(async ({ ctx, params, body }) => {
     await cancelReturn(ctx, await adminReturn(ctx, params.id), body.note);
@@ -4075,8 +4109,9 @@ var MANUAL = {
 <p>It works like delivery in reverse. The seller gets a 4-digit return PIN by SMS and on their order page. When the item arrives, they check it, then give the rider the PIN. That is the record that they have it back, and it releases any refund that was waiting.</p>
 <h3>Refused at the door</h3>
 <ol>
-<li>The buyer checks the item, keeps their delivery PIN and refuses. The rider records why.</li>
-<li>The same rider takes it straight back. The seller gives the return PIN on arrival.</li>
+<li>The buyer checks the item, keeps their delivery PIN and refuses: the rider records it, or the buyer reports it on their tracking page and says where the parcel is.</li>
+<li>If the rider has it, the same rider takes it straight back. If it was left with the buyer, a collection is booked automatically. The seller gives the return PIN on arrival.</li>
+<li>If a refused parcel is with the buyer and no return shows on the order (e.g. a courier error), the admin uses <strong>Book a return from the buyer</strong> on the order page.</li>
 <li>The admin reviews and decides who pays what. Money moves once the seller has it back and the decision is made.</li>
 </ol>
 <h3>Problem found during the inspection window</h3>

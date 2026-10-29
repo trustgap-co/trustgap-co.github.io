@@ -5,7 +5,7 @@ import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso } from 
 import { adminLogin, authenticate } from '../core/sellers.js';
 import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceDetails, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
-import { activeReturn, isOpenReturn, returnView, verifyReturnPin, applyReturnUpdate, receiveReturn, cancelReturn, syncReturnStatus, RETURN_LABELS } from '../core/returns.js';
+import { activeReturn, isOpenReturn, returnView, verifyReturnPin, applyReturnUpdate, receiveReturn, cancelReturn, syncReturnStatus, bookPickupReturn, RETURN_LABELS } from '../core/returns.js';
 import { dealPhotos } from '../core/deals.js';
 import { syncSheets } from '../providers/sheets.js';
 
@@ -154,6 +154,15 @@ export function adminRoutes(r) {
   r.post('/api/admin/returns/:id/received', admin(async ({ ctx, params }) => {
     if (!(await receiveReturn(ctx, await adminReturn(ctx, params.id), 'admin'))) throw new UserError('This return is already closed.');
     return { ok: true };
+  }));
+  // Staff book a collection from the buyer by hand (e.g. the buyer still has a refused parcel and no
+  // return was started, or a courier error stopped the automatic booking).
+  r.post('/api/admin/orders/:id/book-return', admin(async ({ ctx, params }) => {
+    const order = await getOrder(ctx, Number(params.id));
+    if (!order) throw notFound('Order not found.');
+    if (!['disputed', 'shipping'].includes(order.status) || !order.dispatched_at) throw new UserError('A return can only be booked for a shipped order under review.');
+    const ret = await bookPickupReturn(ctx, order, { parcelWithBuyer: true });
+    return { ok: true, return_id: ret.id };
   }));
   r.post('/api/admin/returns/:id/cancel', admin(async ({ ctx, params, body }) => {
     await cancelReturn(ctx, await adminReturn(ctx, params.id), body.note);

@@ -88,9 +88,11 @@ export async function startDoorReturn(ctx, order, { received = false, by = 'cour
 
 // A problem found after delivery: book a courier to collect the item from the buyer and take it to
 // the seller's pickup address. With Fez this is a new Fez order, carrying the seller's PIN.
-export async function bookPickupReturn(ctx, order) {
+// `parcelWithBuyer`: the parcel wasn't marked delivered but is with the buyer (they refused it at the
+// door and the rider left it, or staff confirmed it). `by` is who started it, for the timeline.
+export async function bookPickupReturn(ctx, order, { parcelWithBuyer = false, by = 'admin' } = {}) {
   if (await activeReturn(ctx, order.id)) throw new UserError('A return already exists for this order.');
-  if (!order.delivered_at) throw new UserError('The item never reached the buyer, so there is nothing to collect.');
+  if (!order.delivered_at && !parcelWithBuyer) throw new UserError('The item never reached the buyer, so there is nothing to collect.');
   const deal = await getDeal(ctx, order.deal_id);
   const seller = await getSeller(ctx, order.seller_id);
   const { pin, enc } = await newPin(ctx);
@@ -117,7 +119,7 @@ export async function bookPickupReturn(ctx, order) {
   if (cost) {
     await insert(ctx.env, 'ledger', { order_id: order.id, kind: 'return_cost', amount: cost, counterparty: ctx.logistics.name, status: 'pending', created_at: iso(ctx.now()) });
   }
-  await logEvent(ctx, order.id, 'admin', 'return_booked', { delivery_ref: booking.deliveryRef });
+  await logEvent(ctx, order.id, by, 'return_booked', { delivery_ref: booking.deliveryRef });
   await ctx.notify.send({
     orderId: order.id,
     event: 'return_booked',

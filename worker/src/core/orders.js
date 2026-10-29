@@ -423,6 +423,11 @@ export async function syncCourierStatus(ctx, order) {
         sms: `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.`,
       });
     }
+  } else if (st.stage === 'problem' && /reject|refus/i.test(st.raw || '') && order.status === 'shipping') {
+    // Fez's rider recorded a refusal at the door: same as our rider's "Buyer refused item".
+    await openDispute(ctx, order, { by: 'courier', category: 'refused_at_door', description: `Refused at the door (courier: ${st.raw}${st.reason ? `: ${st.reason}` : ''}).` });
+    await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
+    await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: 'courier' });
   } else if (st.stage === 'returned' && order.delivery_status !== 'returned') {
     await update(ctx.env, 'orders', order.id, { delivery_status: 'returned' });
     if (order.status === 'shipping') {
@@ -447,8 +452,14 @@ export async function syncCourierStatus(ctx, order) {
 export const PHOTO_REQUIRED = ['wrong_item', 'damaged', 'not_as_described', 'counterfeit'];
 export const MAX_DISPUTE_PHOTOS = 2;
 
-export async function openDispute(ctx, order, { by, category, description, photos: photoInput }) {
+// A buyer reporting while the parcel is out for delivery says where it is now: 'rider' (they refused it
+// and the rider took it back) or 'buyer' (the rider left it with them). Either way the return to the
+// seller starts straight away: a refused item always goes back, and the review only decides who pays.
+export const PARCEL_LOCATIONS = { rider: 'The rider took it back', buyer: 'I still have it' };
+export async function openDispute(ctx, order, { by, category, description, photos: photoInput, parcel }) {
   if (!DISPUTE_CATEGORIES[category]) throw new UserError('Choose what went wrong.');
+  const duringDelivery = by === 'buyer' && order.status === 'shipping' && category !== 'not_delivered';
+  if (duringDelivery && !PARCEL_LOCATIONS[parcel]) throw new UserError('Tell us where the parcel is now: did the rider take it back, or do you still have it?');
   const text = str(description).slice(0, 2000);
   if (text.length < 3) throw new UserError('Describe the problem.');
   const photos = await checkedEvidence(ctx, order, await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS));
@@ -460,7 +471,7 @@ export async function openDispute(ctx, order, { by, category, description, photo
     throw new UserError('The inspection period has ended.');
   }
   const won = await transition(ctx, order.id, [order.status], { status: 'disputed' }, (h) => [
-    h.insert('disputes', { order_id: order.id, opened_by: by, category, description: text, status: 'open', created_at: iso(ctx.now()) }),
+    h.insert('disputes', { order_id: order.id, opened_by: by, category, description: text, status: 'open', parcel_location: duringDelivery ? parcel : null, created_at: iso(ctx.now()) }),
     // Saved in the same step as the dispute, so a report never exists without its photos.
     ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
     h.event(by, 'dispute_opened', { category, description: text, photos: photos.length }),
@@ -470,6 +481,23 @@ export async function openDispute(ctx, order, { by, category, description, photo
   const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.`;
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: order.buyer_phone, sms });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: seller.phone, sms });
+  if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
+}
+
+// The buyer refused the parcel during delivery: the same rider takes it back, or, if it was left
+// with the buyer, a courier is booked to collect it. A courier error doesn't undo the report: staff
+// see it in the timeline and can book the return from the order page.
+async function startReturnAfterRefusal(ctx, order, parcel) {
+  try {
+    if (parcel === 'rider') {
+      await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
+      await startDoorReturn(ctx, order, { by: 'buyer' });
+    } else {
+      await bookPickupReturn(ctx, order, { parcelWithBuyer: true, by: 'buyer' });
+    }
+  } catch (err) {
+    await logEvent(ctx, order.id, 'system', 'return_booking_failed', err.message);
+  }
 }
 
 // Evidence photos with how they were taken and what the checks found (see lib/evidence.js), compared
@@ -528,16 +556,17 @@ export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {
   const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
 
   let ret = await activeReturn(ctx, order.id);
+  const withBuyer = Boolean(order.delivered_at) || dispute.parcel_location === 'buyer';
   // When the item goes back to the seller (refused at the door, or any refund after delivery), the
   // sale didn't happen: the seller gets the item, never money as well.
   // Exception: the seller accepted the return but reported it isn't what was delivered (swapped,
   // damaged), so they may be owed money for it.
-  if (sellerPayout > 0 && ((ret && !ret.problem_at) || (buyerRefund > 0 && order.delivered_at && !ret))) {
+  if (sellerPayout > 0 && ((ret && !ret.problem_at) || (buyerRefund > 0 && withBuyer && !ret))) {
     throw new UserError(ret
       ? 'The item is back with the seller (or on its way), so the seller can’t also be paid. Refund the buyer, with or without the delivery deductions.'
       : 'A refund means the item goes back to the seller, so the seller can’t also be paid. Choose a refund or a payout, not both.');
   }
-  if (buyerRefund > 0 && order.delivered_at && !ret) ret = await bookPickupReturn(ctx, order);
+  if (buyerRefund > 0 && withBuyer && !ret) ret = await bookPickupReturn(ctx, order, { parcelWithBuyer: true });
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(
       ctx.env,

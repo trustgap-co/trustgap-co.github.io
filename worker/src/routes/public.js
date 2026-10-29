@@ -254,7 +254,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
   r.get('/api/track/:token/photo-stamp', async ({ ctx, params }) => ({ stamp: await issueStamp(ctx, await loadOrderByBuyerToken(ctx, params.token)) }));
   r.post('/api/track/:token/dispute', async ({ ctx, params, body }) => {
     if (!BUYER_DISPUTE_CATEGORIES[body.category]) throw new UserError('Choose what went wrong.');
-    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: 'buyer', category: body.category, description: body.description, photos: body.photos });
+    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: 'buyer', category: body.category, description: body.description, photos: body.photos, parcel: body.parcel });
     return { ok: true };
   });
 }
