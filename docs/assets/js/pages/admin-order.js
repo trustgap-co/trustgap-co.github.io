@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos } from '../core.js';
 
 await shell('admin');
 const id = encodeURIComponent(params.get('id'));
@@ -12,7 +12,8 @@ async function render() {
         ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: o.amount, seller_payout: 0, seller_charge: o.delivery_fee * 2 }],
         ['Buyer refused a correct item: refund minus both delivery trips', { buyer_refund: Math.max(0, o.amount - o.delivery_fee * 2), seller_payout: 0, seller_charge: 0 }],
         // Once the item is back with the seller (or on its way), the seller can't also be paid.
-        ...(ret ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: o.seller_payout, seller_charge: 0 }]]),
+        // (unless the seller reported the returned item isn't what was delivered: then they may be owed money).
+        ...(ret && !ret.problem ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: o.seller_payout, seller_charge: 0 }]]),
       ]
     : [];
 
@@ -47,13 +48,14 @@ async function render() {
       ${o.courier_status ? `· courier says “${o.courier_status}”` : ''} · ship by ${date(o.ship_by)} · PIN attempts ${o.pin_attempts}
       ${o.courier === 'fez' && o.status === 'shipping' ? html`<button class="linklike" id="sync">check with Fez now</button>` : ''}</p>
   </section>
-  ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''}">
+  ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''} ${x.status === 'superseded' ? 'card-muted' : ''}">
     <h2>Dispute #${x.id}: ${x.category_label} (${x.status})</h2>
     <p class="small muted">Opened by ${x.opened_by} · ${date(x.created_at)}</p>
     <p class="pre">${x.description}</p>
-    ${x.photos?.length ? html`<p class="small"><strong>Buyer’s photos (${x.photos.length})</strong>: tap to open full size</p>${gallery(x.photos, 'Evidence')}`
-      : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}
-    ${x.status === 'resolved' || x.status === 'awaiting_return'
+    ${x.photos?.length ? evidencePhotos(x.photos) : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}
+    ${x.status === 'superseded'
+      ? html`<p class="small muted">Set aside: the seller reported the returned item isn’t what was delivered (see the newer dispute below).${x.resolution_note ? html` Earlier decision: ${x.resolution_note} (refund ${money(x.buyer_refund)}).` : ''}</p>`
+      : x.status === 'resolved' || x.status === 'awaiting_return'
       ? html`<p><strong>Decision${x.decided_by?.startsWith('team:') ? ` by ${x.decided_by.slice(5)} (team)` : ''}${x.status === 'awaiting_return' ? ' (money waits for the return)' : ''}:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}</p>`
       : html`<form class="form" id="resolve" data-id="${x.id}">
           <p class="small">Collected ${money(o.amount)}. Whatever isn’t refunded or paid out is kept to cover delivery and fees.
@@ -67,6 +69,7 @@ async function render() {
           <label>Decision note <small>sent to both parties; explain the evidence and the amounts</small><textarea name="note" required rows="3"></textarea></label>
           ${ret?.open
             ? html`<p class="callout info small">The item is on its way back to the seller (${ret.label}). Any refund waits until the seller has it, and the seller can’t also be paid.</p>`
+            : ret?.problem ? html`<p class="callout warn small">The seller accepted the return but reports it isn’t what was delivered: “${ret.problem_note}”. Compare their photos with the buyer’s and the listing. The seller can be paid if the buyer swapped or damaged it.</p>`
             : ret ? html`<p class="callout info small">The item is back with the seller, so the seller can’t also be paid. Refund the buyer, with or without the delivery deductions.</p>`
             : o.delivered_at && !ret
               ? html`<p class="callout info small">Any refund here books a courier to collect the item from the buyer. The refund is sent only once the seller has it back (return PIN). Every item goes back, whatever it costs.</p>`

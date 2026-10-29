@@ -42,7 +42,8 @@ async function render() {
           ${dispute.status === 'open' ? 'TrustGap is reviewing this order. Your money stays held.' : dispute.resolution_note}
           ${dispute.status === 'resolved' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}` : ''}
           ${dispute.status === 'awaiting_return' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}, sent as soon as the seller has the item back.` : ''}
-          ${dispute.photos?.length ? html`<p class="small" style="margin:10px 0 0">Your photos:</p>${gallery(dispute.photos, 'Problem')}` : ''}</div>`
+          ${dispute.photos?.length ? html`<p class="small" style="margin:10px 0 0">Your photos:</p>${gallery(dispute.photos, 'Problem')}` : ''}
+          ${dispute.opened_by === 'seller' && ret?.problem ? html`<p class="small" style="margin:10px 0 0">The seller says the item that came back isn’t what was delivered. Your refund is on hold while TrustGap reviews. If you have photos or a video of the item before you handed it over, send them to TrustGap support quoting ${o.ref}.</p>` : ''}</div>`
       : ''}
     ${ret?.open
       ? html`<div class="callout info"><strong>Return: ${ret.label}.</strong>
@@ -60,9 +61,13 @@ async function render() {
             <label>Details <small>what you expected vs what you got</small><textarea name="description" required rows="3" maxlength="2000"></textarea></label>
             <div class="photo-field">
               <p class="label">Photos of the problem <small id="ev-rule">Up to ${config.max_dispute_photos || 2}. Show the problem clearly: the damage, the wrong label or size, the missing part.</small></p>
+              <p class="live-note"><strong>Take the photos live, now, with the TrustGap camera.</strong> It opens your phone’s camera here and stamps each photo with your order number and the time, so TrustGap can trust it. Old photos, screenshots or pictures from the internet are flagged and carry less weight.</p>
               <div class="photo-grid" id="ev-grid"></div>
-              <label class="btn btn-secondary photo-add" id="ev-add">+ Add photo
-                <input type="file" accept="image/*" multiple id="ev-input" class="visually-hidden"></label>
+              <button type="button" class="btn photo-add" id="ev-camera">📷 Open the TrustGap camera</button>
+              <details class="cam-fallback" id="ev-fallback"><summary>Can’t use the camera?</summary>
+                <p class="small muted">Choose a photo from your phone instead. It will be marked as not taken with the TrustGap camera.</p>
+                <label class="btn btn-secondary btn-small photo-add" id="ev-add">Choose a photo
+                  <input type="file" accept="image/*" capture="environment" id="ev-input" class="visually-hidden"></label></details>
               <p class="muted small" id="ev-note" aria-live="polite"></p>
             </div>
             <p class="muted small">Keep the item, packaging and any unboxing video. TrustGap may contact you for more evidence. The money stays held until a decision.</p>
@@ -93,7 +98,9 @@ async function render() {
   if ($('#dispute')) {
     const needsPhoto = config.dispute_photo_required || [];
     const evidence = photoPicker({ grid: $('#ev-grid'), input: $('#ev-input'), add: $('#ev-add'), note: $('#ev-note'),
-      max: config.max_dispute_photos || 2, hint: 'Photos help TrustGap decide faster.' });
+      max: config.max_dispute_photos || 2, hint: 'Photos help TrustGap decide faster.',
+      cameraButton: $('#ev-camera'), fallback: $('#ev-fallback'),
+      getStamp: async () => (await api(path + '/photo-stamp')).stamp });
     $('#ev-input').addEventListener('change', () => { const box = $('#dispute .form-error'); if (box) box.innerHTML = ''; });
     $('#dispute [name=category]').addEventListener('change', (e) => {
       $('#ev-note').textContent = needsPhoto.includes(e.target.value) && !evidence.list().length

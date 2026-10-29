@@ -1,4 +1,4 @@
-import { shrinkPhoto } from '../photos.js';
+import { shrinkPhoto, fingerprint } from '../photos.js';
 import { api, html, show, onSubmit, shell, money, feeLabel, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
 
 const config = await shell('seller');
@@ -25,8 +25,9 @@ try {
         <div class="photo-field">
           <p class="label">Photos of the item <small>1 to ${MAX_PHOTOS}, of the actual item you will send. The buyer sees them before paying.</small></p>
           <div class="photo-grid" id="photo-grid"></div>
-          <label class="btn btn-secondary photo-add" id="photo-add">+ Add photos
-            <input type="file" accept="image/*" multiple id="photo-input" class="visually-hidden"></label>
+          <p class="live-note"><strong>Take live photos of the item now, with your phone camera.</strong> Not pictures from the internet, a catalogue or an old post: buyers check the item against these photos at the door, and they’re evidence if there’s a dispute.</p>
+          <label class="btn btn-secondary photo-add" id="photo-add">📷 Take photos
+            <input type="file" accept="image/*" capture="environment" multiple id="photo-input" class="visually-hidden"></label>
           <p class="muted small" id="photo-note" aria-live="polite"></p>
         </div>
         <label>Full description <small>colour, size, model, what’s in the box, any defects</small>
@@ -78,10 +79,10 @@ try {
 
   // ---- Photos: shrunk on the phone to a JPEG of at most 1280px (about 150–400 KB) before upload.
   // Re-drawing the photo also drops the camera's hidden details, such as GPS location.
-  let photos = []; // data URLs of new photos
+  let photos = []; // new photos: { data, phash }
   const keeping = v.replaces ? v.photos || [] : []; // a revised link keeps the old photos unless new ones are added
   const drawPhotos = () => {
-    const shown = photos.length ? photos : keeping;
+    const shown = photos.length ? photos.map((p) => p.data) : keeping;
     show('#photo-grid', html`${shown.map((src, i) => html`<figure><img src="${src}" alt="Item photo ${i + 1}">
       ${photos.length ? html`<button type="button" class="photo-del" data-del="${i}" aria-label="Remove photo ${i + 1}">×</button>` : ''}</figure>`)}`);
     $('#photo-add').hidden = photos.length >= MAX_PHOTOS;
@@ -95,7 +96,8 @@ try {
     $('#photo-note').textContent = 'Preparing photos…';
     for (const file of files) {
       try {
-        photos.push(await shrinkPhoto(file));
+        const data = await shrinkPhoto(file);
+        photos.push({ data, phash: await fingerprint(data).catch(() => null) });
       } catch {
         $('#photo-note').textContent = `“${file.name}” couldn’t be read. Try a JPG or PNG photo, or a screenshot of it.`;
         drawPhotos();

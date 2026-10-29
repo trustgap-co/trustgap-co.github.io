@@ -600,3 +600,18 @@ body.is-live .when-prelaunch { display: none !important; }
 .manual dd { margin: 4px 0 0; }
 .inline-form input, .task-controls select { font: inherit; font-size: .9rem; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--text); }
 .manual section { scroll-margin-top: 84px; }
+
+/* TrustGap camera (in-page, stamped photos for evidence). */
+.camera-modal { max-width: min(560px, calc(100vw - 16px)); }
+.camera { padding: 12px; display: grid; gap: 8px; }
+.camera video { width: 100%; max-height: 62vh; background: #000; border-radius: 12px; object-fit: contain; }
+.camera-stamp { margin: 0; font-size: .8rem; font-weight: 600; color: var(--text); background: var(--info-soft); border-radius: 8px; padding: 6px 8px; }
+.camera-actions { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.photo-grid figure { position: relative; }
+.photo-tag { position: absolute; left: 4px; bottom: 4px; font-size: .62rem; font-weight: 700; background: rgba(11,27,61,.8); color: #fff; padding: 2px 5px; border-radius: 6px; }
+.live-note { background: var(--info-soft); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; font-size: .9rem; }
+.photo-checks { list-style: none; padding: 0; margin: 6px 0 0; font-size: .85rem; display: grid; gap: 4px; }
+.photo-checks .ok { color: var(--ok, #0E7C5A); }
+.photo-checks .warn { color: var(--warn, #b45309); }
+.pin-inline { font-size: 1.2rem; letter-spacing: .2em; }
+.card-muted { opacity: .72; }

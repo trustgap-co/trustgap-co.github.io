@@ -203,6 +203,14 @@ export function confirmModal({ title, body, confirm, cancel = 'Go back and check
   });
 }
 
+// Evidence photos for the admin and team: the photos, then how each was taken and any warnings.
+export const evidencePhotos = (photos, label = 'Evidence') => (photos?.length ? html`
+  <p class="small" style="margin:10px 0 4px"><strong>Photos (${photos.length})</strong>: tap to open full size</p>
+  ${gallery(photos.map((p) => p.url), label)}
+  <ul class="photo-checks">${photos.map((p, i) => html`<li>Photo ${i + 1}: ${p.source === 'camera' && !p.warnings.length
+    ? html`<span class="ok">✓ Taken with the TrustGap camera (stamp ${p.stamp_code}, ${date(p.captured_at)})</span>`
+    : html`<span class="warn">⚠ ${p.warnings.join(' · ')}</span>`}</li>`)}</ul>` : '');
+
 export const errorBox = (msg) => (msg ? html`<div class="error" role="alert">${msg}</div>` : '');
 export const flash = {
   set: (m) => session.set('tg_flash', m),

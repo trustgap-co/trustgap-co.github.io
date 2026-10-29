@@ -1,5 +1,5 @@
 // Team: one order, read only (only orders one of your tasks is about). No bank details, no PINs.
-import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, gallery, fail, $ } from '../core.js';
+import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, evidencePhotos, fail, $ } from '../core.js';
 
 const naira = (kobo) => String(kobo / 100);
 
@@ -22,7 +22,7 @@ async function render() {
       <span class="small">Ship by ${date(o.ship_by)}${o.delivered_at ? ` · delivered ${date(o.delivered_at)}` : ''}${o.inspection_ends_at ? ` · inspection ends ${date(o.inspection_ends_at)}` : ''}</span></p>
     ${o.packing_note ? html`<p class="small"><strong>Packing note:</strong> ${o.packing_note}</p>` : ''}
     ${disputes.map((x) => html`<div class="callout ${x.status === 'open' ? 'warn' : 'info'}"><strong>Dispute: ${x.category_label}</strong> (${x.status.replace('_', ' ')}) · opened by ${x.opened_by} · ${date(x.created_at)}<br>${x.description}
-      ${x.photos?.length ? html`<p class="small" style="margin:10px 0 4px"><strong>Photos (${x.photos.length})</strong>: tap to open full size</p>${gallery(x.photos, 'Evidence')}` : ''}
+      ${evidencePhotos(x.photos)}
       ${x.resolution_note ? html`<br><strong>Decision${x.decided_by ? ` (${x.decided_by.replace('team:', '')})` : ''}:</strong> ${x.resolution_note} (refund ${money(x.buyer_refund || 0)} · seller ${money(x.seller_payout || 0)} · seller charge ${money(x.seller_charge || 0)})` : ''}</div>`)}
     ${decide ? decideForm(decide) : ''}
     ${ret ? html`<div class="callout info"><strong>Return (${ret.kind === 'door' ? 'refused at the door' : 'collected from the buyer'}):</strong> ${ret.label}
@@ -48,6 +48,7 @@ const decideForm = (d) => html`<section class="card card-warn" id="decide">
     <li>Buyer paid <strong>${money(d.amount)}</strong>. Seller would normally get ${money(d.seller_payout)}. Delivery was ${money(d.delivery_fee)} each way.</li>
     <li>Seller’s condition pledge: ${d.condition_pledge ? html`“${d.condition_pledge}”` : 'not recorded.'}</li>
     <li>Buyer accepted the change-of-mind notice: ${d.buyer_ack_at ? date(d.buyer_ack_at) : 'not recorded'}.</li>
+    ${d.return_problem ? html`<li><strong>The seller accepted the return but says it isn’t what was delivered:</strong> “${d.return_problem}”. Compare their photos with the buyer’s and the listing. If the buyer swapped or damaged it, the seller can be paid.</li>` : ''}
     ${d.item_with_seller ? html`<li><strong>The item is back with the seller (or on its way)</strong>, so the seller can’t also be paid: refund the buyer, with or without the delivery deductions.</li>`
       : d.delivered ? html`<li>Any refund books a courier to collect the item; the money moves only when the seller has it back. A refund and a payout to the seller can’t be combined.</li>` : ''}
   </ul>
