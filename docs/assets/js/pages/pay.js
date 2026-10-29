@@ -1,7 +1,7 @@
 // The link the seller sends. Step 1: confirm the whole deal, including the delivery address the
 // seller entered (read-only) and the exact total. Step 2: contact details and refund account, pay.
 import { SITE } from '../site-info.js';
-import { api, html, show, onSubmit, shell, money, date, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, feeLabel, link, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
 
 const config = await shell('buyer');
 const token = params.get('d') || '';
@@ -40,7 +40,7 @@ function breakdown(d, promo) {
   return html`<table class="breakdown">
     <tr><td>Item price${d.quantity > 1 ? ` (×${d.quantity})` : ''}</td><td>${money(p.item)}</td></tr>
     <tr><td>Delivery ${d.ships_from} → ${d.delivery.state}${half(d.delivery_payer)}</td><td>${p.delivery ? money(p.delivery) : paidBySeller}</td></tr>
-    <tr><td>TrustGap fee (${config.fee.percent}%)${half(d.fee_payer)}</td><td>${feeCell}</td></tr>
+    <tr><td>TrustGap fee (${feeLabel(config.fee, p.platform_fee_full)})${half(d.fee_payer)}</td><td>${feeCell}</td></tr>
     <tr><td>Payment processing${half(d.fee_payer)} <small class="muted">(Flutterwave’s charges, passed on at cost)</small></td>
       <td>${p.processing_fee ? money(p.processing_fee) : paidBySeller}</td></tr>
     ${promo ? html`<tr class="discount"><td>Early-access code ${promo.code} <small class="muted">(TrustGap fee removed)</small></td><td>−${money(promo.discount)}</td></tr>` : ''}
@@ -89,7 +89,12 @@ function review(d, rules, promo = null) {
         <span class="confirm-icon">${shieldIcon}</span>
         <strong>Ready to proceed?</strong>
         <span class="muted small">Review your details before moving to payment.</span>
-        <form id="accept"><button class="btn btn-block btn-confirm">Confirm Details &amp; Proceed to Payment →</button></form>
+        <form id="accept">
+          <label class="choice terms-check"><input type="checkbox" name="terms_accepted" value="yes" required> I have read and agree to the TrustGap
+            <a href="${link('legal/terms.html')}" target="_blank" rel="noopener">Terms of Service</a> and the
+            <a href="${link('legal/disputes.html')}" target="_blank" rel="noopener">Returns, refunds and disputes policy</a>, and I have read the
+            <a href="${link('legal/privacy.html')}" target="_blank" rel="noopener">Privacy Policy</a>. <small>(required)</small></label>
+          <button class="btn btn-block btn-confirm">Confirm Details &amp; Proceed to Payment →</button></form>
       </div>
       <p class="muted small center">Something wrong? Don’t continue. Tell the seller, who can send you a corrected link.</p>
     </div>
@@ -106,7 +111,8 @@ function review(d, rules, promo = null) {
   }
   $('#promo-remove')?.addEventListener('click', () => review(d, rules));
 
-  onSubmit($('#accept'), async () => {
+  onSubmit($('#accept'), async ({ terms_accepted }) => {
+    if (terms_accepted !== 'yes') throw new Error('Tick the box to accept the TrustGap Terms of Service before you continue.');
     // The buyer sees what changing their mind would cost before going on to pay.
     const c = config.consents?.buyer;
     const acknowledged = await confirmModal({
@@ -117,9 +123,10 @@ function review(d, rules, promo = null) {
     });
     track('buyer_penalty_notice', { acknowledged });
     if (!acknowledged) return;
+    track('terms_accepted', { side: 'buyer' });
     track('begin_checkout', { ...ecommerce(d), ...(promo ? { coupon: promo.code, value: naira(promo.total) } : {}) });
     const checkout = await api(`/api/deals/${encodeURIComponent(token)}/accept`, {
-      method: 'POST', body: { penalty_acknowledged: true, ...(promo ? { promo_code: promo.code } : {}) },
+      method: 'POST', body: { penalty_acknowledged: true, terms_accepted: true, ...(promo ? { promo_code: promo.code } : {}) },
     });
     await details(d, checkout.checkout_id, checkout.total ?? d.price.total);
     scrollTo(0, 0);

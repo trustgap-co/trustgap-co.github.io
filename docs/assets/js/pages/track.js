@@ -7,7 +7,7 @@ const token = params.get('t') || '';
 const path = `/api/track/${encodeURIComponent(token)}`;
 
 async function render() {
-  const [{ order: o, dispute, events }, config] = await Promise.all([api(path), getConfig()]);
+  const [{ order: o, dispute, return: ret, events }, config] = await Promise.all([api(path), getConfig()]);
   measure(o, dispute);
   show('#app', html`<section class="card">
     <div class="spread"><h1>Order ${o.ref}</h1>${orderBadge(o.status)}</div>
@@ -41,8 +41,16 @@ async function render() {
           <strong>${dispute.status === 'open' ? 'Under review' : 'Decision'}:</strong>
           ${dispute.status === 'open' ? 'TrustGap is reviewing this order. Your money stays held.' : dispute.resolution_note}
           ${dispute.status === 'resolved' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}` : ''}
+          ${dispute.status === 'awaiting_return' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}, sent as soon as the seller has the item back.` : ''}
           ${dispute.photos?.length ? html`<p class="small" style="margin:10px 0 0">Your photos:</p>${gallery(dispute.photos, 'Problem')}` : ''}</div>`
       : ''}
+    ${ret?.open
+      ? html`<div class="callout info"><strong>Return: ${ret.label}.</strong>
+          ${ret.kind === 'pickup'
+            ? html`<br>A rider will collect the item from you${ret.deadline_at ? html` by <strong>${date(ret.deadline_at)}</strong>` : ''}. Pack it with everything that came with it (box, accessories, receipt) and keep a photo of what you hand over.`
+            : html`<br>The rider is taking the item back to the seller.`}
+          <br><span class="small">Your refund is sent once the seller confirms they have it back.</span></div>`
+      : ret?.status === 'received' ? html`<div class="callout ok">The seller has the item back${ret.received_at ? ` (${date(ret.received_at)})` : ''}.</div>` : ''}
     ${o.status === 'duplicate_refunded' ? html`<div class="callout info">This deal was already paid, so this payment was refunded in full to ${o.refund_account}.</div>` : ''}
     ${o.can_report
       ? html`<details class="rules"><summary>Report a problem</summary>

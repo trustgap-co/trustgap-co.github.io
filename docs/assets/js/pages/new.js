@@ -1,5 +1,5 @@
 import { shrinkPhoto } from '../photos.js';
-import { api, html, show, onSubmit, shell, money, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, feeLabel, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
 
 const config = await shell('seller');
 const MAX_PHOTOS = 4;
@@ -63,8 +63,8 @@ try {
       <fieldset><legend>Who pays what (as agreed)</legend>
         <p class="label">Delivery fee</p>
         <div class="choices">${radio('delivery_payer', 'buyer', 'Buyer pays')}${radio('delivery_payer', 'seller', 'I pay')}${radio('delivery_payer', 'split', 'Split 50/50')}</div>
-        <p class="label">TrustGap fee (${fee.percent}%) + payment processing</p>
-        <p class="muted small">Payment processing passes Flutterwave’s charges on at cost (about ${config.processing.percent}% plus a small payout fee), so together it comes to roughly ${(fee.percent + config.processing.percent + 0.4).toFixed(1)}% of the price. Both lines are shown to the buyer separately.</p>
+        <p class="label">TrustGap fee (${fee.percent}%${fee.maxKobo ? `, max ${money(fee.maxKobo)}` : ''}) + payment processing</p>
+        <p class="muted small">Payment processing passes Flutterwave’s charges on at cost (about ${config.processing.percent}%${config.processing.capKobo ? `, max ${money(config.processing.capKobo)},` : ''} plus a small payout fee), so together it comes to roughly ${(fee.percent + config.processing.percent + 0.4).toFixed(1)}% of the price. Both lines are shown to the buyer separately.</p>
         <div class="choices">${radio('fee_payer', 'buyer', 'Buyer pays')}${radio('fee_payer', 'seller', 'I pay')}${radio('fee_payer', 'split', 'Split 50/50')}</div>
         <label>Early-access code <small>optional. Removes the TrustGap fee from this link (once per seller)</small>
           <input name="promo_code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. EARLYGAP" value="${v.promo_code || ''}" class="code-input"></label>
@@ -134,7 +134,7 @@ try {
       show('#preview', html`<table class="breakdown">
         <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
         <tr><td>Delivery to ${delivery_state} (${payerLabel[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
-        <tr><td>TrustGap fee ${fee.percent}% ${promo ? '(early-access code)' : `(${payerLabel[d.fee_payer]})`}</td>
+        <tr><td>TrustGap fee ${feeLabel(fee, promo ? promo.saving : p.platformFee)} ${promo ? '(early-access code)' : `(${payerLabel[d.fee_payer]})`}</td>
           <td>${promo ? html`<s class="muted">${money(promo.saving)}</s> ${money(0)}` : money(p.platformFee)}</td></tr>
         <tr><td>Payment processing (${payerLabel[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
         <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>

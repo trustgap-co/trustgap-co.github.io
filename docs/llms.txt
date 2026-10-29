@@ -8,7 +8,7 @@ Key facts:
 - Country: Nigeria (deliveries between Nigerian states; prices in naira).
 - Who it's for: buyers and sellers who trade through WhatsApp, Instagram, Facebook, TikTok and other social media; small businesses and individual sellers.
 - Status: launching Monday, 23 November 2026. Early access and a buyer/seller research survey are open now.
-- Fees: TrustGap fee 1.5% of the item price (minimum ₦100), plus payment processing passed on at cost (about 2% plus a small payout fee), plus the courier's delivery price. Buyer and seller choose who pays each part: buyer, seller, or half each. Every amount is shown before anyone pays.
+- Fees: TrustGap fee 1.5% of the item price (minimum ₦100, maximum ₦3,000), plus payment processing passed on at cost (about 2%, capped at ₦2,000, plus a small payout fee; the two fees together never exceed ₦5,058), plus the courier's delivery price. Buyer and seller choose who pays each part: buyer, seller, or half each. Every amount is shown before anyone pays.
 - Buyers need no account. Sellers sign up with a phone number, verify their identity with their NIN, and add a payout account in their own name.
 - The seller is paid only after delivery (confirmed with the buyer's PIN) and the inspection window (24 hours), unless the buyer reports a problem. If the seller doesn't dispatch in time, the buyer is refunded in full.
 - Wrong, damaged, fake or not-as-described items: the buyer reports it with photos; TrustGap reviews the evidence; upheld claims get a full refund and the seller pays delivery and return.

@@ -123,6 +123,10 @@ legend { font-weight: 700; padding: 0 6px; }
   display: flex; gap: 8px; align-items: center; font-weight: 500; margin: 0;
   border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
 }
+/* "I agree to the Terms of Service": the sentence holds links, so it flows as text instead of flex items. */
+.form label.choice.terms-check, label.choice.terms-check { display: block; text-align: left; line-height: 1.5; margin: 0 0 12px; }
+.terms-check input { width: 18px; height: 18px; margin: 0 8px 0 0; vertical-align: -3px; accent-color: var(--navy); }
+.terms-check a { text-decoration: underline; }
 .grid2, .grid3 { display: grid; gap: 0 12px; }
 @media (min-width: 600px) {
   .grid2 { grid-template-columns: 1fr 1fr; }
@@ -568,3 +572,7 @@ body.is-live .when-prelaunch { display: none !important; }
 
 /* Plain page links for crawlers without JavaScript (removed by the site script). */
 .static-links { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 24px 20px; max-width: 1120px; margin: 0 auto; font-size: .9rem; }
+
+/* The seller's return PIN on their order page. */
+.return-box .return-pin-label { margin: 12px 0 2px; font-weight: 600; }
+.return-box .pin { margin: 0 0 8px; }

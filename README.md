@@ -55,8 +55,19 @@ shown to admin on the order page and copied to Google Sheets.
    everything else, and decides the refund, payout and any charge to the seller. A seller who owes a
    charge sees **Pay ₦X now** on their dashboard (the payment page), or it's taken from their next payout.
 
+9. **Returns**: a refund for an item that has to go back is only sent once the **seller has it back**.
+   The seller gets a 4-digit **return PIN** (SMS and their order page) and gives it to the rider after
+   checking the item, like the buyer's delivery PIN in reverse.
+   - **Refused at the door**: the same rider takes it straight back and enters the seller's PIN.
+   - **Problem found after delivery**: when admin decides, "the item must go back first" (ticked by
+     default) books a new courier order from the buyer to the seller (with Fez, a new Fez order
+     carrying the seller's PIN). The decision is saved and the money waits.
+   - Fallbacks: the seller can tap **I already have it back**; admin can **mark it received** or
+     **cancel the return and decide again** (buyer never handed it over, or the item came back swapped).
+
 **Fees**, shown as two lines on every link: **TrustGap fee** 1.5% of the item price (minimum ₦100,
-no cap) and **Payment processing**, Flutterwave's charges passed on at cost. About 3.9% in total;
+maximum ₦3,000) and **Payment processing**, Flutterwave's charges passed on at cost (2%, capped at ₦2,000,
+plus the ₦57.79 payout fee). About 3.9% in total and never more than ₦5,058;
 the seller and buyer agree who pays (buyer, seller or 50/50). Seller payouts go out the next working
 day after the buyer paid, once Flutterwave has settled the money.
 

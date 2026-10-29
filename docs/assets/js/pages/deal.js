@@ -1,4 +1,4 @@
-import { api, html, show, shell, money, date, dealBadge, link, params, flash, fail, gallery, $ } from '../core.js';
+import { api, html, show, shell, money, feeLabel, date, dealBadge, link, params, flash, fail, gallery, $ } from '../core.js';
 
 const config = await shell('seller');
 
@@ -22,7 +22,7 @@ async function render() {
     <table class="breakdown">
       <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
       <tr><td>Delivery ${d.pickup_state} → ${d.delivery_state} (paid by ${who[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
-      <tr><td>TrustGap fee ${config.fee.percent}% ${d.promo_code ? '(waived: early-access code)' : `(paid by ${who[d.fee_payer]})`}</td><td>${money(p.platformFee)}</td></tr>
+      <tr><td>TrustGap fee ${feeLabel(config.fee, p.platformFee)} ${d.promo_code ? '(waived: early-access code)' : `(paid by ${who[d.fee_payer]})`}</td><td>${money(p.platformFee)}</td></tr>
       <tr><td>Payment processing, Flutterwave’s charges (paid by ${who[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
       <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
       <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>

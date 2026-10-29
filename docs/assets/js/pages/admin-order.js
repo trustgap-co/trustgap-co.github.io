@@ -5,7 +5,7 @@ const id = encodeURIComponent(params.get('id'));
 const naira = (kobo) => String(kobo / 100);
 
 async function render() {
-  const { order: o, deal: d, photos, seller: s, disputes, ledger, events, messages } = await api(`/api/admin/orders/${id}`, { as: 'admin' });
+  const { order: o, deal: d, photos, seller: s, disputes, return: ret, ledger, events, messages } = await api(`/api/admin/orders/${id}`, { as: 'admin' });
   const open = disputes.find((x) => x.status === 'open');
   const presets = open
     ? [
@@ -52,8 +52,8 @@ async function render() {
     <p class="pre">${x.description}</p>
     ${x.photos?.length ? html`<p class="small"><strong>Buyer’s photos (${x.photos.length})</strong>: tap to open full size</p>${gallery(x.photos, 'Evidence')}`
       : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}
-    ${x.status === 'resolved'
-      ? html`<p><strong>Decision:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}</p>`
+    ${x.status === 'resolved' || x.status === 'awaiting_return'
+      ? html`<p><strong>Decision${x.status === 'awaiting_return' ? ' (money waits for the return)' : ''}:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}</p>`
       : html`<form class="form" id="resolve" data-id="${x.id}">
           <p class="small">Collected ${money(o.amount)}. Whatever isn’t refunded or paid out is kept to cover delivery and fees.
             Check evidence from both sides and the rider before deciding. Presets only fill in the form.</p>
@@ -64,9 +64,27 @@ async function render() {
             <label>Charge seller (₦) <small>added to what they owe</small><input name="seller_charge" inputmode="decimal" value="0"></label>
           </div>
           <label>Decision note <small>sent to both parties; explain the evidence and the amounts</small><textarea name="note" required rows="3"></textarea></label>
-          <button class="btn">Decide and move money</button>
+          ${ret?.open
+            ? html`<p class="callout info small">The item is on its way back to the seller (${ret.label}). Any refund waits until the seller has it.</p>`
+            : o.delivered_at && !ret
+              ? html`<label class="choice"><input type="checkbox" name="return_item" value="yes" checked> The item must go back to the seller first: book a courier to collect it from the buyer, and send the refund only once the seller confirms with their return PIN <small>(untick for cheap or unsafe items the buyer keeps)</small></label>`
+              : ''}
+          <button class="btn">Decide</button>
         </form>`}
   </section>`)}
+  ${ret ? html`<section class="card ${ret.overdue ? 'card-warn' : ''}">
+    <h2>Return to seller (${ret.kind === 'door' ? 'refused at the door' : 'collected from the buyer'})</h2>
+    <p>${ret.label}${ret.overdue ? html` · <strong>overdue</strong>: not collected by ${date(ret.deadline_at)}` : ret.deadline_at && ret.open ? ` · hand-over deadline ${date(ret.deadline_at)}` : ''}</p>
+    <p class="small">${ret.courier || ''} ${ret.delivery_ref ? `· ${ret.delivery_ref}` : ''} ${ret.courier_status ? `· courier says “${ret.courier_status}”` : ''}
+      · PIN attempts ${ret.pin_attempts}${ret.cost ? ` · return cost ${money(ret.cost)}` : ''}
+      ${ret.received_at ? html`<br>Received ${date(ret.received_at)} (confirmed by ${ret.received_by})` : ''}
+      ${ret.rider_url ? html`<br><a href="${ret.rider_url}" target="_blank" rel="noopener">Return rider page</a> <button type="button" class="linklike" data-copy="${ret.rider_url}">(copy rider link)</button>` : ''}
+      ${ret.open && ret.courier === 'fez' && ret.kind === 'pickup' ? html`<button class="linklike" id="ret-sync">check with Fez now</button>` : ''}</p>
+    ${ret.open ? html`<div class="actions">
+      <button class="btn btn-small" id="ret-received">Seller has it back (no PIN)</button>
+      <button class="btn btn-small btn-secondary" id="ret-cancel">Cancel return and decide again</button></div>
+      <p class="small muted">Mark received only when the seller has told you they have the item. Cancel when the buyer never handed it over, or the seller says the item that came back isn’t theirs.</p>` : ''}
+  </section>` : ''}
   <section class="card">
     <h2>Money</h2>
     <table class="breakdown">${ledger.map((l) => html`<tr><td>${l.kind} → ${l.counterparty} <small class="muted">${l.provider_ref || ''}</small></td>
@@ -92,12 +110,30 @@ async function render() {
       for (const k of ['buyer_refund', 'seller_payout', 'seller_charge']) form.elements[k].value = naira(v[k]);
     });
     onSubmit(form, async (data) => {
-      if (!confirm(`Refund buyer ₦${data.buyer_refund}, pay seller ₦${data.seller_payout}, charge seller ₦${data.seller_charge}? Money moves immediately.`)) return;
-      await api(`/api/admin/disputes/${form.dataset.id}/resolve`, { method: 'POST', body: data, as: 'admin' });
-      flash.set('Decision recorded and transfers sent.');
+      const waits = (data.return_item === 'yes' || ret?.open) && Number(data.buyer_refund) > 0;
+      if (!confirm(`Refund buyer ₦${data.buyer_refund}, pay seller ₦${data.seller_payout}, charge seller ₦${data.seller_charge}? ${waits ? 'Money moves once the seller has the item back.' : 'Money moves immediately.'}`)) return;
+      const r = await api(`/api/admin/disputes/${form.dataset.id}/resolve`, { method: 'POST', body: data, as: 'admin' });
+      flash.set(r.waiting_for_return ? 'Decision recorded. The refund is sent when the seller has the item back.' : 'Decision recorded and transfers sent.');
       location.reload();
     });
   }
+  $('#ret-received')?.addEventListener('click', async () => {
+    if (!confirm('Mark the item as back with the seller? Any refund waiting for the return is sent now.')) return;
+    await api(`/api/admin/returns/${ret.id}/received`, { method: 'POST', body: {}, as: 'admin' });
+    flash.set('Return recorded.');
+    location.reload();
+  });
+  $('#ret-cancel')?.addEventListener('click', async () => {
+    const note = prompt('Why is the return cancelled? (kept in the timeline)');
+    if (!note) return;
+    await api(`/api/admin/returns/${ret.id}/cancel`, { method: 'POST', body: { note }, as: 'admin' }).catch((e) => alert(e.message));
+    location.reload();
+  });
+  $('#ret-sync')?.addEventListener('click', async () => {
+    const { status } = await api(`/api/admin/returns/${ret.id}/sync-courier`, { method: 'POST', body: {}, as: 'admin' });
+    flash.set(`Fez status: ${status}`);
+    location.reload();
+  });
   for (const b of $$('[data-retry]')) {
     b.addEventListener('click', async () => {
       const { entry } = await api(`/api/admin/ledger/${b.dataset.retry}/retry`, { method: 'POST', body: {}, as: 'admin' });

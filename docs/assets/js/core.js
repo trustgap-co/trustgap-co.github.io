@@ -111,6 +111,8 @@ export const getBanks = () => api('/api/banks').then((d) => d.banks);
 // ---------------------------------------------------------------- formatting
 export const money = (kobo) =>
   '₦' + (kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: kobo % 100 ? 2 : 0, maximumFractionDigits: 2 });
+// The TrustGap fee's label: "1.5%", or "1.5%, capped at ₦3,000" when the deal's whole fee is at the cap.
+export const feeLabel = (fee, fullKobo) => `${fee.percent}%${fee.maxKobo && fullKobo >= fee.maxKobo ? `, capped at ${money(fee.maxKobo)}` : ''}`;
 export const date = (d) =>
   d ? new Date(d).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 
@@ -156,6 +158,16 @@ const EVENT_LABELS = {
   auto_released: 'Inspection period ended, payment released',
   checkout_abandoned: 'Checkout expired without payment',
   transfer_failed: 'A bank transfer failed and will be retried',
+  return_started: 'Rider is taking the item back to the seller',
+  return_booked: 'Return booked: a rider will collect the item from the buyer',
+  return_picked_up: 'Return collected from the buyer',
+  return_out_for_delivery: 'Return on the way to the seller',
+  return_attempt_failed: 'Return collection attempt failed',
+  return_courier_status: 'Courier update on the return',
+  wrong_return_pin: 'Wrong return PIN entered',
+  return_received: 'Seller has the item back',
+  return_cancelled: 'Return cancelled by TrustGap',
+  dispute_decided_after_return: 'Decided: refund waits until the seller has the item back',
 };
 export const timeline = (events, { detail = false } = {}) => html`<ol class="timeline">${events.map(
   (e) => html`<li><span class="t-time">${date(e.created_at)}</span><span class="t-label">${EVENT_LABELS[e.type] || e.type}</span>

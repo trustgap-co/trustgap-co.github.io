@@ -47,7 +47,7 @@ capitals), database `trustgap` → **Deploy/Save**.
 | `IDENTITY_PROVIDER` | Text | `mock` (→ `monnify` later, step 5) |
 | `LOGISTICS_PROVIDER` | Text | `manual` (→ `fez` later, step 7) |
 
-Everything else (fee 1.5%, processing 2%, inspection 24h, …) has sensible defaults; add a variable
+Everything else (fee 1.5% capped at ₦3,000, processing 2% capped at ₦2,000, inspection 24h, …) has sensible defaults; add a variable
 only if you want to change one (the names are listed in `worker/wrangler.toml`). Later keys
 (Flutterwave, Monnify, Make.com, Google) are added the same way, always as **Secret**.
 
@@ -151,10 +151,15 @@ npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL   # "client_email"
 npx wrangler secret put GOOGLE_PRIVATE_KEY             # "private_key", including the BEGIN/END lines
 ```
 
-Every 15 minutes the Worker rewrites tabs **Summary, Orders, Sellers, Marketing contacts, Debt payments,
+Every 15 minutes the Worker rewrites tabs **Summary, Orders, Sellers, Marketing contacts, Returns, Debt payments,
 Disputes, Ledger** (it only touches those tabs, so the survey tabs from §10 can live in the same sheet).
 - **Orders** includes when the seller confirmed the item's condition and when the buyer accepted the
-  change-of-mind notice (the exact wording is kept in the database: admin order page).
+  change-of-mind notice (the exact wording is kept in the database: admin order page), and when the
+  buyer ticked "I agree to the TrustGap Terms of Service" in step 1.
+- **Sellers** includes when each seller accepted the Terms of Service and Seller Terms at sign-up, and
+  which version. Both checkboxes are required (nobody can sign up or pay without ticking), start
+  unticked, and are checked again by the Worker. **When you change the legal pages**, change
+  `TOS_VERSION` in `worker/src/lib/terms.js` and redeploy, so new acceptances record the new version.
 - **Marketing contacts** lists sellers and buyers who ticked "Send me TrustGap news and offers" (seller
   sign-up, buyer step 2, or the seller's Settings): name, phone, email, when they opted in. Use only
   this tab for newsletters and promotions; people who didn't tick the box must not get marketing. If
@@ -193,9 +198,13 @@ Flutterwave confirmed this model: TrustGap is the **primary merchant** (not an e
 Buyer payments settle into TrustGap's Flutterwave wallet the next working day (T+1), and TrustGap
 pays sellers with the **Transfers API** once delivery is confirmed. The app already works this way:
 
-- **Pricing** covers Flutterwave's costs: "TrustGap fee" (1.5%, no cap) plus "Payment processing"
-  (Flutterwave's 2% on collections and the ₦53.75 + VAT payout fee, passed on at cost). Change
-  `PROCESSING_PERCENT` / `PAYOUT_FEE_NAIRA` in `wrangler.toml` if your merchant agreement differs.
+- **Pricing** covers Flutterwave's costs: "TrustGap fee" (1.5%, maximum ₦3,000) plus "Payment processing"
+  (Flutterwave's 2% on collections, which Flutterwave caps at ₦2,000 per payment, and the ₦53.75 + VAT
+  payout fee, passed on at cost). The two fees together never exceed ₦5,058 per deal. Change
+  `FEE_CAP_NAIRA`, `PROCESSING_PERCENT`, `PROCESSING_CAP_NAIRA` or `PAYOUT_FEE_NAIRA` (Text variables in
+  Cloudflare) if you change your cap or your merchant agreement differs; `0` means no cap.
+  **Check the ₦2,000 cap against your own Flutterwave pricing** (Dashboard, Settings, Fees): if your account
+  has no cap, set `PROCESSING_CAP_NAIRA` to `0`, or buyers will be charged less than Flutterwave takes.
 - **Payouts wait for settlement**: a payout is scheduled for the next working day after the buyer
   paid (`SETTLEMENT_HOURS`), so it never fails for lack of wallet balance.
 - **No double payouts**: every transfer uses a fixed reference (`TGT-<ledger id>-<attempt>`) as
@@ -279,7 +288,13 @@ Steps:
 Ask Fez to confirm: (a) their riders ask the recipient for the `CustToken` before handing over
 the parcel, (b) that `expireToken` is Lagos time, (c) the exact webhook signature
 (TrustGap checks HMAC-SHA256 of orderNo + status + timestamp with your secret key, but re-reads the
-status from Fez either way), (d) charges for returns and failed deliveries.
+status from Fez either way), (d) charges for returns and failed deliveries, (e) for **returns**: TrustGap
+books a new Fez order collected from the buyer and delivered to the seller, with the seller's return PIN
+as `CustToken`; confirm their riders collect from a customer's home address and ask the seller for that
+PIN. A parcel refused at the door goes back on the original Fez order, so there Fez's "Returned"
+status counts as the seller having it back (Fez can't ask for the seller's PIN on that order).
+Buyers have `RETURN_PICKUP_DAYS` (default 3) to hand a return over; after that the admin order page
+shows it as overdue.
 
 ## 8. Website content: company details, photos and policies
 
