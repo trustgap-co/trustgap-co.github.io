@@ -26,6 +26,7 @@ import {
   syncCourierStatus,
 } from '../core/orders.js';
 import { activeReturn, returnView, syncReturnStatus } from '../core/returns.js';
+import { issueStamp } from '../lib/evidence.js';
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -230,7 +231,9 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
       },
       return: await returnView(ctx, await activeReturn(ctx, o.id)),
       dispute: dispute && {
-        photos: await evidenceUrls(ctx, dispute.id),
+        // Only the buyer's own photos (a later report can be the seller's, about the returned item).
+        photos: dispute.opened_by === 'buyer' ? await evidenceUrls(ctx, dispute.id) : [],
+        opened_by: dispute.opened_by,
         status: dispute.status,
         category: dispute.category,
         resolution_note: dispute.resolution_note,
@@ -247,6 +250,8 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
     return { ok: true };
   });
 
+  // Opens the in-page camera: a stamp for this order to burn into the photos (lib/evidence.js).
+  r.get('/api/track/:token/photo-stamp', async ({ ctx, params }) => ({ stamp: await issueStamp(ctx, await loadOrderByBuyerToken(ctx, params.token)) }));
   r.post('/api/track/:token/dispute', async ({ ctx, params, body }) => {
     if (!BUYER_DISPUTE_CATEGORIES[body.category]) throw new UserError('Choose what went wrong.');
     await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: 'buyer', category: body.category, description: body.description, photos: body.photos });

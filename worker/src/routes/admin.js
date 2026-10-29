@@ -3,7 +3,7 @@ import { UserError, notFound } from '../lib/http.js';
 import { verifyLink } from '../lib/crypto.js';
 import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso } from '../core/common.js';
 import { adminLogin, authenticate } from '../core/sellers.js';
-import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceUrls, DELIVERY_LABELS } from '../core/orders.js';
+import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceDetails, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
 import { activeReturn, isOpenReturn, returnView, verifyReturnPin, applyReturnUpdate, receiveReturn, cancelReturn, syncReturnStatus, RETURN_LABELS } from '../core/returns.js';
 import { dealPhotos } from '../core/deals.js';
@@ -126,7 +126,7 @@ export function adminRoutes(r) {
       disputes: await Promise.all((await all(ctx.env, 'SELECT * FROM disputes WHERE order_id = ? ORDER BY id', o.id)).map(async (x) => ({
         ...x,
         category_label: DISPUTE_CATEGORIES[x.category] || x.category,
-        photos: await evidenceUrls(ctx, x.id),
+        photos: await evidenceDetails(ctx, x.id),
       }))),
       return: await (async () => {
         const ret = await activeReturn(ctx, o.id);

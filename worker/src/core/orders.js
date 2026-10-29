@@ -6,6 +6,7 @@ import { snapshotTerms } from '../lib/terms.js';
 import { refreshDeal, dealPhotoHashes } from './deals.js';
 import { checkPromo, buyerUsedPromo } from './promo.js';
 import { parsePhotos, EVIDENCE_LINK_HOURS } from '../lib/photos.js';
+import { checkEvidence, describeFlags } from '../lib/evidence.js';
 import { activeReturn, isOpenReturn, startDoorReturn, receiveReturn, bookPickupReturn } from './returns.js';
 import {
   UserError,
@@ -450,7 +451,7 @@ export async function openDispute(ctx, order, { by, category, description, photo
   if (!DISPUTE_CATEGORIES[category]) throw new UserError('Choose what went wrong.');
   const text = str(description).slice(0, 2000);
   if (text.length < 3) throw new UserError('Describe the problem.');
-  const photos = await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS);
+  const photos = await checkedEvidence(ctx, order, await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS));
   if (by === 'buyer' && PHOTO_REQUIRED.includes(category) && !photos.length) {
     throw new UserError('Add at least one photo showing the problem with the item.');
   }
@@ -461,10 +462,7 @@ export async function openDispute(ctx, order, { by, category, description, photo
   const won = await transition(ctx, order.id, [order.status], { status: 'disputed' }, (h) => [
     h.insert('disputes', { order_id: order.id, opened_by: by, category, description: text, status: 'open', created_at: iso(ctx.now()) }),
     // Saved in the same step as the dispute, so a report never exists without its photos.
-    ...photos.map((p, i) => h.sql(
-      `INSERT INTO dispute_photos (dispute_id, position, mime, data, sha256, bytes, created_at)
-       SELECT (SELECT MAX(id) FROM disputes WHERE order_id = ?), ?, ?, ?, ?, ?, ? WHERE 1`,
-      order.id, i + 1, p.mime, p.data, p.sha256, p.bytes, iso(ctx.now()))),
+    ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
     h.event(by, 'dispute_opened', { category, description: text, photos: photos.length }),
   ]);
   if (!won) throw new UserError('This order changed while you were reporting. Refresh and try again.', 409);
@@ -472,6 +470,36 @@ export async function openDispute(ctx, order, { by, category, description, photo
   const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.`;
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: order.buyer_phone, sms });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: seller.phone, sms });
+}
+
+// Evidence photos with how they were taken and what the checks found (see lib/evidence.js), compared
+// with the order's listing photos and any evidence already sent in this case.
+export async function checkedEvidence(ctx, order, photos) {
+  if (!photos.length) return photos;
+  const listing = await all(ctx.env, 'SELECT position, phash FROM deal_photos WHERE deal_id = ? AND phash IS NOT NULL', order.deal_id);
+  const earlier = await all(ctx.env, 'SELECT p.phash FROM dispute_photos p JOIN disputes d ON d.id = p.dispute_id WHERE d.order_id = ? AND p.phash IS NOT NULL', order.id);
+  return checkEvidence(ctx, order, photos, { listing, earlier });
+}
+
+// One evidence photo, saved with the newest dispute on the order (inside a transition batch).
+export function evidencePhotoStmt(h, ctx, orderId, position, p) {
+  return h.sql(
+    `INSERT INTO dispute_photos (dispute_id, position, mime, data, sha256, bytes, source, stamp_code, captured_at, phash, flags, created_at)
+     SELECT (SELECT MAX(id) FROM disputes WHERE order_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE 1`,
+    orderId, position, p.mime, p.data, p.sha256, p.bytes, p.source, p.stamp_code, p.captured_at, p.phash, JSON.stringify(p.flags || []), iso(ctx.now()));
+}
+
+// For the admin and team: each evidence photo's address with how it was taken and any warnings.
+export async function evidenceDetails(ctx, disputeId) {
+  const rows = await all(ctx.env, 'SELECT id, source, stamp_code, captured_at, flags FROM dispute_photos WHERE dispute_id = ? ORDER BY position', disputeId);
+  const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
+  return Promise.all(rows.map(async (r) => ({
+    url: `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`,
+    source: r.source || 'upload',
+    stamp_code: r.stamp_code,
+    captured_at: r.captured_at,
+    warnings: describeFlags(JSON.parse(r.flags || '[]')),
+  })));
 }
 
 // Signed addresses of a dispute's photos, valid for a couple of hours (GET /api/evidence/:token).
@@ -502,7 +530,9 @@ export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {
   let ret = await activeReturn(ctx, order.id);
   // When the item goes back to the seller (refused at the door, or any refund after delivery), the
   // sale didn't happen: the seller gets the item, never money as well.
-  if (sellerPayout > 0 && (ret || (buyerRefund > 0 && order.delivered_at))) {
+  // Exception: the seller accepted the return but reported it isn't what was delivered (swapped,
+  // damaged), so they may be owed money for it.
+  if (sellerPayout > 0 && ((ret && !ret.problem_at) || (buyerRefund > 0 && order.delivered_at && !ret))) {
     throw new UserError(ret
       ? 'The item is back with the seller (or on its way), so the seller can’t also be paid. Refund the buyer, with or without the delivery deductions.'
       : 'A refund means the item goes back to the seller, so the seller can’t also be paid. Choose a refund or a payout, not both.');

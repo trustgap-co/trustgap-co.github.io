@@ -47,5 +47,9 @@ export const MIGRATIONS = [
   {
     "name": "0012_team_dispute_decisions.sql",
     "sql": "-- \"Decide a dispute\" tasks: the admin can let a team member decide one order's dispute. Each\n-- decision records who made it.\nALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'general';\nALTER TABLE disputes ADD COLUMN decided_by TEXT;\n"
+  },
+  {
+    "name": "0013_photo_evidence.sql",
+    "sql": "-- How each evidence photo was taken, and what TrustGap's checks found:\n--   source       'camera' (TrustGap's in-page camera, stamped) or 'upload' (chosen from the phone)\n--   stamp_code   the code stamped on a camera photo; captured_at is when TrustGap issued it\n--   phash        a 64-bit picture fingerprint, to spot a photo copied from the listing or reused\n--   flags        JSON list of warnings for whoever decides (e.g. old photo, copy of listing photo)\nALTER TABLE dispute_photos ADD COLUMN source TEXT;\nALTER TABLE dispute_photos ADD COLUMN stamp_code TEXT;\nALTER TABLE dispute_photos ADD COLUMN captured_at TEXT;\nALTER TABLE dispute_photos ADD COLUMN phash TEXT;\nALTER TABLE dispute_photos ADD COLUMN flags TEXT;\nALTER TABLE deal_photos ADD COLUMN phash TEXT;\n-- A return the seller accepted but reported as not the item that was delivered.\nALTER TABLE returns ADD COLUMN problem_at TEXT;\nALTER TABLE returns ADD COLUMN problem_note TEXT;\n"
   }
 ];

@@ -4,7 +4,8 @@ import { getSeller, payUrl, HELD_STATUSES, iso } from '../core/common.js';
 import { signup, requestLogin, verifyCode, authenticate, logout, sellerView, setPayoutAccount, verifyIdentity } from '../core/sellers.js';
 import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown, dealPhotos } from '../core/deals.js';
 import { bookPickup, DELIVERY_LABELS } from '../core/orders.js';
-import { activeReturn, isOpenReturn, returnView, receiveReturn } from '../core/returns.js';
+import { activeReturn, isOpenReturn, returnView, receiveReturn, reportReturnProblem } from '../core/returns.js';
+import { issueStamp } from '../lib/evidence.js';
 import { startDebtPayment } from '../core/debts.js';
 
 export async function requireSeller(ctx, request) {
@@ -149,6 +150,21 @@ export function sellerRoutes(r) {
       return: await returnView(ctx, await activeReturn(ctx, o.id), { withPin: true }),
       events: await all(ctx.env, 'SELECT type, actor, created_at FROM order_events WHERE order_id = ? ORDER BY id', o.id),
     };
+  });
+
+  // The seller's evidence when a returned item isn't right: a camera stamp, then the report.
+  const sellerReturn = async (ctx, request, id) => {
+    const { seller } = await requireSeller(ctx, request);
+    const o = await first(ctx.env, 'SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(id), seller.id);
+    if (!o) throw notFound('Order not found.');
+    const ret = await activeReturn(ctx, o.id);
+    if (!isOpenReturn(ret)) throw new UserError('There is no return waiting on this order.');
+    return { order: o, ret };
+  };
+  r.get('/api/seller/orders/:id/photo-stamp', async ({ ctx, request, params }) => ({ stamp: await issueStamp(ctx, (await sellerReturn(ctx, request, params.id)).order) }));
+  r.post('/api/seller/orders/:id/return-problem', async ({ ctx, request, params, body }) => {
+    await reportReturnProblem(ctx, (await sellerReturn(ctx, request, params.id)).ret, body);
+    return { ok: true };
   });
 
   // The seller confirms they have the item back without the rider entering the PIN.

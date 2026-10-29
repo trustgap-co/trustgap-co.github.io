@@ -556,6 +556,17 @@ The site now makes it easy for them to understand TrustGap; mentions elsewhere m
   comes from the Worker only after login, so nobody else can read it. To change it, edit
   `worker/src/manual.js`, change `updated`, and redeploy the Worker.
 
+### Photo evidence
+
+- Buyers' problem photos and sellers' "returned item isn't right" photos use the **TrustGap camera**: the page
+  opens the phone camera (the browser asks for camera permission once) and stamps each photo with the
+  order number, time and a code signed by the Worker (valid 30 minutes). If the camera can't open,
+  people can still choose a photo, but it's marked as not taken with the camera.
+- On the order page, each evidence photo shows ✓ (stamped, checks out) or ⚠ warnings: chosen from the
+  phone, no camera details, taken long before the report, a copy of a listing photo, or a photo already
+  sent. Warnings help whoever decides; they don't block anything.
+- Camera access only works on `https://` (GitHub Pages is) or `localhost`.
+
 ## 13. Going live checklist
 
 - [ ] Lawyer advises on holding customer funds (Flutterwave confirmed TrustGap is the custodian)

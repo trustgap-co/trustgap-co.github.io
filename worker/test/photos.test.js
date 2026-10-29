@@ -111,8 +111,12 @@ describe('buyer evidence photos on a reported problem', () => {
     assert.equal(r.status, 200);
     const order = await t.one('SELECT id FROM orders');
     const view = (await t.get(`/api/admin/orders/${order.id}`, await adminToken(t))).data;
-    const urls = view.disputes[0].photos;
+    const urls = view.disputes[0].photos.map((p) => p.url);
     assert.equal(urls.length, 2);
+    const first = view.disputes[0].photos[0];
+    assert.equal(first.source, 'upload');
+    assert.ok(first.warnings.includes('Chosen from the phone, not taken with the TrustGap camera'));
+    assert.ok(first.warnings.includes('The same picture was sent twice'));
     assert.ok(urls[0].startsWith(`${API}/api/evidence/`));
     const img = await t.get(new URL(urls[0]).pathname);
     assert.equal(img.status, 200);
@@ -127,7 +131,7 @@ describe('buyer evidence photos on a reported problem', () => {
     assert.equal((await t.get('/api/evidence/dp1')).status, 404, 'an unsigned id is refused');
     t.advanceHours(3);
     assert.equal((await t.get(new URL(urls[0]).pathname)).status, 404, 'links expire');
-    const fresh = (await t.get(`/api/admin/orders/${order.id}`, await adminToken(t))).data.disputes[0].photos[0];
+    const fresh = (await t.get(`/api/admin/orders/${order.id}`, await adminToken(t))).data.disputes[0].photos[0].url;
     assert.equal((await t.get(new URL(fresh).pathname)).status, 200, 'reloading the page gives fresh links');
   });
 });

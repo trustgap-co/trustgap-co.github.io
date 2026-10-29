@@ -922,6 +922,10 @@ CREATE INDEX IF NOT EXISTS returns_order ON returns(order_id);
 ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'general';
 ALTER TABLE disputes ADD COLUMN decided_by TEXT;
 `
+  },
+  {
+    "name": "0013_photo_evidence.sql",
+    "sql": "-- How each evidence photo was taken, and what TrustGap's checks found:\n--   source       'camera' (TrustGap's in-page camera, stamped) or 'upload' (chosen from the phone)\n--   stamp_code   the code stamped on a camera photo; captured_at is when TrustGap issued it\n--   phash        a 64-bit picture fingerprint, to spot a photo copied from the listing or reused\n--   flags        JSON list of warnings for whoever decides (e.g. old photo, copy of listing photo)\nALTER TABLE dispute_photos ADD COLUMN source TEXT;\nALTER TABLE dispute_photos ADD COLUMN stamp_code TEXT;\nALTER TABLE dispute_photos ADD COLUMN captured_at TEXT;\nALTER TABLE dispute_photos ADD COLUMN phash TEXT;\nALTER TABLE dispute_photos ADD COLUMN flags TEXT;\nALTER TABLE deal_photos ADD COLUMN phash TEXT;\n-- A return the seller accepted but reported as not the item that was delivered.\nALTER TABLE returns ADD COLUMN problem_at TEXT;\nALTER TABLE returns ADD COLUMN problem_note TEXT;\n"
   }
 ];
 
@@ -1160,7 +1164,8 @@ var DISPUTE_CATEGORIES = {
   refused_at_door: "Refused at the door",
   returned_by_courier: "Returned by the courier",
   not_shipped: "Seller did not ship in time",
-  seller_issue: "Raised by seller"
+  seller_issue: "Raised by seller",
+  returned_item_problem: "Returned item isn\u2019t what was delivered"
 };
 var HELD_STATUSES = ["paid", "shipping", "delivered", "disputed"];
 var HOUR = 36e5;
@@ -1313,7 +1318,9 @@ async function parsePhotos(input, max = MAX_PHOTOS) {
   const list = Array.isArray(input) ? input : input ? [input] : [];
   if (list.length > max) throw new UserError(`Add up to ${max} photos.`);
   const photos = [];
-  for (const item of list) {
+  for (const entry of list) {
+    const item = entry && typeof entry === "object" ? entry.data : entry;
+    const meta = entry && typeof entry === "object" ? entry : {};
     const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(item));
     if (!m) throw new UserError("Each photo must be a JPEG image. Try adding it again.");
     let bytes;
@@ -1324,7 +1331,17 @@ async function parsePhotos(input, max = MAX_PHOTOS) {
     }
     if (bytes.length > MAX_PHOTO_BYTES) throw new UserError("A photo is too large. Try a smaller one.");
     const clean = stripJpegMetadata(bytes);
-    photos.push({ mime: "image/jpeg", data: clean, bytes: clean.length, sha256: await sha256Bytes(clean) });
+    photos.push({
+      mime: "image/jpeg",
+      data: clean,
+      bytes: clean.length,
+      sha256: await sha256Bytes(clean),
+      phash: /^[0-9a-f]{16}$/.test(String(meta.phash || "")) ? meta.phash : null,
+      source: meta.source === "camera" ? "camera" : "upload",
+      stampToken: meta.source === "camera" ? String(meta.stamp_token || "").slice(0, 300) : null,
+      takenAt: meta.taken_at && !Number.isNaN(new Date(meta.taken_at).getTime()) ? new Date(meta.taken_at).toISOString() : null,
+      cameraInfo: meta.camera_info === true
+    });
   }
   return photos;
 }
@@ -1547,20 +1564,21 @@ async function createDeal(ctx, seller, input) {
   const newDealId = "(SELECT id FROM deals WHERE token = ?)";
   photos.forEach((ph, i) => statements.push(stmt(
     ctx.env,
-    `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at) VALUES (${newDealId}, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, phash, created_at) VALUES (${newDealId}, ?, ?, ?, ?, ?, ?, ?)`,
     token,
     i + 1,
     ph.mime,
     ph.data,
     ph.sha256,
     ph.bytes,
+    ph.phash,
     iso(now)
   )));
   if (copyPhotosFrom) {
     statements.push(stmt(
       ctx.env,
-      `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at)
-       SELECT ${newDealId}, position, mime, data, sha256, bytes, ? FROM deal_photos WHERE deal_id = ?`,
+      `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, phash, created_at)
+       SELECT ${newDealId}, position, mime, data, sha256, bytes, phash, ? FROM deal_photos WHERE deal_id = ?`,
       token,
       iso(now),
       copyPhotosFrom.id
@@ -1641,6 +1659,74 @@ function namesMatch(typedName, accountName) {
 }
 __name(namesMatch, "namesMatch");
 
+// src/lib/evidence.js
+var STAMP_MINUTES = 30;
+var OLD_PHOTO_MINUTES = 60;
+var SAME_PICTURE_DISTANCE = 8;
+var CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+var lagosTime = /* @__PURE__ */ __name((d) => d.toLocaleString("en-NG", { timeZone: "Africa/Lagos", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }), "lagosTime");
+async function issueStamp(ctx, order) {
+  const code = Array.from(randomToken(8)).map((c) => CODE_ALPHABET[c.charCodeAt(0) % CODE_ALPHABET.length]).join("").slice(0, 4);
+  const now = ctx.now();
+  const token = await signLink(ctx.config.appSecret, `stamp-${order.id}-${code}-${Math.floor(now.getTime() / 1e3)}`, new Date(now.getTime() + STAMP_MINUTES * 6e4));
+  return { code, token, text: `TrustGap \xB7 ${order.ref} \xB7 ${lagosTime(now)} \xB7 ${code}`, valid_minutes: STAMP_MINUTES };
+}
+__name(issueStamp, "issueStamp");
+var hamming = /* @__PURE__ */ __name((a, b) => {
+  let n = 0;
+  for (let i = 0; i < 16; i += 4) {
+    let x = parseInt(a.slice(i, i + 4), 16) ^ parseInt(b.slice(i, i + 4), 16);
+    while (x) {
+      n += x & 1;
+      x >>= 1;
+    }
+  }
+  return n;
+}, "hamming");
+async function checkEvidence(ctx, order, photos, { listing = [], earlier = [] } = {}) {
+  const now = ctx.now();
+  return Promise.all(photos.map(async (p) => {
+    const flags = [];
+    let stampCode = null;
+    let capturedAt = null;
+    if (p.source === "camera") {
+      const data = p.stampToken && await verifyLink(ctx.config.appSecret, p.stampToken, now);
+      const m = data && /^stamp-(\d+)-([A-Z0-9]{4})-(\d+)$/.exec(data);
+      if (!m) flags.push("stamp_invalid");
+      else if (Number(m[1]) !== order.id) flags.push("stamp_other_order");
+      else {
+        stampCode = m[2];
+        capturedAt = new Date(Number(m[3]) * 1e3).toISOString();
+      }
+    } else {
+      flags.push("not_camera");
+      if (!p.takenAt || !p.cameraInfo) flags.push("no_camera_info");
+      else if (now.getTime() - new Date(p.takenAt).getTime() > OLD_PHOTO_MINUTES * 6e4) flags.push(`taken:${p.takenAt}`);
+    }
+    if (p.phash) {
+      for (const l of listing) if (l.phash && hamming(p.phash, l.phash) <= SAME_PICTURE_DISTANCE) flags.push(`matches_listing:${l.position}`);
+      if (earlier.some((e) => e.phash && hamming(p.phash, e.phash) <= SAME_PICTURE_DISTANCE)) flags.push("matches_earlier_evidence");
+    }
+    if (photos.filter((q) => q.sha256 === p.sha256).length > 1) flags.push("duplicate_in_report");
+    return { ...p, stamp_code: stampCode, captured_at: capturedAt, flags };
+  }));
+}
+__name(checkEvidence, "checkEvidence");
+function describeFlags(flags, { lagos = lagosTime } = {}) {
+  return (flags || []).map((f) => {
+    if (f === "not_camera") return "Chosen from the phone, not taken with the TrustGap camera";
+    if (f === "no_camera_info") return "No camera details: could be a screenshot, a forwarded or edited picture";
+    if (f.startsWith("taken:")) return `The phone says it was taken ${lagos(new Date(f.slice(6)))}, well before the report`;
+    if (f === "stamp_invalid") return "Camera stamp doesn\u2019t check out (expired or altered)";
+    if (f === "stamp_other_order") return "Camera stamp is from a different order";
+    if (f.startsWith("matches_listing:")) return `Looks like the seller\u2019s listing photo ${f.split(":")[1]}`;
+    if (f === "matches_earlier_evidence") return "Looks like a photo already sent in this case";
+    if (f === "duplicate_in_report") return "The same picture was sent twice";
+    return f;
+  });
+}
+__name(describeFlags, "describeFlags");
+
 // src/core/returns.js
 var RETURN_LABELS = {
   with_rider: "Rider is taking it back to the seller",
@@ -1666,12 +1752,15 @@ async function returnView(ctx, ret, { withPin = false } = {}) {
     id: ret.id,
     kind: ret.kind,
     status: ret.status,
-    label: RETURN_LABELS[ret.status] || ret.status,
+    label: ret.problem_at ? "Seller has it back but reported it isn\u2019t what was delivered" : RETURN_LABELS[ret.status] || ret.status,
+    problem: Boolean(ret.problem_at),
+    problem_note: ret.problem_note || null,
     open: isOpenReturn(ret),
     deadline_at: ret.deadline_at,
     received_at: ret.received_at,
     received_by: ret.received_by,
-    ...withPin && isOpenReturn(ret) ? { pin: await revealReturnPin(ctx, ret) } : {}
+    // After a problem report the seller still needs the PIN: a Fez rider can only close the job with it.
+    ...withPin && (isOpenReturn(ret) || ret.problem_at) ? { pin: await revealReturnPin(ctx, ret) } : {}
   };
 }
 __name(returnView, "returnView");
@@ -1827,6 +1916,50 @@ async function cancelReturn(ctx, ret, note) {
   }
 }
 __name(cancelReturn, "cancelReturn");
+var MAX_RETURN_PROBLEM_PHOTOS = 3;
+async function reportReturnProblem(ctx, ret, input) {
+  if (!isOpenReturn(ret)) throw new UserError("This return is already closed. Contact TrustGap support.");
+  const description = str(input.description).slice(0, 2e3);
+  if (description.length < 10) throw new UserError("Describe what is wrong with the item that came back.");
+  const order = await getOrder(ctx, ret.order_id);
+  const photos = await checkedEvidence(ctx, order, await parsePhotos(input.photos, MAX_RETURN_PROBLEM_PHOTOS));
+  if (!photos.length) throw new UserError("Add at least one photo showing what came back.");
+  const now = iso(ctx.now());
+  const before = await first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? AND status IN ('open', 'awaiting_return') ORDER BY id DESC", order.id);
+  const context = before?.status === "awaiting_return" ? ` (Earlier decision, now set aside: refund ${(before.buyer_refund / 100).toLocaleString("en-NG")} naira.)` : "";
+  const won = await transition(ctx, order.id, ["disputed"], { status: "disputed" }, (h) => [
+    h.sql(
+      `UPDATE returns SET status = 'received', received_at = ?, received_by = 'seller', problem_at = ?, problem_note = ? WHERE id = ? AND status IN (${OPEN.map(() => "?").join(", ")})`,
+      now,
+      now,
+      description,
+      ret.id,
+      ...OPEN
+    ),
+    h.sql("UPDATE disputes SET status = 'superseded' WHERE order_id = ? AND status IN ('open', 'awaiting_return')", order.id),
+    h.insert("disputes", { order_id: order.id, opened_by: "seller", category: "returned_item_problem", description: description + context, status: "open", created_at: now }),
+    ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
+    h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'return_cost'", order.id),
+    ...ret.kind === "door" ? [h.sql("UPDATE orders SET delivery_status = 'returned' WHERE id = ?", order.id)] : [],
+    h.event("seller", "return_received_with_problem", { description, photos: photos.length })
+  ]);
+  if (!won) throw new UserError("This order changed while you were reporting. Refresh and try again.", 409);
+  const seller = await getSeller(ctx, order.seller_id);
+  await ctx.notify.send({
+    orderId: order.id,
+    event: "return_problem",
+    phone: order.buyer_phone,
+    email: order.buyer_email,
+    sms: `TrustGap: the seller says the item returned for order ${order.ref} isn't what was delivered. Any refund is on hold while TrustGap reviews. Send any photos or video you have of the item before you handed it over: ${trackUrl(ctx, order)}`
+  });
+  await ctx.notify.send({
+    orderId: order.id,
+    event: "return_problem",
+    phone: seller.phone,
+    sms: `TrustGap: we've recorded the item for order ${order.ref} as back with you, with your report. You can now give the rider your return PIN so they can leave. TrustGap will review and decide.`
+  });
+}
+__name(reportReturnProblem, "reportReturnProblem");
 
 // src/core/orders.js
 async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
@@ -2230,7 +2363,7 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
   if (!DISPUTE_CATEGORIES[category]) throw new UserError("Choose what went wrong.");
   const text = str(description).slice(0, 2e3);
   if (text.length < 3) throw new UserError("Describe the problem.");
-  const photos = await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS);
+  const photos = await checkedEvidence(ctx, order, await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS));
   if (by === "buyer" && PHOTO_REQUIRED.includes(category) && !photos.length) {
     throw new UserError("Add at least one photo showing the problem with the item.");
   }
@@ -2241,17 +2374,7 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
   const won = await transition(ctx, order.id, [order.status], { status: "disputed" }, (h) => [
     h.insert("disputes", { order_id: order.id, opened_by: by, category, description: text, status: "open", created_at: iso(ctx.now()) }),
     // Saved in the same step as the dispute, so a report never exists without its photos.
-    ...photos.map((p, i) => h.sql(
-      `INSERT INTO dispute_photos (dispute_id, position, mime, data, sha256, bytes, created_at)
-       SELECT (SELECT MAX(id) FROM disputes WHERE order_id = ?), ?, ?, ?, ?, ?, ? WHERE 1`,
-      order.id,
-      i + 1,
-      p.mime,
-      p.data,
-      p.sha256,
-      p.bytes,
-      iso(ctx.now())
-    )),
+    ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
     h.event(by, "dispute_opened", { category, description: text, photos: photos.length })
   ]);
   if (!won) throw new UserError("This order changed while you were reporting. Refresh and try again.", 409);
@@ -2261,6 +2384,44 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
   await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: seller.phone, sms });
 }
 __name(openDispute, "openDispute");
+async function checkedEvidence(ctx, order, photos) {
+  if (!photos.length) return photos;
+  const listing = await all(ctx.env, "SELECT position, phash FROM deal_photos WHERE deal_id = ? AND phash IS NOT NULL", order.deal_id);
+  const earlier = await all(ctx.env, "SELECT p.phash FROM dispute_photos p JOIN disputes d ON d.id = p.dispute_id WHERE d.order_id = ? AND p.phash IS NOT NULL", order.id);
+  return checkEvidence(ctx, order, photos, { listing, earlier });
+}
+__name(checkedEvidence, "checkedEvidence");
+function evidencePhotoStmt(h, ctx, orderId, position, p) {
+  return h.sql(
+    `INSERT INTO dispute_photos (dispute_id, position, mime, data, sha256, bytes, source, stamp_code, captured_at, phash, flags, created_at)
+     SELECT (SELECT MAX(id) FROM disputes WHERE order_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE 1`,
+    orderId,
+    position,
+    p.mime,
+    p.data,
+    p.sha256,
+    p.bytes,
+    p.source,
+    p.stamp_code,
+    p.captured_at,
+    p.phash,
+    JSON.stringify(p.flags || []),
+    iso(ctx.now())
+  );
+}
+__name(evidencePhotoStmt, "evidencePhotoStmt");
+async function evidenceDetails(ctx, disputeId) {
+  const rows = await all(ctx.env, "SELECT id, source, stamp_code, captured_at, flags FROM dispute_photos WHERE dispute_id = ? ORDER BY position", disputeId);
+  const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
+  return Promise.all(rows.map(async (r) => ({
+    url: `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`,
+    source: r.source || "upload",
+    stamp_code: r.stamp_code,
+    captured_at: r.captured_at,
+    warnings: describeFlags(JSON.parse(r.flags || "[]"))
+  })));
+}
+__name(evidenceDetails, "evidenceDetails");
 async function evidenceUrls(ctx, disputeId) {
   const rows = await all(ctx.env, "SELECT id FROM dispute_photos WHERE dispute_id = ? ORDER BY position", disputeId);
   const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
@@ -2281,7 +2442,7 @@ async function resolveDispute(ctx, disputeId, input, { by = "admin" } = {}) {
   const note = requireLength(input.note, "Decision note", 10, 2e3);
   const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
   let ret = await activeReturn(ctx, order.id);
-  if (sellerPayout > 0 && (ret || buyerRefund > 0 && order.delivered_at)) {
+  if (sellerPayout > 0 && (ret && !ret.problem_at || buyerRefund > 0 && order.delivered_at && !ret)) {
     throw new UserError(ret ? "The item is back with the seller (or on its way), so the seller can\u2019t also be paid. Refund the buyer, with or without the delivery deductions." : "A refund means the item goes back to the seller, so the seller can\u2019t also be paid. Choose a refund or a payout, not both.");
   }
   if (buyerRefund > 0 && order.delivered_at && !ret) ret = await bookPickupReturn(ctx, order);
@@ -2646,7 +2807,9 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
       },
       return: await returnView(ctx, await activeReturn(ctx, o.id)),
       dispute: dispute && {
-        photos: await evidenceUrls(ctx, dispute.id),
+        // Only the buyer's own photos (a later report can be the seller's, about the returned item).
+        photos: dispute.opened_by === "buyer" ? await evidenceUrls(ctx, dispute.id) : [],
+        opened_by: dispute.opened_by,
         status: dispute.status,
         category: dispute.category,
         resolution_note: dispute.resolution_note,
@@ -2660,6 +2823,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
     await releaseToSeller(ctx, await loadOrderByBuyerToken(ctx, params.token), "buyer_confirmed");
     return { ok: true };
   });
+  r.get("/api/track/:token/photo-stamp", async ({ ctx, params }) => ({ stamp: await issueStamp(ctx, await loadOrderByBuyerToken(ctx, params.token)) }));
   r.post("/api/track/:token/dispute", async ({ ctx, params, body }) => {
     if (!BUYER_DISPUTE_CATEGORIES[body.category]) throw new UserError("Choose what went wrong.");
     await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: "buyer", category: body.category, description: body.description, photos: body.photos });
@@ -2994,6 +3158,19 @@ function sellerRoutes(r) {
       return: await returnView(ctx, await activeReturn(ctx, o.id), { withPin: true }),
       events: await all(ctx.env, "SELECT type, actor, created_at FROM order_events WHERE order_id = ? ORDER BY id", o.id)
     };
+  });
+  const sellerReturn = /* @__PURE__ */ __name(async (ctx, request, id) => {
+    const { seller } = await requireSeller(ctx, request);
+    const o = await first(ctx.env, "SELECT * FROM orders WHERE id = ? AND seller_id = ?", Number(id), seller.id);
+    if (!o) throw notFound("Order not found.");
+    const ret = await activeReturn(ctx, o.id);
+    if (!isOpenReturn(ret)) throw new UserError("There is no return waiting on this order.");
+    return { order: o, ret };
+  }, "sellerReturn");
+  r.get("/api/seller/orders/:id/photo-stamp", async ({ ctx, request, params }) => ({ stamp: await issueStamp(ctx, (await sellerReturn(ctx, request, params.id)).order) }));
+  r.post("/api/seller/orders/:id/return-problem", async ({ ctx, request, params, body }) => {
+    await reportReturnProblem(ctx, (await sellerReturn(ctx, request, params.id)).ret, body);
+    return { ok: true };
   });
   r.post("/api/seller/orders/:id/return-received", async ({ ctx, request, params }) => {
     const { seller } = await requireSeller(ctx, request);
@@ -3397,7 +3574,7 @@ function adminRoutes(r) {
       disputes: await Promise.all((await all(ctx.env, "SELECT * FROM disputes WHERE order_id = ? ORDER BY id", o.id)).map(async (x) => ({
         ...x,
         category_label: DISPUTE_CATEGORIES[x.category] || x.category,
-        photos: await evidenceUrls(ctx, x.id)
+        photos: await evidenceDetails(ctx, x.id)
       }))),
       return: await (async () => {
         const ret = await activeReturn(ctx, o.id);
@@ -3723,7 +3900,7 @@ async function teamOrderView(ctx, staff, orderId) {
       buyer: { name: o.buyer_name, phone: o.buyer_phone, email: o.buyer_email, state: o.delivery_state, address: o.delivery_address },
       seller: { business_name: s.business_name, name: s.full_name, phone: s.phone, email: s.email, identity_verified: Boolean(s.identity_verified_at) }
     },
-    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceUrls(ctx, x.id) }))),
+    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceDetails(ctx, x.id) }))),
     // Present only while she holds an open "Decide a dispute" task for this order: what the decision form needs.
     decide: decideTask && {
       task_id: decideTask.id,
@@ -3732,7 +3909,11 @@ async function teamOrderView(ctx, staff, orderId) {
       seller_payout: o.seller_payout,
       delivery_fee: o.delivery_fee,
       delivered: Boolean(o.delivered_at),
-      item_with_seller: Boolean(await activeReturn(ctx, o.id)),
+      item_with_seller: await (async () => {
+        const r = await activeReturn(ctx, o.id);
+        return Boolean(r && !r.problem_at);
+      })(),
+      return_problem: (await activeReturn(ctx, o.id))?.problem_note || null,
       condition_pledge: d.condition_pledge,
       buyer_ack_at: o.buyer_ack_at
     },
@@ -3872,7 +4053,7 @@ var MANUAL = {
 <h3>What you do</h3>
 <ol>
 <li>Contact both sides. Be neutral; don\u2019t take sides.</li>
-<li>Ask for evidence: clear photos or a short video of the item, label and packaging; the chat where the item was described; for the seller, their packing photos or video.</li>
+<li>Ask for evidence: live photos taken with the <strong>TrustGap camera</strong> (on the buyer\u2019s tracking page, and on the seller\u2019s order page for a return), the chat where the item was described, and the seller\u2019s packing photos or video.</li>
 <li>Write what you found in the task notes, with dates and who said what.</li>
 <li>Mark the task done and tell the admin it is ready to decide.</li>
 </ol>
@@ -3908,7 +4089,7 @@ var MANUAL = {
 <ul>
 <li><strong>Buyer not handing it over:</strong> remind them the refund waits for the item. After 3 days the admin page shows it as overdue; tell the admin.</li>
 <li><strong>Seller not confirming:</strong> the seller can also tap \u201CI already have it back\u201D. If they say they have it but won\u2019t confirm, tell the admin, who can mark it received.</li>
-<li><strong>Item that came back isn\u2019t right</strong> (swapped, damaged on the way back): the seller must not accept it or give the PIN. Collect photos and tell the admin, who can cancel the return and decide again.</li>
+<li><strong>Item that came back isn\u2019t right</strong> (swapped, damaged, parts missing): the seller <em>accepts</em> the parcel, but before giving the PIN taps \u201CIt came back, but it isn\u2019t right\u201D on their order page, describes the problem and takes photos with the TrustGap camera. The return is recorded as received (the item stays with the seller), the earlier decision is set aside, and a new dispute \u201CReturned item isn\u2019t what was delivered\u201D opens. The refund stays on hold. The seller then gives the rider the PIN so the courier can close the job. If the seller already gave the PIN, it\u2019s too late: the refund has gone, so they must check first.</li>
 </ul>`
     },
     {
@@ -3924,6 +4105,15 @@ var MANUAL = {
 <li><strong>Hear the seller</strong>: ask for their packing photos or video and the chat where they described the item. Give them a fair chance to answer (a few hours, or a day if not urgent).</li>
 <li><strong>Write down what you found</strong> in the task notes before deciding.</li>
 </ol>
+<h3>Reading the photo checks</h3>
+<p>Under each evidence photo the order page says how it was taken:</p>
+<ul>
+<li><strong>\u2713 Taken with the TrustGap camera</strong>, with a stamp code and time: taken live, for this order, at that moment. The same code is printed on the photo itself; check they match.</li>
+<li><strong>\u26A0 Chosen from the phone</strong>: the person didn\u2019t use the camera (it may not work on their phone). Give it less weight, and ask for a live photo if it matters.</li>
+<li><strong>\u26A0 No camera details</strong> or <strong>taken days earlier</strong>: possibly a screenshot, a forwarded picture or an old photo.</li>
+<li><strong>\u26A0 Looks like the seller\u2019s listing photo</strong> or <strong>a photo already sent</strong>: someone may be reusing a picture instead of showing the real item. Treat as a red flag.</li>
+</ul>
+<p>A warning isn\u2019t proof of lying, and a clean photo isn\u2019t proof of the truth. Weigh the photos with the packing note, the courier\u2019s records and what both sides say.</p>
 <h3>Choosing the outcome</h3>
 <table>
 <tr><th>What the evidence shows</th><th>Preset to use</th></tr>
@@ -3931,6 +4121,7 @@ var MANUAL = {
 <tr><td>The item matches the description and the buyer refused it or changed their mind</td><td><em>Buyer refused a correct item</em>: refund minus both delivery trips (the buyer accepted this before paying).</td></tr>
 <tr><td>No real problem shown (e.g. normal wear, a size the buyer chose, no evidence)</td><td><em>Claim not supported</em>: the seller is paid as normal.</td></tr>
 </table>
+<p><strong>Returned item isn\u2019t what was delivered</strong> (opened by the seller): compare the seller\u2019s photos of what came back with the buyer\u2019s photos and the listing. If the buyer swapped or damaged it, refuse or reduce the refund; the seller may be paid even though they have the item, because it isn\u2019t the item they sent. If the seller\u2019s claim doesn\u2019t hold up, refund the buyer as originally decided.</p>
 <p>The presets only fill in the amounts; you can adjust the deductions or the seller charge. The system refuses amounts that add up to more than the buyer paid. <strong>When the item goes back to the seller</strong> (refused at the door, or any refund after delivery), the seller can\u2019t also be paid: they get the item back instead. So on a door refusal there is no \u201Cpay the seller\u201D option: if the item was correct, use <em>Buyer refused a correct item</em>.</p>
 <h3>The decision note</h3>
 <p>Both sides get it by SMS, so write it plainly: what the evidence showed and why these amounts. Example: \u201CThe buyer\u2019s photos show a torn sole on the left shoe, and the seller\u2019s packing note doesn\u2019t mention damage. Full refund; the seller pays both delivery trips.\u201D Never write anything rude, personal or a guess.</p>

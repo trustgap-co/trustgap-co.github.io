@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { boot, onboardSeller, createDeal, buyerPays, PHOTO } from './helpers.js';
+import { boot, onboardSeller, createDeal, buyerPays, PHOTO, DEAL } from './helpers.js';
 
 const lastOrder = (t) => t.one('SELECT * FROM orders ORDER BY id DESC LIMIT 1');
 const adminToken = async (t) => (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
@@ -141,5 +141,88 @@ describe('the seller is never paid as well as getting the item back', () => {
     const both = await decide(t, admin, dispute, { buyer_refund: '20000', seller_payout: '20000', note: 'Split it down the middle somehow.' });
     assert.match(both.data.error, /refund means the item goes back.*not both/);
     assert.equal((await t.one('SELECT COUNT(*) n FROM returns')).n, 0, 'nothing booked');
+  });
+});
+
+describe('a returned item that isn’t what was delivered', () => {
+  test('the seller reports it before giving the PIN: received, refund held, case reviewed again', async () => {
+    const { t, seller, admin, order, dispute, trackToken } = await deliveredThenReported(await boot());
+    await decide(t, admin, dispute, {});
+    const ret = await t.one('SELECT * FROM returns');
+    const stamp = (await t.get(`/api/seller/orders/${order.id}/photo-stamp`, seller)).data.stamp;
+    assert.match(stamp.text, new RegExp(`TrustGap · ${order.ref} · .* · ${stamp.code}$`));
+
+    assert.match((await t.post(`/api/seller/orders/${order.id}/return-problem`, { description: 'Different shoe', photos: [] }, seller)).data.error, /at least one photo/);
+    const r = await t.post(`/api/seller/orders/${order.id}/return-problem`,
+      { description: 'This is a size 40 with a torn box, not the size 42 I sent.', photos: [{ data: PHOTO, source: 'camera', stamp_token: stamp.token }] }, seller);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+
+    const back = await t.one('SELECT * FROM returns');
+    assert.deepEqual([back.status, back.received_by], ['received', 'seller']);
+    assert.ok(back.problem_at);
+    assert.equal((await lastOrder(t)).status, 'disputed', 'no refund while the case is reviewed');
+    const buyerView = (await t.get(`/api/track/${trackToken}`)).data;
+    assert.deepEqual(buyerView.dispute.photos, [], 'the buyer doesn’t see the seller’s photos as their own');
+    assert.equal(buyerView.return.problem, true);
+    assert.equal((await t.one("SELECT COUNT(*) n FROM ledger WHERE kind = 'buyer_refund'")).n, 0);
+    const disputes = await t.db('SELECT status, category, opened_by FROM disputes ORDER BY id');
+    assert.deepEqual(disputes.map((d) => d.status), ['superseded', 'open']);
+    assert.equal(disputes[1].category, 'returned_item_problem');
+
+    const view = (await t.get(`/api/admin/orders/${order.id}`, admin)).data;
+    const photo = view.disputes[1].photos[0];
+    assert.equal(photo.source, 'camera');
+    assert.equal(photo.stamp_code, stamp.code);
+    assert.deepEqual(photo.warnings, [], 'a stamped camera photo has nothing to flag');
+
+    // The rider can still enter the PIN afterwards; nothing more happens.
+    const rt = tokenOf(ret.rider_url);
+    const pin = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.pin;
+    assert.match(pin, /^\d{4}$/, 'still shown after a problem report, so a Fez rider can close the job');
+    assert.equal((await t.post(`/api/rider/${rt}/return-pin`, { pin: '0000' }, null)).status, 400);
+    assert.equal((await lastOrder(t)).status, 'disputed');
+
+    // Seller turns out to be right: they can be paid, despite having the item back.
+    const paid = await decide(t, admin, view.disputes[1], { buyer_refund: '0', seller_payout: '20000', seller_charge: '0', note: 'Buyer swapped the item; seller compensated, no refund.' });
+    assert.equal(paid.status, 200, JSON.stringify(paid.data));
+    assert.equal((await lastOrder(t)).status, 'completed');
+  });
+});
+
+describe('evidence photo checks', () => {
+  test('stamps, other orders, old uploads and copies of the listing photo are flagged for review', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller, { ...DEAL, photos: [{ data: PHOTO, phash: 'f0f0f0f0f0f0f0f0' }] });
+    const { trackToken } = await buyerPays(t, deal.token);
+    const order = await lastOrder(t);
+    const stamp = (await t.get(`/api/track/${trackToken}/photo-stamp`)).data.stamp;
+    const photos = [
+      { data: PHOTO, source: 'camera', stamp_token: stamp.token, phash: '0123456789abcdef' },
+      { data: PHOTO.replace('Q8Q', 'Q8Q'), source: 'camera', stamp_token: stamp.token.replace(/.$/, 'x'), phash: 'f0f0f0f0f0f0f0f1' },
+    ];
+    const r = await t.post(`/api/track/${trackToken}/dispute`, { category: 'damaged', description: 'Box was crushed and item scratched', photos });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const admin = await adminToken(t);
+    const shown = (await t.get(`/api/admin/orders/${order.id}`, admin)).data.disputes[0].photos;
+    assert.deepEqual(shown[0].warnings.filter((w) => !/twice/.test(w)), []);
+    assert.equal(shown[0].stamp_code, stamp.code);
+    assert.ok(shown[1].warnings.includes('Camera stamp doesn’t check out (expired or altered)'));
+    assert.ok(shown[1].warnings.includes('Looks like the seller’s listing photo 1'));
+  });
+
+  test('an upload with an old capture time or no camera details is flagged', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller);
+    const { trackToken } = await buyerPays(t, deal.token);
+    const order = await lastOrder(t);
+    await t.post(`/api/track/${trackToken}/dispute`, { category: 'damaged', description: 'Box was crushed and item scratched', photos: [
+      { data: PHOTO, source: 'upload', taken_at: '2026-01-02T10:00:00Z', camera_info: true },
+      { data: PHOTO, source: 'upload' },
+    ] });
+    const shown = (await t.get(`/api/admin/orders/${order.id}`, await adminToken(t))).data.disputes[0].photos;
+    assert.ok(shown[0].warnings.some((w) => /phone says it was taken .*Jan 2026/.test(w)), JSON.stringify(shown[0].warnings));
+    assert.ok(shown[1].warnings.includes('No camera details: could be a screenshot, a forwarded or edited picture'));
   });
 });

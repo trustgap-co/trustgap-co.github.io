@@ -112,7 +112,7 @@ export const MANUAL = {
 <h3>What you do</h3>
 <ol>
 <li>Contact both sides. Be neutral; don’t take sides.</li>
-<li>Ask for evidence: clear photos or a short video of the item, label and packaging; the chat where the item was described; for the seller, their packing photos or video.</li>
+<li>Ask for evidence: live photos taken with the <strong>TrustGap camera</strong> (on the buyer’s tracking page, and on the seller’s order page for a return), the chat where the item was described, and the seller’s packing photos or video.</li>
 <li>Write what you found in the task notes, with dates and who said what.</li>
 <li>Mark the task done and tell the admin it is ready to decide.</li>
 </ol>
@@ -148,7 +148,7 @@ export const MANUAL = {
 <ul>
 <li><strong>Buyer not handing it over:</strong> remind them the refund waits for the item. After 3 days the admin page shows it as overdue; tell the admin.</li>
 <li><strong>Seller not confirming:</strong> the seller can also tap “I already have it back”. If they say they have it but won’t confirm, tell the admin, who can mark it received.</li>
-<li><strong>Item that came back isn’t right</strong> (swapped, damaged on the way back): the seller must not accept it or give the PIN. Collect photos and tell the admin, who can cancel the return and decide again.</li>
+<li><strong>Item that came back isn’t right</strong> (swapped, damaged, parts missing): the seller <em>accepts</em> the parcel, but before giving the PIN taps “It came back, but it isn’t right” on their order page, describes the problem and takes photos with the TrustGap camera. The return is recorded as received (the item stays with the seller), the earlier decision is set aside, and a new dispute “Returned item isn’t what was delivered” opens. The refund stays on hold. The seller then gives the rider the PIN so the courier can close the job. If the seller already gave the PIN, it’s too late: the refund has gone, so they must check first.</li>
 </ul>`,
     },
     {
@@ -164,6 +164,15 @@ export const MANUAL = {
 <li><strong>Hear the seller</strong>: ask for their packing photos or video and the chat where they described the item. Give them a fair chance to answer (a few hours, or a day if not urgent).</li>
 <li><strong>Write down what you found</strong> in the task notes before deciding.</li>
 </ol>
+<h3>Reading the photo checks</h3>
+<p>Under each evidence photo the order page says how it was taken:</p>
+<ul>
+<li><strong>✓ Taken with the TrustGap camera</strong>, with a stamp code and time: taken live, for this order, at that moment. The same code is printed on the photo itself; check they match.</li>
+<li><strong>⚠ Chosen from the phone</strong>: the person didn’t use the camera (it may not work on their phone). Give it less weight, and ask for a live photo if it matters.</li>
+<li><strong>⚠ No camera details</strong> or <strong>taken days earlier</strong>: possibly a screenshot, a forwarded picture or an old photo.</li>
+<li><strong>⚠ Looks like the seller’s listing photo</strong> or <strong>a photo already sent</strong>: someone may be reusing a picture instead of showing the real item. Treat as a red flag.</li>
+</ul>
+<p>A warning isn’t proof of lying, and a clean photo isn’t proof of the truth. Weigh the photos with the packing note, the courier’s records and what both sides say.</p>
 <h3>Choosing the outcome</h3>
 <table>
 <tr><th>What the evidence shows</th><th>Preset to use</th></tr>
@@ -171,6 +180,7 @@ export const MANUAL = {
 <tr><td>The item matches the description and the buyer refused it or changed their mind</td><td><em>Buyer refused a correct item</em>: refund minus both delivery trips (the buyer accepted this before paying).</td></tr>
 <tr><td>No real problem shown (e.g. normal wear, a size the buyer chose, no evidence)</td><td><em>Claim not supported</em>: the seller is paid as normal.</td></tr>
 </table>
+<p><strong>Returned item isn’t what was delivered</strong> (opened by the seller): compare the seller’s photos of what came back with the buyer’s photos and the listing. If the buyer swapped or damaged it, refuse or reduce the refund; the seller may be paid even though they have the item, because it isn’t the item they sent. If the seller’s claim doesn’t hold up, refund the buyer as originally decided.</p>
 <p>The presets only fill in the amounts; you can adjust the deductions or the seller charge. The system refuses amounts that add up to more than the buyer paid. <strong>When the item goes back to the seller</strong> (refused at the door, or any refund after delivery), the seller can’t also be paid: they get the item back instead. So on a door refusal there is no “pay the seller” option: if the item was correct, use <em>Buyer refused a correct item</em>.</p>
 <h3>The decision note</h3>
 <p>Both sides get it by SMS, so write it plainly: what the evidence showed and why these amounts. Example: “The buyer’s photos show a torn sole on the left shoe, and the seller’s packing note doesn’t mention damage. Full refund; the seller pays both delivery trips.” Never write anything rude, personal or a guess.</p>

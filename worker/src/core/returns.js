@@ -1,7 +1,8 @@
 import { first, run, insert, update } from '../lib/db.js';
 import { randomDigits, encrypt, decrypt, safeEqual, signLink } from '../lib/crypto.js';
-import { UserError, iso, addHours, str, getSeller, getDeal, getOrder, logEvent, fmtDate, trackUrl } from './common.js';
-import { settleAfterReturn } from './orders.js';
+import { UserError, iso, addHours, str, getSeller, getDeal, getOrder, logEvent, fmtDate, trackUrl, transition } from './common.js';
+import { settleAfterReturn, checkedEvidence, evidencePhotoStmt } from './orders.js';
+import { parsePhotos } from '../lib/photos.js';
 
 // Returns to the seller: delivery in reverse. The seller gets a 4-digit return PIN (SMS and their
 // order page) and gives it to the rider only after checking the item. A buyer's refund that depends
@@ -38,12 +39,15 @@ export async function returnView(ctx, ret, { withPin = false } = {}) {
     id: ret.id,
     kind: ret.kind,
     status: ret.status,
-    label: RETURN_LABELS[ret.status] || ret.status,
+    label: ret.problem_at ? 'Seller has it back but reported it isn’t what was delivered' : RETURN_LABELS[ret.status] || ret.status,
+    problem: Boolean(ret.problem_at),
+    problem_note: ret.problem_note || null,
     open: isOpenReturn(ret),
     deadline_at: ret.deadline_at,
     received_at: ret.received_at,
     received_by: ret.received_by,
-    ...(withPin && isOpenReturn(ret) ? { pin: await revealReturnPin(ctx, ret) } : {}),
+    // After a problem report the seller still needs the PIN: a Fez rider can only close the job with it.
+    ...(withPin && (isOpenReturn(ret) || ret.problem_at) ? { pin: await revealReturnPin(ctx, ret) } : {}),
   };
 }
 
@@ -202,4 +206,39 @@ export async function cancelReturn(ctx, ret, note) {
       console.error('courier cancel failed', ret.delivery_ref, err.message);
     }
   }
+}
+
+// The seller has the parcel in hand, but it isn't what was delivered (swapped, damaged, parts missing).
+// They report it before giving the rider the PIN. The return is recorded as received (the item stays
+// with the seller and the courier job can close), any decision waiting for the return is set aside,
+// and a new dispute opens for review with the seller's photos. No refund goes out meanwhile.
+export const MAX_RETURN_PROBLEM_PHOTOS = 3;
+export async function reportReturnProblem(ctx, ret, input) {
+  if (!isOpenReturn(ret)) throw new UserError('This return is already closed. Contact TrustGap support.');
+  const description = str(input.description).slice(0, 2000);
+  if (description.length < 10) throw new UserError('Describe what is wrong with the item that came back.');
+  const order = await getOrder(ctx, ret.order_id);
+  const photos = await checkedEvidence(ctx, order, await parsePhotos(input.photos, MAX_RETURN_PROBLEM_PHOTOS));
+  if (!photos.length) throw new UserError('Add at least one photo showing what came back.');
+  const now = iso(ctx.now());
+  const before = await first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? AND status IN ('open', 'awaiting_return') ORDER BY id DESC", order.id);
+  const context = before?.status === 'awaiting_return'
+    ? ` (Earlier decision, now set aside: refund ${(before.buyer_refund / 100).toLocaleString('en-NG')} naira.)`
+    : '';
+  const won = await transition(ctx, order.id, ['disputed'], { status: 'disputed' }, (h) => [
+    h.sql(`UPDATE returns SET status = 'received', received_at = ?, received_by = 'seller', problem_at = ?, problem_note = ? WHERE id = ? AND status IN (${OPEN.map(() => '?').join(', ')})`,
+      now, now, description, ret.id, ...OPEN),
+    h.sql("UPDATE disputes SET status = 'superseded' WHERE order_id = ? AND status IN ('open', 'awaiting_return')", order.id),
+    h.insert('disputes', { order_id: order.id, opened_by: 'seller', category: 'returned_item_problem', description: description + context, status: 'open', created_at: now }),
+    ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
+    h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'return_cost'", order.id),
+    ...(ret.kind === 'door' ? [h.sql("UPDATE orders SET delivery_status = 'returned' WHERE id = ?", order.id)] : []),
+    h.event('seller', 'return_received_with_problem', { description, photos: photos.length }),
+  ]);
+  if (!won) throw new UserError('This order changed while you were reporting. Refresh and try again.', 409);
+  const seller = await getSeller(ctx, order.seller_id);
+  await ctx.notify.send({ orderId: order.id, event: 'return_problem', phone: order.buyer_phone, email: order.buyer_email,
+    sms: `TrustGap: the seller says the item returned for order ${order.ref} isn't what was delivered. Any refund is on hold while TrustGap reviews. Send any photos or video you have of the item before you handed it over: ${trackUrl(ctx, order)}` });
+  await ctx.notify.send({ orderId: order.id, event: 'return_problem', phone: seller.phone,
+    sms: `TrustGap: we've recorded the item for order ${order.ref} as back with you, with your report. You can now give the rider your return PIN so they can leave. TrustGap will review and decide.` });
 }

@@ -159,12 +159,12 @@ export async function createDeal(ctx, seller, input) {
   // Same batch as the deal, so a link never exists without its photos.
   const newDealId = '(SELECT id FROM deals WHERE token = ?)';
   photos.forEach((ph, i) => statements.push(stmt(ctx.env,
-    `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at) VALUES (${newDealId}, ?, ?, ?, ?, ?, ?)`,
-    token, i + 1, ph.mime, ph.data, ph.sha256, ph.bytes, iso(now))));
+    `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, phash, created_at) VALUES (${newDealId}, ?, ?, ?, ?, ?, ?, ?)`,
+    token, i + 1, ph.mime, ph.data, ph.sha256, ph.bytes, ph.phash, iso(now))));
   if (copyPhotosFrom) {
     statements.push(stmt(ctx.env,
-      `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, created_at)
-       SELECT ${newDealId}, position, mime, data, sha256, bytes, ? FROM deal_photos WHERE deal_id = ?`,
+      `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, phash, created_at)
+       SELECT ${newDealId}, position, mime, data, sha256, bytes, phash, ? FROM deal_photos WHERE deal_id = ?`,
       token, iso(now), copyPhotosFrom.id));
   }
   await ctx.env.DB.batch(statements);

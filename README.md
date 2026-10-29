@@ -65,7 +65,14 @@ shown to admin on the order page and copied to Google Sheets.
    - **Refused at the door**: admin reviews it like any dispute and decides the split; the money
      moves once the seller has the item back and the decision is made.
    - Fallbacks: the seller can tap **I already have it back**; admin can **mark it received** or
-     **cancel the return and decide again** (buyer never handed it over, or the item came back swapped).
+     **cancel the return and decide again** (buyer never handed it over).
+   - **Returned item isn't right**: the seller accepts the parcel but, before giving the PIN, reports
+     it with stamped camera photos. The return is recorded as received, the earlier decision is set
+     aside, a new dispute opens and the refund stays on hold.
+   - **Photo evidence**: buyers' problem photos and sellers' returned-item photos are taken with the
+     in-page **TrustGap camera**, stamped with the order number, time and a signed code. Uploads from
+     the phone are still possible but flagged; the Worker also flags old or detail-less pictures and
+     copies of the listing photos (picture fingerprints). Listing photos open the phone camera directly.
 
 10. **Team portal and manual** (`/team/`): the admin adds team members on **Admin → Team** (name,
    email, phone, temporary password) and assigns them tasks, optionally about an order. Members log

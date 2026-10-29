@@ -2,7 +2,7 @@ import { first, all, run, insert, update } from '../lib/db.js';
 import { hashPassword, checkPassword } from '../lib/crypto.js';
 import { UserError, iso, str, requireLength, normalisePhone, validEmail, getOrder, getDeal, getSeller, DISPUTE_CATEGORIES } from './common.js';
 import { createSession } from './sellers.js';
-import { DELIVERY_LABELS, resolveDispute, evidenceUrls } from './orders.js';
+import { DELIVERY_LABELS, resolveDispute, evidenceDetails } from './orders.js';
 import { activeReturn, returnView } from './returns.js';
 
 // Team members (staff who are not the admin, e.g. customer relations). Each has their own email and
@@ -227,13 +227,14 @@ export async function teamOrderView(ctx, staff, orderId) {
       buyer: { name: o.buyer_name, phone: o.buyer_phone, email: o.buyer_email, state: o.delivery_state, address: o.delivery_address },
       seller: { business_name: s.business_name, name: s.full_name, phone: s.phone, email: s.email, identity_verified: Boolean(s.identity_verified_at) },
     },
-    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceUrls(ctx, x.id) }))),
+    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceDetails(ctx, x.id) }))),
     // Present only while she holds an open "Decide a dispute" task for this order: what the decision form needs.
     decide: decideTask && {
       task_id: decideTask.id,
       dispute_id: disputes.find((x) => x.status === 'open')?.id,
       amount: o.amount, seller_payout: o.seller_payout, delivery_fee: o.delivery_fee, delivered: Boolean(o.delivered_at),
-      item_with_seller: Boolean(await activeReturn(ctx, o.id)),
+      item_with_seller: await (async () => { const r = await activeReturn(ctx, o.id); return Boolean(r && !r.problem_at); })(),
+      return_problem: (await activeReturn(ctx, o.id))?.problem_note || null,
       condition_pledge: d.condition_pledge, buyer_ack_at: o.buyer_ack_at,
     },
     return: await returnView(ctx, await activeReturn(ctx, o.id)),

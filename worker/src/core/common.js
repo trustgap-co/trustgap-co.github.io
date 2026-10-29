@@ -21,6 +21,7 @@ export const DISPUTE_CATEGORIES = {
   returned_by_courier: 'Returned by the courier',
   not_shipped: 'Seller did not ship in time',
   seller_issue: 'Raised by seller',
+  returned_item_problem: 'Returned item isn’t what was delivered',
 };
 export const HELD_STATUSES = ['paid', 'shipping', 'delivered', 'disputed'];
 
