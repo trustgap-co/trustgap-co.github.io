@@ -1,17 +1,24 @@
 import { first, insert, run, update } from '../lib/db.js';
 import { hmac, randomDigits, randomToken, safeEqual, sha256Hex } from '../lib/crypto.js';
 import { namesMatch } from '../lib/names.js';
+import { hit } from '../lib/limits.js';
 import { TOS_VERSION, acceptedTerms } from '../lib/terms.js';
 import { UserError, iso, str, requireLength, normalisePhone, validEmail, getSeller } from './common.js';
 
 // ---------------------------------------------------------------- one-time codes (login by SMS)
 
-export async function sendCode(ctx, phone, email = null) {
+// `deliver: false` records a code without sending it (a phone with no account), so the reply and the
+// limits are the same whether or not the number has an account.
+export async function sendCode(ctx, phone, email = null, { deliver = true } = {}) {
   const { otp } = ctx.config;
   const since = iso(new Date(ctx.now().getTime() - otp.windowMinutes * 60_000));
   const recent = await first(ctx.env, 'SELECT COUNT(*) n FROM otps WHERE phone = ? AND created_at > ?', phone, since);
   if (recent.n >= otp.maxPerWindow) {
     throw new UserError(`Too many codes requested. Wait ${otp.windowMinutes} minutes and try again.`, 429);
+  }
+  if (deliver && !(await hit(ctx, `otp-day:${iso(ctx.now()).slice(0, 10)}`, ctx.config.otpDailyLimit, 86_400))) {
+    console.error('Daily SMS budget for login codes reached (OTP_DAILY_LIMIT)');
+    throw new UserError('We can’t send codes right now. Please try again later.', 503);
   }
   const code = randomDigits(6);
   await insert(ctx.env, 'otps', {
@@ -20,6 +27,7 @@ export async function sendCode(ctx, phone, email = null) {
     expires_at: iso(new Date(ctx.now().getTime() + otp.ttlMinutes * 60_000)),
     created_at: iso(ctx.now()),
   });
+  if (!deliver) return {};
   await ctx.notify.send({
     event: 'login_code',
     phone,
@@ -38,7 +46,9 @@ export async function signup(ctx, input) {
   const phone = normalisePhone(input.phone);
   const email = validEmail(input.email);
   const existing = await first(ctx.env, 'SELECT * FROM sellers WHERE phone = ?', phone);
-  if (existing?.phone_verified_at) throw new UserError('An account with this phone number already exists. Log in instead.');
+  // An existing account gets a login code instead, and the same reply, so sign-up doesn't reveal
+  // which numbers have accounts. Their details aren't changed.
+  if (existing?.phone_verified_at) return { phone, ...(await sendCode(ctx, phone, existing.email)) };
   if (!acceptedTerms(input)) throw new UserError('Tick the box to accept the TrustGap Terms of Service and Seller Terms. You can’t create an account without accepting them.');
   const terms = { terms_accepted_at: iso(ctx.now()), terms_version: TOS_VERSION };
   const marketing = input.marketing_opt_in === true || input.marketing_opt_in === 'yes' ? iso(ctx.now()) : null;
@@ -53,7 +63,8 @@ export async function signup(ctx, input) {
 export async function requestLogin(ctx, input) {
   const phone = normalisePhone(input.phone);
   const seller = await first(ctx.env, 'SELECT * FROM sellers WHERE phone = ?', phone);
-  if (!seller) throw new UserError('No seller account uses this number. Sign up first.', 404);
+  // Same reply whether or not the number has an account (nothing is sent if it hasn't).
+  if (!seller) return { phone, ...(await sendCode(ctx, phone, null, { deliver: false })) };
   return { phone, ...(await sendCode(ctx, phone, seller.email)) };
 }
 
@@ -76,7 +87,7 @@ export async function verifyCode(ctx, input) {
   const claimed = await run(ctx.env, 'UPDATE otps SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL', iso(ctx.now()), row.id);
   if (claimed.meta.changes !== 1) throw new UserError('That code was already used. Request a new one.');
   const seller = await first(ctx.env, 'SELECT * FROM sellers WHERE phone = ?', phone);
-  if (!seller) throw new UserError('No seller account uses this number.', 404);
+  if (!seller) throw new UserError('That code is wrong or has expired. Request a new one.');
   if (!seller.phone_verified_at) await update(ctx.env, 'sellers', seller.id, { phone_verified_at: iso(ctx.now()) });
   return { token: await createSession(ctx, { sellerId: seller.id }) };
 }
@@ -112,7 +123,7 @@ export async function adminLogin(ctx, input) {
   const windowStart = iso(new Date(ctx.now().getTime() - 15 * 60_000));
   const fails = JSON.parse((await first(env, "SELECT value FROM meta WHERE key = 'admin_fails'"))?.value || '[]').filter((t) => t > windowStart);
   if (fails.length >= 10) throw new UserError('Too many attempts. Try again in 15 minutes.', 429);
-  if (!ctx.config.adminPassword || !safeEqual(str(input.password), ctx.config.adminPassword)) {
+  if (!ctx.config?.adminPassword || !safeEqual(str(input.password), ctx.config.adminPassword)) {
     fails.push(iso(ctx.now()));
     await run(env, "INSERT INTO meta (key, value) VALUES ('admin_fails', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(fails));
     throw new UserError('Wrong password.', 401);

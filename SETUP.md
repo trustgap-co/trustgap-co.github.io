@@ -61,7 +61,9 @@ retries SMS. Google Sheets is copied on every third run.
 
 **f. Check it works:** open `https://trustgap-api.<you>.workers.dev/api/health` in your browser.
 You should see `{"ok":true,"database":"connected","settings":"ok"}`. If `settings` says something
-else (a missing key, a mistyped provider name, a locked live key), it tells you exactly what to fix. The first visit also creates the tables
+else (a missing key, a mistyped provider name, a locked live key), it tells you exactly what to fix.
+With `TEST_MODE = "false"` the public check only says `ok` or not; the details (and a list of risky
+settings) show to you on **Admin → Orders → Settings check**, or on `/api/health` while logged in. The first visit also creates the tables
 (D1 → trustgap → Tables then lists 12). If it says something else, the message tells you what to fix.
 
 **g. Tell the website where the Worker is:** `docs/assets/js/config.js` already points to
@@ -413,8 +415,12 @@ straight from the visitor's browser to **one Make.com webhook**. The Worker isn'
      category, phone, email, channel, state, age_range, consent, promo_code, device, submission_id`
 2. **Make:** create a new scenario. Add **Webhooks → Custom webhook**, create a webhook (e.g.
    "TrustGap leads") and copy its URL (it starts with `https://hook.` and ends in `.make.com/…`).
-3. Paste the URL into `docs/assets/js/site-info.js` → `leadsWebhookUrl`, and upload the file.
-   (Until you do, both forms show a yellow "not connected" warning and save nothing.)
+3. In Cloudflare → your Worker → Settings → Variables and Secrets, add a **Secret** named
+   `LEADS_WEBHOOK_URL` with that URL. The website sends answers to the Worker (`/api/leads`), which
+   checks them (size, bots, duplicates, at most 6 an hour per connection) and forwards them to Make.
+   The Make address is never in the website. (Until the secret is set, visitors are told their
+   answers couldn't be saved.) **If you ever had the old URL in `site-info.js`, it was public: in Make,
+   create a new webhook, use that for the secret, and delete the old one.**
 4. In Make, click **Redetermine data structure**, then fill in the survey once on the live site
    (use "Yes, contact me"), and the early-access form once. Make now knows every field.
 5. After the webhook, add a **Router** with two routes:
@@ -567,7 +573,24 @@ The site now makes it easy for them to understand TrustGap; mentions elsewhere m
   sent. Warnings help whoever decides; they don't block anything.
 - Camera access only works on `https://` (GitHub Pages is) or `localhost`.
 
-## 13. Going live checklist
+## 13. Security protections (built in)
+
+- **Test simulators only in test mode:** with `TEST_MODE = "false"`, the payment simulator
+  (`PAYMENT_PROVIDER = mock`) and the NIN simulator (`IDENTITY_PROVIDER = mock`) refuse every action and
+  the test checkout pages return "not found", so a pretend payment can never look real. To test end to
+  end: `TEST_MODE = "true"` with `mock` (simulated), or with `flutterwave` and your **test** key
+  (Flutterwave's sandbox). Real money: `TEST_MODE = "false"`, `flutterwave`, live key, `ALLOW_LIVE_PAYMENTS = "true"`.
+- **Rate limits** per connection (codes, logins, payments, reports, survey) and a daily cap on login-code
+  SMS across everyone: `OTP_DAILY_LIMIT` (default 300). Login and sign-up give the same reply whether
+  or not a number has an account. For extra protection, add Cloudflare rate-limiting rules too.
+- **Browser protections** in every page (GitHub Pages can't send headers): a Content Security Policy
+  (scripts only from the site, Google Analytics and the Meta Pixel), no referrer from private pages, and
+  a frame guard. **Run `python3 tools/security.py` after adding a page or changing `API_URL`.** The
+  Worker's own responses send `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` and a strict
+  policy. For full HTTP headers on the website, serve it through Cloudflare (Pages or a proxy).
+- **`security.txt`** at `/.well-known/security.txt` tells researchers how to report a problem privately.
+
+## 14. Going live checklist
 
 - [ ] Lawyer advises on holding customer funds (Flutterwave confirmed TrustGap is the custodian)
 - [ ] Lawyer reviews the policy pages in `docs/legal/` and the buyer rules in `worker/src/lib/terms.js`;
@@ -577,7 +600,9 @@ The site now makes it easy for them to understand TrustGap; mentions elsewhere m
 - [ ] Photos added to `docs/assets/images/`
 - [ ] GA4 and Meta Pixel IDs set; events checked with `?debug_tracking=1`; lawyer confirms
       whether analytics may be on by default (`requireConsent`)
-- [ ] Make webhook URL in site-info.js; a test survey and early-access row arrive in the sheet
+- [ ] `LEADS_WEBHOOK_URL` secret set (a new Make webhook; the old public one deleted); a test survey and early-access row arrive in the sheet
+- [ ] Admin → Orders → **Settings check** shows no ⚠ warnings (payments not on `mock`, identity on `monnify`, long `APP_SECRET` and `ADMIN_PASSWORD`, https addresses)
+- [ ] `docs/.well-known/security.txt` and `docs/security.txt`: `[SECURITY EMAIL]` replaced with a mailbox you check
 - [ ] `launched: true` in site-info.js on launch day
 - [ ] Merchant agreement checked: reserves, chargebacks, prohibited items, whether the 2% is capped
 - [ ] Monnify wallet funded for NIN checks (₦60 each)

@@ -3,6 +3,7 @@ import { deliver } from '../providers/notify/make.js';
 import { confirmPayment, releaseToSeller, openDispute, sendTransfer, settleTransfer, syncCourierStatus } from './orders.js';
 import { iso, logEvent, transition } from './common.js';
 import { syncReturnStatus } from './returns.js';
+import { clearOldLimits } from '../lib/limits.js';
 
 // Runs on the Cloudflare cron trigger (every 5 minutes) and from the admin "Run timers now" button.
 export async function runJobs(ctx) {
@@ -82,6 +83,7 @@ export async function runJobs(ctx) {
     result.resent++;
   }
 
+  await clearOldLimits(ctx);
   const dayAgo = iso(new Date(ctx.now().getTime() - 86_400_000));
   await ctx.env.DB.batch([
     ctx.env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),

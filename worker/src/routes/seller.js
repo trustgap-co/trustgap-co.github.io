@@ -6,6 +6,7 @@ import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown, dealP
 import { bookPickup, DELIVERY_LABELS } from '../core/orders.js';
 import { activeReturn, isOpenReturn, returnView, receiveReturn, reportReturnProblem } from '../core/returns.js';
 import { issueStamp } from '../lib/evidence.js';
+import { addStatement, openCase, caseView } from '../core/statements.js';
 import { startDebtPayment } from '../core/debts.js';
 
 export async function requireSeller(ctx, request) {
@@ -148,6 +149,7 @@ export function sellerRoutes(r) {
       dispute,
       // Includes the return PIN while the item is on its way back, to give the rider at hand-back.
       return: await returnView(ctx, await activeReturn(ctx, o.id), { withPin: true }),
+      case: await caseView(ctx, await openCase(ctx, o.id), { viewer: 'seller' }),
       events: await all(ctx.env, 'SELECT type, actor, created_at FROM order_events WHERE order_id = ? ORDER BY id', o.id),
     };
   });
@@ -161,7 +163,22 @@ export function sellerRoutes(r) {
     if (!isOpenReturn(ret)) throw new UserError('There is no return waiting on this order.');
     return { order: o, ret };
   };
-  r.get('/api/seller/orders/:id/photo-stamp', async ({ ctx, request, params }) => ({ stamp: await issueStamp(ctx, (await sellerReturn(ctx, request, params.id)).order) }));
+  const sellerOrder = async (ctx, request, id) => {
+    const { seller } = await requireSeller(ctx, request);
+    const o = await first(ctx.env, 'SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(id), seller.id);
+    if (!o) throw notFound('Order not found.');
+    return o;
+  };
+  // Camera stamps for the seller: a returned item that isn't right, or their side of an open case.
+  r.get('/api/seller/orders/:id/photo-stamp', async ({ ctx, request, params }) => {
+    const o = await sellerOrder(ctx, request, params.id);
+    if (!isOpenReturn(await activeReturn(ctx, o.id)) && !(await openCase(ctx, o.id))) throw new UserError('There is nothing to add photos to on this order.');
+    return { stamp: await issueStamp(ctx, o) };
+  });
+  r.post('/api/seller/orders/:id/statement', async ({ ctx, request, params, body }) => {
+    await addStatement(ctx, await sellerOrder(ctx, request, params.id), { party: 'seller', body: body.body, photos: body.photos });
+    return { ok: true };
+  });
   r.post('/api/seller/orders/:id/return-problem', async ({ ctx, request, params, body }) => {
     await reportReturnProblem(ctx, (await sellerReturn(ctx, request, params.id)).ret, body);
     return { ok: true };

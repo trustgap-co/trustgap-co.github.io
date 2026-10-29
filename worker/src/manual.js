@@ -109,9 +109,11 @@ export const MANUAL = {
 <li>For wrong, damaged, fake or not-as-described items, at least one photo is required (up to 2).</li>
 <li>Disputes also open automatically when the seller misses the ship-by time, when the buyer refuses the parcel at the door, or when the courier returns it.</li>
 </ul>
+<h3>One case, every side’s account</h3>
+<p>There is only ever one case per problem. Whoever reports first opens it; the buyer, the seller and the rider (or Fez) then <strong>add their side</strong> to it from their own page, with photos. Nobody is told “a problem can’t be reported”. On the order page, <strong>Accounts</strong> lists every account in order, with photos and their checks, and says who hasn’t been heard from yet. If the accounts disagree about where the parcel is (e.g. the rider says they have it, the buyer says it was left with them), a warning shows: check with both and use <em>Book a return from the buyer</em> if needed.</p>
 <h3>What you do</h3>
 <ol>
-<li>Contact both sides. Be neutral; don’t take sides.</li>
+<li>Contact anyone not heard from yet (the order page lists them) and ask them to add their side on their page. Be neutral; don’t take sides.</li>
 <li>Ask for evidence: live photos taken with the <strong>TrustGap camera</strong> (on the buyer’s tracking page, and on the seller’s order page for a return), the chat where the item was described, and the seller’s packing photos or video.</li>
 <li>Write what you found in the task notes, with dates and who said what.</li>
 <li>Mark the task done and tell the admin it is ready to decide.</li>
@@ -240,6 +242,7 @@ export const MANUAL = {
 <li>Move a task to <em>In progress</em> when you start and <em>Done</em> when finished. Add notes as you go.</li>
 <li>A <strong>Decide a dispute</strong> task has a button <em>Review evidence and decide</em>. See the section “Deciding a dispute”.</li>
 <li>If a task is about an order, <strong>Open order</strong> shows its status, item, both sides’ contact details, delivery, any dispute and return, and the timeline. It is read only, and you can only open orders your tasks are about.</li>
+<li>Pages update themselves every 30 seconds while open (“Live · updated …” at the top). If you’re typing when something changes, a bar offers the update instead, so you never lose what you wrote.</li>
 <li>Log out when you finish, especially on a shared device. Sessions end after 12 hours.</li>
 </ol>
 <p>Forgot your password? Ask the admin to reset it.</p>`,

@@ -128,7 +128,7 @@ describe('Flutterwave adapter guard', () => {
       }
       return ok({});
     });
-    assert.equal((await t.get('/api/config')).data.payment_test, true);
+    assert.equal((await t.get('/api/config')).data.test_accounts, 'flutterwave');
     const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng', terms_accepted: true });
     const token = (await t.post('/api/auth/verify', { phone: '08031234567', code: s.data.dev_code })).data.token;
     const refused = await t.post('/api/seller/payout', { bank_code: '044', account_number: '0000000002' }, token);
@@ -164,5 +164,38 @@ describe('Flutterwave adapter guard', () => {
     assert.equal(broken.status, 500);
     assert.match(broken.data.error, /\(Ref [A-Z0-9]{6}\)/);
     assert.match(broken.data.detail, /LOGISTICS_PROVIDER is "gig"/, 'in test mode the cause is shown');
+  });
+});
+
+describe('survey and early-access answers through the Worker', () => {
+  const answers = { form: 'survey', submission_id: 'abc-123', role: 'buyer', concerns: ['scams', 'delivery'], phone: '+2348031234567' };
+  test('forwarded to the Make webhook (a secret), with duplicates and bots dropped', async () => {
+    const sent = [];
+    stubFetch((url, init) => { sent.push({ url, body: String(init.body) }); return new Response('Accepted'); });
+    const t = boot({ LEADS_WEBHOOK_URL: 'https://hook.eu1.make.com/secret-abc' });
+    const r = await t.post('/api/leads', answers);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url, 'https://hook.eu1.make.com/secret-abc');
+    assert.match(sent[0].body, /concerns=scams\+%7C\+delivery/);
+    assert.equal((await t.post('/api/leads', answers)).data.duplicate, true);
+    await t.post('/api/leads', { ...answers, submission_id: 'bot', website: 'http://spam' });
+    assert.equal(sent.length, 1, 'duplicates and bots are not forwarded');
+    assert.equal((await t.post('/api/leads', { form: 'other' })).status, 400);
+    assert.equal((await t.post('/api/leads', { form: 'survey', 'bad key!': 'x' })).status, 400);
+    assert.equal((await t.post('/api/leads', { form: 'survey', a: 'x'.repeat(2000), b: 'x'.repeat(2000), ...Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`f${i}`, 'y'.repeat(1500)])) })).status, 400);
+  });
+  test('without LEADS_WEBHOOK_URL the visitor is told it couldn’t be saved', async () => {
+    const t = boot();
+    const r = await t.post('/api/leads', answers);
+    assert.equal(r.status, 503);
+  });
+  test('at most 6 responses an hour from one connection', async () => {
+    stubFetch(() => new Response('Accepted'));
+    const t = boot({ LEADS_WEBHOOK_URL: 'https://hook.eu1.make.com/secret-abc' });
+    const ip = { 'CF-Connecting-IP': '203.0.113.50' };
+    let last;
+    for (let i = 0; i < 7; i++) last = await t.call('POST', '/api/leads', { form: 'survey', submission_id: `id-${i}` }, null, ip);
+    assert.equal(last.status, 429);
   });
 });

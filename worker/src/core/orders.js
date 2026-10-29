@@ -7,6 +7,7 @@ import { refreshDeal, dealPhotoHashes } from './deals.js';
 import { checkPromo, buyerUsedPromo } from './promo.js';
 import { parsePhotos, EVIDENCE_LINK_HOURS } from '../lib/photos.js';
 import { checkEvidence, describeFlags } from '../lib/evidence.js';
+import { addStatement, openCase } from './statements.js';
 import { activeReturn, isOpenReturn, startDoorReturn, receiveReturn, bookPickupReturn } from './returns.js';
 import {
   UserError,
@@ -407,7 +408,8 @@ export async function syncCourierStatus(ctx, order) {
   if (!order.delivery_ref || order.courier !== ctx.logistics.name) return null;
   const st = await ctx.logistics.getStatus(order.delivery_ref);
   if (!st) return null;
-  if (st.raw && st.raw !== order.courier_status) {
+  const changed = Boolean(st.raw && st.raw !== order.courier_status);
+  if (changed) {
     await update(ctx.env, 'orders', order.id, { courier_status: st.raw });
     await logEvent(ctx, order.id, 'courier', 'courier_status', st.reason ? `${st.raw}: ${st.reason}` : st.raw);
   }
@@ -428,6 +430,9 @@ export async function syncCourierStatus(ctx, order) {
     await openDispute(ctx, order, { by: 'courier', category: 'refused_at_door', description: `Refused at the door (courier: ${st.raw}${st.reason ? `: ${st.reason}` : ''}).` });
     await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
     await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: 'courier' });
+  } else if (changed && st.stage === 'problem' && /reject|refus/i.test(st.raw || '') && order.status === 'disputed' && (await openCase(ctx, order.id))) {
+    // The buyer reported first; Fez's record of the refusal joins the same case.
+    await addStatement(ctx, order, { party: 'courier', body: `Fez recorded: ${st.raw}${st.reason ? `: ${st.reason}` : ''}.`, parcel: 'rider' });
   } else if (st.stage === 'returned' && order.delivery_status !== 'returned') {
     await update(ctx.env, 'orders', order.id, { delivery_status: 'returned' });
     if (order.status === 'shipping') {
@@ -471,7 +476,7 @@ export async function openDispute(ctx, order, { by, category, description, photo
     throw new UserError('The inspection period has ended.');
   }
   const won = await transition(ctx, order.id, [order.status], { status: 'disputed' }, (h) => [
-    h.insert('disputes', { order_id: order.id, opened_by: by, category, description: text, status: 'open', parcel_location: duringDelivery ? parcel : null, created_at: iso(ctx.now()) }),
+    h.insert('disputes', { order_id: order.id, opened_by: by, category, description: text, status: 'open', parcel_location: duringDelivery ? parcel : category === 'refused_at_door' ? 'rider' : null, created_at: iso(ctx.now()) }),
     // Saved in the same step as the dispute, so a report never exists without its photos.
     ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
     h.event(by, 'dispute_opened', { category, description: text, photos: photos.length }),
@@ -518,8 +523,8 @@ export function evidencePhotoStmt(h, ctx, orderId, position, p) {
 }
 
 // For the admin and team: each evidence photo's address with how it was taken and any warnings.
-export async function evidenceDetails(ctx, disputeId) {
-  const rows = await all(ctx.env, 'SELECT id, source, stamp_code, captured_at, flags FROM dispute_photos WHERE dispute_id = ? ORDER BY position', disputeId);
+export async function evidenceDetails(ctx, disputeId, { statementId = null } = {}) {
+  const rows = await all(ctx.env, 'SELECT id, source, stamp_code, captured_at, flags FROM dispute_photos WHERE dispute_id = ? AND statement_id IS ? ORDER BY position', disputeId, statementId);
   const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
   return Promise.all(rows.map(async (r) => ({
     url: `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`,
@@ -531,8 +536,8 @@ export async function evidenceDetails(ctx, disputeId) {
 }
 
 // Signed addresses of a dispute's photos, valid for a couple of hours (GET /api/evidence/:token).
-export async function evidenceUrls(ctx, disputeId) {
-  const rows = await all(ctx.env, 'SELECT id FROM dispute_photos WHERE dispute_id = ? ORDER BY position', disputeId);
+export async function evidenceUrls(ctx, disputeId, { statementId = null } = {}) {
+  const rows = await all(ctx.env, 'SELECT id FROM dispute_photos WHERE dispute_id = ? AND statement_id IS ? ORDER BY position', disputeId, statementId);
   const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
   return Promise.all(rows.map(async (r) => `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`));
 }

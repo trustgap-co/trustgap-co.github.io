@@ -85,6 +85,18 @@ shown to admin on the order page and copied to Google Sheets.
    Worker only to the admin and signed-in members; it isn't a public page. Edit it in
    `worker/src/manual.js`.
 
+11. **One case, every side's account; live pages**: the first report opens the case; the buyer, seller
+   and rider (or Fez) add their side to it with photos instead of getting an error. Staff see all
+   accounts side by side, who hasn't been heard from, and any disagreement about where the parcel is.
+   Buyer, seller, rider, admin and team pages check for changes every 30 seconds while open, without
+   redrawing over anything being typed.
+
+12. **Security**: payment and NIN simulators refuse to work outside test mode; rate limits per
+   connection and a daily SMS budget; the same login reply for every number; survey answers go through
+   the Worker (the Make address is a secret); a Content Security Policy, referrer rule and frame guard in
+   every page (`tools/security.py`); health details and risky-settings warnings only for the admin;
+   `security.txt`.
+
 **Fees**, shown as two lines on every link: **TrustGap fee** 1.5% of the item price (minimum ₦100,
 maximum ₦3,000; the item price must be at least twice the delivery fee) and **Payment processing**, Flutterwave's charges passed on at cost (2%, capped at ₦2,000,
 plus the ₦57.79 payout fee). About 3.9% in total and never more than ₦5,058;

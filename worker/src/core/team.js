@@ -4,6 +4,7 @@ import { UserError, iso, str, requireLength, normalisePhone, validEmail, getOrde
 import { createSession } from './sellers.js';
 import { DELIVERY_LABELS, resolveDispute, evidenceDetails } from './orders.js';
 import { activeReturn, returnView } from './returns.js';
+import { caseView } from './statements.js';
 
 // Team members (staff who are not the admin, e.g. customer relations). Each has their own email and
 // password. They see the tasks the admin assigns them, the orders those tasks are about (read only),
@@ -227,7 +228,8 @@ export async function teamOrderView(ctx, staff, orderId) {
       buyer: { name: o.buyer_name, phone: o.buyer_phone, email: o.buyer_email, state: o.delivery_state, address: o.delivery_address },
       seller: { business_name: s.business_name, name: s.full_name, phone: s.phone, email: s.email, identity_verified: Boolean(s.identity_verified_at) },
     },
-    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceDetails(ctx, x.id) }))),
+    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceDetails(ctx, x.id),
+      case: await caseView(ctx, await first(ctx.env, 'SELECT * FROM disputes WHERE id = ?', x.id)) }))),
     // Present only while she holds an open "Decide a dispute" task for this order: what the decision form needs.
     decide: decideTask && {
       task_id: decideTask.id,

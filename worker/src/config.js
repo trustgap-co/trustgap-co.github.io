@@ -57,6 +57,8 @@ export function loadConfig(env) {
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,
     otp: { ttlMinutes: 10, maxAttempts: 5, maxPerWindow: 3, windowMinutes: 15 },
+    // Most login/sign-up code SMS sent in a day, across everyone: a cap on SMS spending if abused.
+    otpDailyLimit: num(env.OTP_DAILY_LIMIT, 300),
     sessionDays: 30,
     riderLinkDays: 14,
     // How long the buyer has to hand a returned item to the courier before TrustGap staff step in.

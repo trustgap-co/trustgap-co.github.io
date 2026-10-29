@@ -5,10 +5,16 @@ export const MOCK_IDS = {
   '33333333333': { firstName: 'MUSA', middleName: 'IBRAHIM', lastName: 'BELLO', dob: '1988-11-30' },
 };
 
-export function createMockIdentity() {
+// Like the payment simulator, it only works in test mode: outside it, no NIN is ever "verified".
+export function createMockIdentity(ctx) {
+  const blocked = ctx?.config?.testMode === false
+    ? 'Identity checks are set to the simulator (IDENTITY_PROVIDER = mock) but TEST_MODE is false. Set IDENTITY_PROVIDER = monnify, or TEST_MODE = true to test.'
+    : null;
   return {
     name: 'mock',
+    blocked,
     async verify({ idNumber }) {
+      if (blocked) throw Object.assign(new Error(blocked), { retryable: true });
       const person = MOCK_IDS[idNumber];
       if (!person) throw new Error('No record found for that number. In test mode use a test NIN.');
       return { ...person, providerRef: 'mock-' + idNumber.slice(-4) };

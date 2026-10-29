@@ -292,3 +292,70 @@ describe('the buyer refuses during delivery (from their tracking page)', () => {
     assert.match((await t.post(`/api/admin/orders/${order.id}/book-return`, {}, admin)).data.error, /already exists/);
   });
 });
+
+describe('one case, each side’s account', () => {
+  async function outForDelivery(t) {
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller);
+    const { trackToken } = await buyerPays(t, deal.token);
+    let order = await lastOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box, size tag 42' }, seller);
+    order = await lastOrder(t);
+    const rt = tokenOf(order.rider_url);
+    await t.post(`/api/rider/${rt}/status`, { status: 'out_for_delivery' });
+    return { seller, trackToken, order, rt, admin: await adminToken(t) };
+  }
+
+  test('buyer first, then the rider: the rider’s refusal is added to the same case, not an error', async () => {
+    const t = boot();
+    const { seller, trackToken, order, rt, admin } = await outForDelivery(t);
+    await t.post(`/api/track/${trackToken}/dispute`, { category: 'not_as_described', description: 'Size 40, not 42', photos: [PHOTO], parcel: 'rider' });
+    const r = await t.post(`/api/rider/${rt}/status`, { status: 'refused', note: 'Buyer opened the box and refused: wrong size' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.added_to_case, true);
+    assert.equal((await t.one('SELECT COUNT(*) n FROM disputes')).n, 1, 'still one case');
+    const view = (await t.get(`/api/admin/orders/${order.id}`, admin)).data.disputes[0].case;
+    assert.deepEqual(view.parties_heard, ['buyer', 'rider']);
+    assert.deepEqual(view.statements.map((x) => x.party), ['buyer', 'rider']);
+    assert.equal(view.statements[0].opening, true);
+    assert.equal(view.statements[0].photos.length, 1, 'the report’s own photos');
+    assert.equal(view.parcel_conflict, null, 'both say the rider has it');
+
+    // The seller adds theirs too; the buyer sees the rider’s account but not the seller’s.
+    assert.equal((await t.post(`/api/seller/orders/${order.id}/statement`, { body: 'I packed size 42, packing note says so.', photos: [{ data: PHOTO, source: 'upload' }] }, seller)).status, 200);
+    const buyerCase = (await t.get(`/api/track/${trackToken}`)).data.case;
+    assert.deepEqual(buyerCase.statements.map((s) => s.party), ['buyer', 'rider']);
+    const sellerCase = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.case;
+    assert.deepEqual(sellerCase.statements.map((s) => s.party), ['rider', 'seller']);
+    const staffCase = (await t.get(`/api/admin/orders/${order.id}`, admin)).data.disputes[0].case;
+    assert.equal(staffCase.statements[2].photos.length, 1);
+    assert.equal(staffCase.statements[2].photos[0].source, 'upload');
+  });
+
+  test('rider first, then the buyer: the buyer’s report becomes their side; different parcel claims are flagged', async () => {
+    const t = boot();
+    const { trackToken, order, rt, admin } = await outForDelivery(t);
+    await t.post(`/api/rider/${rt}/status`, { status: 'refused', note: 'Buyer refused, I have the parcel' });
+    assert.equal((await t.get(`/api/track/${trackToken}`)).data.case.statements[0].party, 'rider', 'the buyer sees the rider’s account');
+    const r = await t.post(`/api/track/${trackToken}/dispute`, { category: 'wrong_item', description: 'It was the wrong colour, the rider left it with me', photos: [PHOTO], parcel: 'buyer' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.added_to_case, true);
+    assert.equal((await t.one('SELECT COUNT(*) n FROM disputes')).n, 1);
+    const view = (await t.get(`/api/admin/orders/${order.id}`, admin)).data.disputes[0].case;
+    assert.match(view.parcel_conflict, /Rider: the rider has it · Buyer: the buyer has it/);
+    assert.equal((await t.one('SELECT COUNT(*) n FROM returns')).n, 1, 'no second return while they disagree');
+  });
+
+  test('the rider can add an account later, e.g. that they left the parcel with the buyer', async () => {
+    const t = boot();
+    const { trackToken, rt, order } = await outForDelivery(t);
+    await t.post(`/api/track/${trackToken}/dispute`, { category: 'other', description: 'Not what I ordered', parcel: 'rider' });
+    // (the buyer said the rider has it, so a door return started)
+    assert.equal((await t.get(`/api/rider/${rt}`)).data.order.case.open, true);
+    assert.equal((await t.post(`/api/rider/${rt}/statement`, { body: 'Left it at the gate as asked', parcel: 'buyer' })).status, 200);
+    const mine = (await t.get(`/api/rider/${rt}`)).data.order.case.mine;
+    assert.equal(mine.length, 1);
+    assert.equal(mine[0].parcel_label, 'I still have it');
+    assert.equal(order.id > 0, true);
+  });
+});

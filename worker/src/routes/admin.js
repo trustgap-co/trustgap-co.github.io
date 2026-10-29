@@ -1,10 +1,14 @@
 import { first, all, update } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
 import { verifyLink } from '../lib/crypto.js';
-import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso } from '../core/common.js';
+import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso, str } from '../core/common.js';
 import { adminLogin, authenticate } from '../core/sellers.js';
 import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceDetails, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
+import { healthReport } from './public.js';
+import { createContext } from '../context.js';
+import { settingsCheck } from '../lib/settings-check.js';
+import { addStatement, openCase, caseView } from '../core/statements.js';
 import { activeReturn, isOpenReturn, returnView, verifyReturnPin, applyReturnUpdate, receiveReturn, cancelReturn, syncReturnStatus, bookPickupReturn, RETURN_LABELS } from '../core/returns.js';
 import { dealPhotos } from '../core/deals.js';
 import { syncSheets } from '../providers/sheets.js';
@@ -47,6 +51,8 @@ export function riderRoutes(r) {
     return {
       order: {
         mode: returnJob ? 'return' : 'delivery',
+        // An open case the rider can add their account to (e.g. the buyer reported the refusal first).
+        case: !returnJob && (await openCase(ctx, o.id)) ? { open: true, mine: (await caseView(ctx, await openCase(ctx, o.id), { viewer: 'rider' })).statements.filter((x) => x.party === 'rider') } : null,
         return: returnJob ? await returnView(ctx, returnJob) : doorReturn,
         ref: o.ref,
         status: o.status,
@@ -65,7 +71,17 @@ export function riderRoutes(r) {
   r.post('/api/rider/:token/status', async ({ ctx, params, body }) => {
     const { order, ret } = await riderJob(ctx, params.token);
     if (ret) await applyReturnUpdate(ctx, ret, { status: body.status, note: body.note, actor: 'rider' });
-    else await applyDeliveryUpdate(ctx, order, { status: body.status, note: body.note, actor: 'rider' });
+    else if (body.status === 'refused' && order.status === 'disputed' && (await openCase(ctx, order.id))) {
+      // The buyer already reported it: the rider's refusal is their side of the same case.
+      await addStatement(ctx, order, { party: 'rider', body: str(body.note) || 'Buyer refused the parcel at the door.', parcel: 'rider' });
+      return { ok: true, added_to_case: true };
+    } else await applyDeliveryUpdate(ctx, order, { status: body.status, note: body.note, actor: 'rider' });
+    return { ok: true };
+  });
+  r.post('/api/rider/:token/statement', async ({ ctx, params, body }) => {
+    const { order, ret } = await riderJob(ctx, params.token);
+    if (ret) throw new UserError('Use the delivery link to add your account.');
+    await addStatement(ctx, order, { party: 'rider', body: body.body, parcel: body.parcel || null });
     return { ok: true };
   });
   // The seller's return PIN, entered by the rider when handing the item back.
@@ -127,6 +143,7 @@ export function adminRoutes(r) {
         ...x,
         category_label: DISPUTE_CATEGORIES[x.category] || x.category,
         photos: await evidenceDetails(ctx, x.id),
+        case: await caseView(ctx, x),
       }))),
       return: await (async () => {
         const ret = await activeReturn(ctx, o.id);
@@ -229,5 +246,15 @@ export function adminRoutes(r) {
   }));
 
   r.post('/api/admin/jobs', admin(async ({ ctx }) => ({ result: await runJobs(ctx) })));
+  // Full health details and risky settings (the public /api/health only says ok or not).
+  r.get('/api/admin/health', admin(async ({ ctx }) => {
+    let warnings;
+    try {
+      warnings = settingsCheck(createContext(ctx.env));
+    } catch (err) {
+      warnings = [{ level: 'danger', text: err.message }];
+    }
+    return { ...(await healthReport(ctx)), warnings };
+  }));
   r.post('/api/admin/sync-sheets', admin(async ({ ctx }) => ({ result: await syncSheets(ctx) })));
 }

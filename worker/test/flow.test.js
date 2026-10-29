@@ -99,9 +99,48 @@ describe('seller sign-in and verification', () => {
     const limited = await t.post('/api/auth/login', { phone: SELLER.phone });
     assert.equal(limited.status, 429);
 
-    assert.equal((await t.post('/api/auth/login', { phone: '08099999999' })).status, 404);
-    assert.equal((await t.post('/api/auth/signup', SELLER)).status, 400);
+    // Unknown numbers get the same reply as real ones (nothing is sent), so accounts can't be discovered.
+    const unknown = await t.post('/api/auth/login', { phone: '08099999999' });
+    assert.equal(unknown.status, 200);
+    assert.deepEqual(Object.keys(unknown.data), ['phone']);
+    assert.equal((await t.db('SELECT * FROM outbox WHERE to_phone = ?', '+2348099999999')).length, 0, 'no SMS to unknown numbers');
     assert.equal((await t.get('/api/seller/me')).status, 401);
+  });
+
+  test('signing up with a number that already has an account just sends a login code', async () => {
+    const t = boot();
+    const token = await onboardSeller(t);
+    const again = await t.post('/api/auth/signup', { ...SELLER, full_name: 'Someone Else Entirely', business_name: 'Hijack' });
+    assert.equal(again.status, 200);
+    assert.equal((await t.one('SELECT business_name FROM sellers')).business_name, 'Bayo Kicks', 'details unchanged');
+    const login = await t.post('/api/auth/verify', { phone: SELLER.phone, code: again.data.dev_code });
+    assert.ok(login.data.token, 'the real owner can log in with it');
+    assert.ok(token);
+  });
+
+  test('a daily SMS budget caps code messages across everyone', async () => {
+    const t = boot({ OTP_DAILY_LIMIT: '2' });
+    for (const phone of ['08031110001', '08031110002']) {
+      assert.equal((await t.post('/api/auth/signup', { ...SELLER, phone })).status, 200);
+    }
+    const over = await t.post('/api/auth/signup', { ...SELLER, phone: '08031110003' });
+    assert.equal(over.status, 503);
+    assert.match(over.data.error, /can’t send codes right now/);
+    t.advanceHours(25);
+    assert.equal((await t.post('/api/auth/signup', { ...SELLER, phone: '08031110003' })).status, 200, 'resets the next day');
+  });
+
+  test('requests are limited per connection', async () => {
+    const t = boot();
+    const ip = { 'CF-Connecting-IP': '203.0.113.9' };
+    let last;
+    for (let i = 0; i < 11; i++) last = await t.call('POST', '/api/auth/login', { phone: `0803222${String(i).padStart(4, '0')}` }, null, ip);
+    assert.equal(last.status, 429);
+    assert.match(last.data.error, /Too many requests from this connection/);
+    const other = await t.call('POST', '/api/auth/login', { phone: '08033330000' }, null, { 'CF-Connecting-IP': '198.51.100.7' });
+    assert.equal(other.status, 200, 'another connection is unaffected');
+    t.advanceHours(2);
+    assert.equal((await t.call('POST', '/api/auth/login', { phone: '08033330001' }, null, ip)).status, 200, 'the window resets');
   });
 
   test('identity must match the seller’s name and date of birth', async () => {
@@ -356,5 +395,50 @@ describe('health check', () => {
     const noDb = boot();
     delete noDb.env.DB;
     assert.match((await noDb.get('/api/health')).data.database, /No D1 binding called DB/);
+  });
+});
+
+describe('test providers outside test mode', () => {
+  const LIVE = { TEST_MODE: 'false', APP_SECRET: 'x'.repeat(40), ADMIN_PASSWORD: 'a-long-admin-password', SITE_URL: 'https://trustgap.test', API_URL: 'https://api.trustgap.test' };
+
+  test('with TEST_MODE=false the payment and identity simulators refuse, and the fake checkout is gone', async () => {
+    const t = boot(LIVE);
+    assert.equal((await t.get('/api/config')).data.test_accounts, null, 'no test hints');
+    assert.equal((await t.get('/mock/pay/TX1')).status, 404);
+    assert.equal((await t.post('/mock/pay/TX1', { result: 'successful' })).status, 404);
+    const s = await t.post('/api/auth/signup', { full_name: 'Adebayo Oluwaseun John', business_name: 'Bayo', phone: '08031234567', email: 'b@x.ng', terms_accepted: true });
+    assert.equal(s.status, 200, 'pages and sign-up still work');
+  });
+
+  test('the public health check gives no details in live mode; the admin sees them, with risky settings', async () => {
+    const t = boot(LIVE);
+    const pub = (await t.get('/api/health')).data;
+    assert.deepEqual(Object.keys(pub).sort(), ['message', 'ok']);
+    assert.equal(pub.ok, false);
+    const admin = (await t.post('/api/admin/login', { password: 'a-long-admin-password' })).data.token;
+    assert.match((await t.get('/api/health', admin)).data.settings, /simulator/);
+    const h = (await t.get('/api/admin/health', admin)).data;
+    assert.ok(h.warnings.some((w) => w.level === 'danger' && /PAYMENT_PROVIDER = mock/.test(w.text)));
+    assert.ok(h.warnings.some((w) => /IDENTITY_PROVIDER = mock/.test(w.text)));
+    assert.equal((await t.get('/api/admin/health')).status, 401);
+  });
+
+  test('admin login and health still work when a provider setting is broken', async () => {
+    const t = boot({ ...LIVE, LOGISTICS_PROVIDER: 'gig' });
+    const admin = (await t.post('/api/admin/login', { password: 'a-long-admin-password' })).data.token;
+    assert.ok(admin);
+    const h = (await t.get('/api/admin/health', admin)).data;
+    assert.match(h.warnings[0].text, /LOGISTICS_PROVIDER is "gig"/);
+  });
+});
+
+describe('API response headers', () => {
+  test('every response forbids framing and referrers, with a strict policy', async () => {
+    const t = boot();
+    const res = await t.call('GET', '/api/config');
+    assert.equal(res.headers.get('X-Frame-Options'), 'DENY');
+    assert.equal(res.headers.get('Referrer-Policy'), 'no-referrer');
+    assert.match(res.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+    assert.equal(res.headers.get('X-Content-Type-Options'), 'nosniff');
   });
 });

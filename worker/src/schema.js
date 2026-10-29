@@ -55,5 +55,13 @@ export const MIGRATIONS = [
   {
     "name": "0014_parcel_location.sql",
     "sql": "-- Where the parcel was when the buyer reported a problem during delivery: 'rider' (refused at the\n-- door, the rider took it back) or 'buyer' (the rider left it with them). Decides which return starts.\nALTER TABLE disputes ADD COLUMN parcel_location TEXT;\n"
+  },
+  {
+    "name": "0015_case_statements.sql",
+    "sql": "-- Each side's account of an open case (buyer, seller, rider, courier), added after the first report.\n-- One case per problem: a second person adds their side instead of opening another dispute.\nCREATE TABLE IF NOT EXISTS dispute_statements (\n  id INTEGER PRIMARY KEY,\n  dispute_id INTEGER NOT NULL REFERENCES disputes(id),\n  party TEXT NOT NULL,\n  body TEXT NOT NULL,\n  parcel_location TEXT,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS dispute_statements_dispute ON dispute_statements(dispute_id);\n-- Photos sent with a statement (NULL: photos sent with the first report).\nALTER TABLE dispute_photos ADD COLUMN statement_id INTEGER;\n"
+  },
+  {
+    "name": "0016_rate_limits.sql",
+    "sql": "-- Request counters for rate limits (per connection, per phone, and the daily SMS budget).\nCREATE TABLE IF NOT EXISTS rate_limits (\n  key TEXT PRIMARY KEY,\n  count INTEGER NOT NULL,\n  reset_at TEXT NOT NULL\n);\n"
   }
 ];

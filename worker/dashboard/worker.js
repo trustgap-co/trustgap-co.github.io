@@ -129,6 +129,8 @@ function loadConfig(env) {
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,
     otp: { ttlMinutes: 10, maxAttempts: 5, maxPerWindow: 3, windowMinutes: 15 },
+    // Most login/sign-up code SMS sent in a day, across everyone: a cap on SMS spending if abused.
+    otpDailyLimit: num(env.OTP_DAILY_LIMIT, 300),
     sessionDays: 30,
     riderLinkDays: 14,
     // How long the buyer has to hand a returned item to the courier before TrustGap staff step in.
@@ -197,20 +199,28 @@ var MOCK_ACCOUNTS = {
   "0000000004": "FUNMILAYO GRACE ADEYEMI",
   "0000000005": "EMEKA PETER NWOSU"
 };
+var MOCK_LOCKED = "Payments are set to TrustGap\u2019s simulator (PAYMENT_PROVIDER = mock) but TEST_MODE is false. Set TEST_MODE = true to test with the simulator, or PAYMENT_PROVIDER = flutterwave to take real payments.";
 function createMockPayments(ctx) {
   const { env, config } = ctx;
+  const blocked = config.testMode ? null : MOCK_LOCKED;
+  const guard = /* @__PURE__ */ __name(() => {
+    if (blocked) throw Object.assign(new Error(blocked), { definite: false, locked: true });
+  }, "guard");
   return {
     name: "mock",
     isTest: true,
+    blocked,
     async listBanks() {
       return NIGERIAN_BANKS;
     },
     async resolveAccount({ accountNumber }) {
+      guard();
       const accountName = MOCK_ACCOUNTS[accountNumber];
       if (!accountName) throw new Error("Account not found. In test mode use one of the test account numbers.");
       return { accountName };
     },
     async createCheckout({ order }) {
+      guard();
       await run(env, "DELETE FROM mock_transactions WHERE tx_ref = ?", order.tx_ref);
       await insert(env, "mock_transactions", {
         tx_ref: order.tx_ref,
@@ -221,20 +231,24 @@ function createMockPayments(ctx) {
       return { url: `${config.apiUrl}/mock/pay/${encodeURIComponent(order.tx_ref)}` };
     },
     async verify(txRef) {
+      guard();
       const tx = await first(env, "SELECT * FROM mock_transactions WHERE tx_ref = ?", txRef);
       if (!tx) return { status: "not_found" };
       return { status: tx.status, amount: tx.amount, currency: "NGN", providerTxId: "mock-" + txRef };
     },
     async setMockStatus(txRef, status) {
+      guard();
       await run(env, "UPDATE mock_transactions SET status = ? WHERE tx_ref = ?", status, txRef);
     },
     async parseWebhook() {
       return null;
     },
     async verifyTransfer() {
+      guard();
       return { status: "success" };
     },
     async transfer({ reference }) {
+      guard();
       return { status: "success", providerRef: "mock-transfer-" + reference };
     }
   };
@@ -470,10 +484,13 @@ var MOCK_IDS = {
   "22222222222": { firstName: "CHIOMA", middleName: "NGOZI", lastName: "OKAFOR", dob: "1994-06-02" },
   "33333333333": { firstName: "MUSA", middleName: "IBRAHIM", lastName: "BELLO", dob: "1988-11-30" }
 };
-function createMockIdentity() {
+function createMockIdentity(ctx) {
+  const blocked = ctx?.config?.testMode === false ? "Identity checks are set to the simulator (IDENTITY_PROVIDER = mock) but TEST_MODE is false. Set IDENTITY_PROVIDER = monnify, or TEST_MODE = true to test." : null;
   return {
     name: "mock",
+    blocked,
     async verify({ idNumber }) {
+      if (blocked) throw Object.assign(new Error(blocked), { retryable: true });
       const person = MOCK_IDS[idNumber];
       if (!person) throw new Error("No record found for that number. In test mode use a test NIN.");
       return { ...person, providerRef: "mock-" + idNumber.slice(-4) };
@@ -829,6 +846,49 @@ function createContext(env, execCtx) {
 }
 __name(createContext, "createContext");
 
+// src/lib/limits.js
+var RULES = [
+  { name: "code", method: "POST", path: /^\/api\/auth\/(signup|login)$/, max: 10, seconds: 3600 },
+  { name: "verify", method: "POST", path: /^\/api\/auth\/verify$/, max: 20, seconds: 900 },
+  { name: "staff-login", method: "POST", path: /^\/api\/(admin|team)\/login$/, max: 20, seconds: 900 },
+  { name: "checkout", method: "POST", path: /^\/api\/deals\/[^/]+\/(accept|pay)$/, max: 40, seconds: 600 },
+  { name: "report", method: "POST", path: /^\/api\/(track\/[^/]+\/(dispute|statement)|seller\/orders\/\d+\/(statement|return-problem)|rider\/[^/]+\/statement)$/, max: 20, seconds: 3600 },
+  { name: "stamp", method: "GET", path: /\/photo-stamp$/, max: 60, seconds: 3600 },
+  { name: "pin", method: "POST", path: /^\/api\/rider\/[^/]+\/(pin|return-pin)$/, max: 30, seconds: 900 },
+  { name: "leads", method: "POST", path: /^\/api\/leads$/, max: 6, seconds: 3600 },
+  { name: "any-post", method: "POST", path: /./, max: 300, seconds: 600 }
+];
+async function hit(ctx, key, max, seconds) {
+  const now = ctx.now();
+  const reset = new Date(now.getTime() + seconds * 1e3).toISOString();
+  const row = await first(
+    ctx.env,
+    `INSERT INTO rate_limits (key, count, reset_at) VALUES (?, 1, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       count = CASE WHEN rate_limits.reset_at <= ? THEN 1 ELSE rate_limits.count + 1 END,
+       reset_at = CASE WHEN rate_limits.reset_at <= ? THEN excluded.reset_at ELSE rate_limits.reset_at END
+     RETURNING count`,
+    key,
+    reset,
+    now.toISOString(),
+    now.toISOString()
+  );
+  return row.count <= max;
+}
+__name(hit, "hit");
+async function enforceLimits(ctx, request, method, path) {
+  const ip = request.headers.get("CF-Connecting-IP");
+  if (!ip || !ctx.env?.DB) return;
+  for (const rule of RULES) {
+    if (rule.method !== method || !rule.path.test(path)) continue;
+    if (!await hit(ctx, `${rule.name}:${ip}`, rule.max, rule.seconds)) {
+      throw new UserError("Too many requests from this connection. Please wait a few minutes and try again.", 429);
+    }
+  }
+}
+__name(enforceLimits, "enforceLimits");
+var clearOldLimits = /* @__PURE__ */ __name((ctx) => run(ctx.env, "DELETE FROM rate_limits WHERE reset_at < ?", ctx.now().toISOString()), "clearOldLimits");
+
 // src/schema.js
 var MIGRATIONS = [
   {
@@ -930,6 +990,14 @@ ALTER TABLE disputes ADD COLUMN decided_by TEXT;
   {
     "name": "0014_parcel_location.sql",
     "sql": "-- Where the parcel was when the buyer reported a problem during delivery: 'rider' (refused at the\n-- door, the rider took it back) or 'buyer' (the rider left it with them). Decides which return starts.\nALTER TABLE disputes ADD COLUMN parcel_location TEXT;\n"
+  },
+  {
+    "name": "0015_case_statements.sql",
+    "sql": "-- Each side's account of an open case (buyer, seller, rider, courier), added after the first report.\n-- One case per problem: a second person adds their side instead of opening another dispute.\nCREATE TABLE IF NOT EXISTS dispute_statements (\n  id INTEGER PRIMARY KEY,\n  dispute_id INTEGER NOT NULL REFERENCES disputes(id),\n  party TEXT NOT NULL,\n  body TEXT NOT NULL,\n  parcel_location TEXT,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS dispute_statements_dispute ON dispute_statements(dispute_id);\n-- Photos sent with a statement (NULL: photos sent with the first report).\nALTER TABLE dispute_photos ADD COLUMN statement_id INTEGER;\n"
+  },
+  {
+    "name": "0016_rate_limits.sql",
+    "sql": "-- Request counters for rate limits (per connection, per phone, and the daily SMS budget).\nCREATE TABLE IF NOT EXISTS rate_limits (\n  key TEXT PRIMARY KEY,\n  count INTEGER NOT NULL,\n  reset_at TEXT NOT NULL\n);\n"
   }
 ];
 
@@ -1086,7 +1154,7 @@ var TOS_DOCUMENTS = {
 };
 var yes = /* @__PURE__ */ __name((v) => v === true || v === "yes", "yes");
 var acceptedTerms = /* @__PURE__ */ __name((input) => yes(input?.terms_accepted), "acceptedTerms");
-var RULES = /* @__PURE__ */ __name((deal) => [
+var RULES2 = /* @__PURE__ */ __name((deal) => [
   "Your payment is held by TrustGap. The seller is not paid until the item is delivered and the inspection period ends.",
   "Check the item at the door. Only give the rider your 4-digit delivery PIN if it matches this description.",
   `After delivery you have ${deal.inspection_hours} hours to report a hidden problem. If you report nothing, the seller is paid automatically.`,
@@ -1127,7 +1195,7 @@ async function snapshotTerms(deal, seller, photoHashes = [], promo = null, ackno
       weight_kg: deal.weight_kg
     },
     inspection_hours: deal.inspection_hours,
-    rules: RULES(deal),
+    rules: RULES2(deal),
     // The change-of-mind notice the buyer accepted in a pop-up before continuing (exact wording).
     buyer_acknowledgement: acknowledgedAt && { text: fillConsent("buyer", deal.delivery_fee), at: acknowledgedAt },
     // The buyer ticked "I agree to the TrustGap Terms of Service" in step 1.
@@ -1150,6 +1218,17 @@ var CONSENTS = {
   }
 };
 var fillConsent = /* @__PURE__ */ __name((who, deliveryFeeKobo) => `${CONSENTS[who].title} ${CONSENTS[who].body.replace("{fee}", formatNaira(2 * deliveryFeeKobo))}`, "fillConsent");
+
+// src/lib/names.js
+var tokens = /* @__PURE__ */ __name((name) => String(name || "").toUpperCase().replace(/[^A-Z\s-]/g, " ").split(/[\s-]+/).filter((t) => t.length > 1), "tokens");
+function namesMatch(typedName, accountName) {
+  const typed = tokens(typedName);
+  const account = new Set(tokens(accountName));
+  if (typed.length < 2 || account.size === 0) return false;
+  const overlap = typed.filter((t) => account.has(t)).length;
+  return overlap >= Math.min(2, account.size);
+}
+__name(namesMatch, "namesMatch");
 
 // src/core/common.js
 var CONDITIONS = ["Brand new (sealed)", "Brand new (open box)", "Used - like new", "Used - good condition", "Used - fair condition"];
@@ -1254,6 +1333,210 @@ function fmtDate(d) {
   });
 }
 __name(fmtDate, "fmtDate");
+
+// src/core/sellers.js
+async function sendCode(ctx, phone, email = null, { deliver: deliver2 = true } = {}) {
+  const { otp } = ctx.config;
+  const since = iso(new Date(ctx.now().getTime() - otp.windowMinutes * 6e4));
+  const recent = await first(ctx.env, "SELECT COUNT(*) n FROM otps WHERE phone = ? AND created_at > ?", phone, since);
+  if (recent.n >= otp.maxPerWindow) {
+    throw new UserError(`Too many codes requested. Wait ${otp.windowMinutes} minutes and try again.`, 429);
+  }
+  if (deliver2 && !await hit(ctx, `otp-day:${iso(ctx.now()).slice(0, 10)}`, ctx.config.otpDailyLimit, 86400)) {
+    console.error("Daily SMS budget for login codes reached (OTP_DAILY_LIMIT)");
+    throw new UserError("We can\u2019t send codes right now. Please try again later.", 503);
+  }
+  const code = randomDigits(6);
+  await insert(ctx.env, "otps", {
+    phone,
+    code_hash: await hmac(ctx.config.appSecret, `otp:${phone}:${code}`),
+    expires_at: iso(new Date(ctx.now().getTime() + otp.ttlMinutes * 6e4)),
+    created_at: iso(ctx.now())
+  });
+  if (!deliver2) return {};
+  await ctx.notify.send({
+    event: "login_code",
+    phone,
+    email,
+    sms: `Your TrustGap code is ${code}. It expires in ${otp.ttlMinutes} minutes. Never share it with anyone.`,
+    emailSubject: "Your TrustGap login code"
+  });
+  return ctx.config.testMode ? { dev_code: code } : {};
+}
+__name(sendCode, "sendCode");
+async function signup(ctx, input) {
+  const fullName = requireLength(input.full_name, "Full name", 3, 100);
+  if (fullName.split(/\s+/).length < 2) throw new UserError("Enter your full name (first and last name), as on your bank account.");
+  const businessName = requireLength(input.business_name, "Business name", 2, 80);
+  const phone = normalisePhone(input.phone);
+  const email = validEmail(input.email);
+  const existing = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
+  if (existing?.phone_verified_at) return { phone, ...await sendCode(ctx, phone, existing.email) };
+  if (!acceptedTerms(input)) throw new UserError("Tick the box to accept the TrustGap Terms of Service and Seller Terms. You can\u2019t create an account without accepting them.");
+  const terms = { terms_accepted_at: iso(ctx.now()), terms_version: TOS_VERSION };
+  const marketing = input.marketing_opt_in === true || input.marketing_opt_in === "yes" ? iso(ctx.now()) : null;
+  if (existing) {
+    await update(ctx.env, "sellers", existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing, ...terms });
+  } else {
+    await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
+  }
+  return { phone, ...await sendCode(ctx, phone, email) };
+}
+__name(signup, "signup");
+async function requestLogin(ctx, input) {
+  const phone = normalisePhone(input.phone);
+  const seller = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
+  if (!seller) return { phone, ...await sendCode(ctx, phone, null, { deliver: false }) };
+  return { phone, ...await sendCode(ctx, phone, seller.email) };
+}
+__name(requestLogin, "requestLogin");
+async function verifyCode(ctx, input) {
+  const phone = normalisePhone(input.phone);
+  const code = str(input.code);
+  const { otp } = ctx.config;
+  const row = await first(
+    ctx.env,
+    "SELECT * FROM otps WHERE phone = ? AND consumed_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1",
+    phone,
+    iso(ctx.now())
+  );
+  if (!row) throw new UserError("That code has expired. Request a new one.");
+  if (row.attempts >= otp.maxAttempts) throw new UserError("Too many wrong codes. Request a new one.");
+  if (!safeEqual(row.code_hash, await hmac(ctx.config.appSecret, `otp:${phone}:${code}`))) {
+    await run(ctx.env, "UPDATE otps SET attempts = attempts + 1 WHERE id = ?", row.id);
+    throw new UserError(`Wrong code. ${otp.maxAttempts - row.attempts - 1} attempt(s) left.`);
+  }
+  const claimed = await run(ctx.env, "UPDATE otps SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL", iso(ctx.now()), row.id);
+  if (claimed.meta.changes !== 1) throw new UserError("That code was already used. Request a new one.");
+  const seller = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
+  if (!seller) throw new UserError("That code is wrong or has expired. Request a new one.");
+  if (!seller.phone_verified_at) await update(ctx.env, "sellers", seller.id, { phone_verified_at: iso(ctx.now()) });
+  return { token: await createSession(ctx, { sellerId: seller.id }) };
+}
+__name(verifyCode, "verifyCode");
+async function createSession(ctx, { sellerId = null, isAdmin = false, staffId = null }) {
+  const token = randomToken(32);
+  const hours = isAdmin || staffId ? 12 : ctx.config.sessionDays * 24;
+  await insert(ctx.env, "sessions", {
+    token_hash: await sha256Hex(token),
+    seller_id: sellerId,
+    is_admin: isAdmin,
+    ...staffId ? { staff_id: staffId } : {},
+    expires_at: iso(new Date(ctx.now().getTime() + hours * 36e5)),
+    created_at: iso(ctx.now())
+  });
+  return token;
+}
+__name(createSession, "createSession");
+async function authenticate(ctx, request) {
+  const m = (request.headers.get("Authorization") || "").match(/^Bearer\s+(\S+)$/);
+  if (!m) return null;
+  return first(ctx.env, "SELECT * FROM sessions WHERE token_hash = ? AND expires_at > ?", await sha256Hex(m[1]), iso(ctx.now()));
+}
+__name(authenticate, "authenticate");
+async function logout(ctx, session2) {
+  if (session2) await run(ctx.env, "DELETE FROM sessions WHERE token_hash = ?", session2.token_hash);
+}
+__name(logout, "logout");
+async function adminLogin(ctx, input) {
+  const { env } = ctx;
+  const windowStart = iso(new Date(ctx.now().getTime() - 15 * 6e4));
+  const fails = JSON.parse((await first(env, "SELECT value FROM meta WHERE key = 'admin_fails'"))?.value || "[]").filter((t) => t > windowStart);
+  if (fails.length >= 10) throw new UserError("Too many attempts. Try again in 15 minutes.", 429);
+  if (!ctx.config?.adminPassword || !safeEqual(str(input.password), ctx.config.adminPassword)) {
+    fails.push(iso(ctx.now()));
+    await run(env, "INSERT INTO meta (key, value) VALUES ('admin_fails', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(fails));
+    throw new UserError("Wrong password.", 401);
+  }
+  return { token: await createSession(ctx, { isAdmin: true }) };
+}
+__name(adminLogin, "adminLogin");
+function sellerView(s) {
+  return {
+    id: s.id,
+    full_name: s.full_name,
+    business_name: s.business_name,
+    phone: s.phone,
+    email: s.email,
+    pickup_address: s.pickup_address,
+    pickup_state: s.pickup_state,
+    payout: s.payout_verified_at ? { bank_name: s.payout_bank_name, account_number: s.payout_account_number, account_name: s.payout_account_name } : null,
+    identity_verified: Boolean(s.identity_verified_at),
+    identity_verified_at: s.identity_verified_at,
+    id_type: s.id_type,
+    id_attempts_left: Math.max(0, 3 - (s.id_attempts || 0)),
+    amount_owed: s.amount_owed,
+    marketing_opt_in: Boolean(s.marketing_opt_in_at),
+    suspended: Boolean(s.suspended_at)
+  };
+}
+__name(sellerView, "sellerView");
+async function setPayoutAccount(ctx, seller, input) {
+  const bankCode = str(input.bank_code);
+  const accountNumber = str(input.account_number);
+  if (!/^\d{10}$/.test(accountNumber)) throw new UserError("Account number must be 10 digits.");
+  const bank = (await ctx.payments.listBanks()).find((b) => b.code === bankCode);
+  if (!bank) throw new UserError("Choose your bank.");
+  let accountName;
+  try {
+    ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
+  } catch (err) {
+    throw new UserError(err.locked ? err.message : `Payout account: ${err.message}`, err.locked ? 503 : 400);
+  }
+  if (!namesMatch(seller.full_name, accountName)) {
+    throw new UserError(
+      `That account belongs to "${accountName}", which does not match your registered name "${seller.full_name}". Payouts can only go to an account in your own name.`
+    );
+  }
+  await update(ctx.env, "sellers", seller.id, {
+    payout_bank_code: bankCode,
+    payout_bank_name: bank.name,
+    payout_account_number: accountNumber,
+    payout_account_name: accountName,
+    payout_verified_at: iso(ctx.now())
+  });
+  return sellerView(await getSeller(ctx, seller.id));
+}
+__name(setPayoutAccount, "setPayoutAccount");
+async function verifyIdentity(ctx, seller, input) {
+  if (seller.identity_verified_at) throw new UserError("Your identity is already verified.");
+  const max = ctx.config.maxIdentityAttempts;
+  if (seller.id_attempts >= max) {
+    throw new UserError(`You have used all ${max} verification attempts. Contact TrustGap support to finish verification.`, 429);
+  }
+  const nin = str(input.nin ?? input.id_number).replace(/\s/g, "");
+  if (!/^\d{11}$/.test(nin)) throw new UserError("Your NIN is 11 digits.");
+  const dob = str(input.dob);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) throw new UserError("Enter your date of birth.");
+  const used = /* @__PURE__ */ __name(async () => {
+    await run(ctx.env, "UPDATE sellers SET id_attempts = id_attempts + 1 WHERE id = ?", seller.id);
+    const left = max - seller.id_attempts - 1;
+    return left > 0 ? ` You have ${left} attempt${left > 1 ? "s" : ""} left.` : " That was your last attempt. Please contact TrustGap support.";
+  }, "used");
+  let person;
+  try {
+    person = await ctx.identity.verify({ idType: "nin", idNumber: nin });
+  } catch (err) {
+    if (err.retryable) throw new UserError(`Identity check unavailable: ${err.message}`, 503);
+    throw new UserError(`Identity check failed: ${err.message}.${await used()}`);
+  }
+  const officialName = [person.firstName, person.middleName, person.lastName].filter(Boolean).join(" ");
+  if (!namesMatch(seller.full_name, officialName)) {
+    throw new UserError(`This NIN is registered to a different name. It must match your account name "${seller.full_name}".${await used()}`);
+  }
+  if (person.dob && person.dob !== dob) {
+    throw new UserError(`The date of birth does not match the NIN record.${await used()}`);
+  }
+  await update(ctx.env, "sellers", seller.id, {
+    id_type: "nin",
+    id_last4: nin.slice(-4),
+    id_verified_name: officialName.toUpperCase(),
+    id_provider_ref: person.providerRef || null,
+    identity_verified_at: iso(ctx.now())
+  });
+  return sellerView(await getSeller(ctx, seller.id));
+}
+__name(verifyIdentity, "verifyIdentity");
 
 // src/core/debts.js
 var isDebtRef = /* @__PURE__ */ __name((txRef) => String(txRef || "").startsWith("TGD-"), "isDebtRef");
@@ -1652,17 +1935,6 @@ async function publicDealView(ctx, deal) {
 }
 __name(publicDealView, "publicDealView");
 
-// src/lib/names.js
-var tokens = /* @__PURE__ */ __name((name) => String(name || "").toUpperCase().replace(/[^A-Z\s-]/g, " ").split(/[\s-]+/).filter((t) => t.length > 1), "tokens");
-function namesMatch(typedName, accountName) {
-  const typed = tokens(typedName);
-  const account = new Set(tokens(accountName));
-  if (typed.length < 2 || account.size === 0) return false;
-  const overlap = typed.filter((t) => account.has(t)).length;
-  return overlap >= Math.min(2, account.size);
-}
-__name(namesMatch, "namesMatch");
-
 // src/lib/evidence.js
 var STAMP_MINUTES = 30;
 var OLD_PHOTO_MINUTES = 60;
@@ -1964,6 +2236,91 @@ async function reportReturnProblem(ctx, ret, input) {
   });
 }
 __name(reportReturnProblem, "reportReturnProblem");
+
+// src/core/statements.js
+var PARTIES = { buyer: "Buyer", seller: "Seller", rider: "Rider", courier: "Courier" };
+var MAX_PER_PARTY = 5;
+var openCase = /* @__PURE__ */ __name((ctx, orderId) => first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? AND status IN ('open', 'awaiting_return') ORDER BY id DESC", orderId), "openCase");
+async function addStatement(ctx, order, { party, body, photos: photoInput, parcel = null }) {
+  if (!PARTIES[party]) throw new UserError("Unknown party.");
+  const dispute = await openCase(ctx, order.id);
+  if (!dispute) throw new UserError("There is no open case on this order to add to.");
+  const text = str(body).slice(0, 2e3);
+  if (text.length < 3) throw new UserError("Say what happened.");
+  if (parcel && !PARCEL_LOCATIONS[parcel]) throw new UserError("Choose where the parcel is.");
+  const count = await first(ctx.env, "SELECT COUNT(*) n FROM dispute_statements WHERE dispute_id = ? AND party = ?", dispute.id, party);
+  if (count.n >= MAX_PER_PARTY) throw new UserError("You\u2019ve already added your side several times. Contact TrustGap support for anything else.");
+  const photos = await checkedEvidence(ctx, order, await parsePhotos(photoInput, MAX_DISPUTE_PHOTOS));
+  const now = iso(ctx.now());
+  const id = await insert(ctx.env, "dispute_statements", { dispute_id: dispute.id, party, body: text, parcel_location: parcel, created_at: now });
+  for (const [i, p] of photos.entries()) {
+    await insert(ctx.env, "dispute_photos", {
+      dispute_id: dispute.id,
+      statement_id: id,
+      position: 100 + i,
+      mime: p.mime,
+      data: p.data,
+      sha256: p.sha256,
+      bytes: p.bytes,
+      source: p.source,
+      stamp_code: p.stamp_code,
+      captured_at: p.captured_at,
+      phash: p.phash,
+      flags: JSON.stringify(p.flags || []),
+      created_at: now
+    });
+  }
+  await logEvent(ctx, order.id, party, "statement_added", { party, parcel, photos: photos.length });
+  await followParcel(ctx, await getOrder(ctx, order.id), party, parcel);
+  return { dispute_id: dispute.id, statement_id: id };
+}
+__name(addStatement, "addStatement");
+async function followParcel(ctx, order, party, parcel) {
+  if (!parcel || order.delivered_at || !order.dispatched_at) return;
+  if (await activeReturn(ctx, order.id)) return;
+  try {
+    if (parcel === "rider" && ["rider", "courier"].includes(party)) {
+      await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
+      await startDoorReturn(ctx, order, { by: party });
+    } else if (parcel === "buyer") {
+      await bookPickupReturn(ctx, order, { parcelWithBuyer: true, by: "buyer" });
+    }
+  } catch (err) {
+    await logEvent(ctx, order.id, "system", "return_booking_failed", err.message);
+  }
+}
+__name(followParcel, "followParcel");
+async function caseView(ctx, dispute, { viewer = "staff" } = {}) {
+  if (!dispute) return null;
+  const rows = await all(ctx.env, "SELECT * FROM dispute_statements WHERE dispute_id = ? ORDER BY id", dispute.id);
+  const opening = { id: null, party: dispute.opened_by, body: dispute.description, parcel_location: dispute.parcel_location, created_at: dispute.created_at, opening: true };
+  const all_ = [opening, ...rows].filter((r) => PARTIES[r.party]);
+  const visible = all_.filter((r) => viewer === "staff" || r.party === viewer || ["rider", "courier"].includes(r.party));
+  const statements = await Promise.all(visible.map(async (r) => ({
+    id: r.id,
+    party: r.party,
+    party_label: PARTIES[r.party],
+    body: r.body,
+    created_at: r.created_at,
+    opening: Boolean(r.opening),
+    parcel_location: r.parcel_location,
+    parcel_label: r.parcel_location && PARCEL_LOCATIONS[r.parcel_location],
+    photos: viewer === "staff" ? await evidenceDetails(ctx, dispute.id, { statementId: r.id }) : r.party === viewer ? await evidenceUrls(ctx, dispute.id, { statementId: r.id }) : []
+  })));
+  const claims = [
+    ...dispute.parcel_location ? [{ party: dispute.opened_by, at: dispute.parcel_location }] : [],
+    ...rows.filter((r) => r.parcel_location).map((r) => ({ party: r.party, at: r.parcel_location }))
+  ];
+  const latest = {};
+  for (const c of claims) latest[c.party] = c.at;
+  const places = new Set(Object.values(latest));
+  return {
+    statements,
+    parties_heard: [.../* @__PURE__ */ new Set([dispute.opened_by, ...rows.map((r) => r.party)])],
+    parcel_conflict: places.size > 1 ? Object.entries(latest).map(([p, at]) => `${PARTIES[p] || p}: ${at === "rider" ? "the rider has it" : "the buyer has it"}`).join(" \xB7 ") : null
+  };
+}
+__name(caseView, "caseView");
 
 // src/core/orders.js
 async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
@@ -2329,7 +2686,8 @@ async function syncCourierStatus(ctx, order) {
   if (!order.delivery_ref || order.courier !== ctx.logistics.name) return null;
   const st = await ctx.logistics.getStatus(order.delivery_ref);
   if (!st) return null;
-  if (st.raw && st.raw !== order.courier_status) {
+  const changed = Boolean(st.raw && st.raw !== order.courier_status);
+  if (changed) {
     await update(ctx.env, "orders", order.id, { courier_status: st.raw });
     await logEvent(ctx, order.id, "courier", "courier_status", st.reason ? `${st.raw}: ${st.reason}` : st.raw);
   }
@@ -2349,6 +2707,8 @@ async function syncCourierStatus(ctx, order) {
     await openDispute(ctx, order, { by: "courier", category: "refused_at_door", description: `Refused at the door (courier: ${st.raw}${st.reason ? `: ${st.reason}` : ""}).` });
     await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
     await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: "courier" });
+  } else if (changed && st.stage === "problem" && /reject|refus/i.test(st.raw || "") && order.status === "disputed" && await openCase(ctx, order.id)) {
+    await addStatement(ctx, order, { party: "courier", body: `Fez recorded: ${st.raw}${st.reason ? `: ${st.reason}` : ""}.`, parcel: "rider" });
   } else if (st.stage === "returned" && order.delivery_status !== "returned") {
     await update(ctx.env, "orders", order.id, { delivery_status: "returned" });
     if (order.status === "shipping") {
@@ -2383,7 +2743,7 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
     throw new UserError("The inspection period has ended.");
   }
   const won = await transition(ctx, order.id, [order.status], { status: "disputed" }, (h) => [
-    h.insert("disputes", { order_id: order.id, opened_by: by, category, description: text, status: "open", parcel_location: duringDelivery ? parcel : null, created_at: iso(ctx.now()) }),
+    h.insert("disputes", { order_id: order.id, opened_by: by, category, description: text, status: "open", parcel_location: duringDelivery ? parcel : category === "refused_at_door" ? "rider" : null, created_at: iso(ctx.now()) }),
     // Saved in the same step as the dispute, so a report never exists without its photos.
     ...photos.map((p, i) => evidencePhotoStmt(h, ctx, order.id, i + 1, p)),
     h.event(by, "dispute_opened", { category, description: text, photos: photos.length })
@@ -2435,8 +2795,8 @@ function evidencePhotoStmt(h, ctx, orderId, position, p) {
   );
 }
 __name(evidencePhotoStmt, "evidencePhotoStmt");
-async function evidenceDetails(ctx, disputeId) {
-  const rows = await all(ctx.env, "SELECT id, source, stamp_code, captured_at, flags FROM dispute_photos WHERE dispute_id = ? ORDER BY position", disputeId);
+async function evidenceDetails(ctx, disputeId, { statementId = null } = {}) {
+  const rows = await all(ctx.env, "SELECT id, source, stamp_code, captured_at, flags FROM dispute_photos WHERE dispute_id = ? AND statement_id IS ? ORDER BY position", disputeId, statementId);
   const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
   return Promise.all(rows.map(async (r) => ({
     url: `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`,
@@ -2447,8 +2807,8 @@ async function evidenceDetails(ctx, disputeId) {
   })));
 }
 __name(evidenceDetails, "evidenceDetails");
-async function evidenceUrls(ctx, disputeId) {
-  const rows = await all(ctx.env, "SELECT id FROM dispute_photos WHERE dispute_id = ? ORDER BY position", disputeId);
+async function evidenceUrls(ctx, disputeId, { statementId = null } = {}) {
+  const rows = await all(ctx.env, "SELECT id FROM dispute_photos WHERE dispute_id = ? AND statement_id IS ? ORDER BY position", disputeId, statementId);
   const until = addHours(ctx.now(), EVIDENCE_LINK_HOURS);
   return Promise.all(rows.map(async (r) => `${ctx.config.apiUrl}/api/evidence/${await signLink(ctx.config.appSecret, `dp${r.id}`, until)}`));
 }
@@ -2658,6 +3018,45 @@ async function settleTransfer(ctx, { reference, providerRef }) {
 }
 __name(settleTransfer, "settleTransfer");
 
+// src/core/leads.js
+var FORMS = ["survey", "early_access"];
+var MAX_FIELDS = 60;
+var MAX_VALUE = 2e3;
+var MAX_TOTAL = 24e3;
+async function forwardLead(ctx, body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new UserError("Nothing to save.");
+  if (!FORMS.includes(body.form)) throw new UserError("Unknown form.");
+  if (String(body.website || "").trim()) return { ok: true };
+  const entries = Object.entries(body).filter(([k]) => k !== "website");
+  if (entries.length > MAX_FIELDS) throw new UserError("Too many answers in one response.");
+  const fields = {};
+  let total = 0;
+  for (const [k, v] of entries) {
+    if (!/^[a-z0-9_]{1,40}$/i.test(k)) throw new UserError("An answer has an invalid name.");
+    const text = (Array.isArray(v) ? v.join(" | ") : String(v ?? "")).slice(0, MAX_VALUE);
+    total += text.length;
+    fields[k] = text;
+  }
+  if (total > MAX_TOTAL) throw new UserError("This response is too long.");
+  const id = String(fields.submission_id || "").slice(0, 80);
+  if (id && !await hit(ctx, `lead:${id}`, 1, 86400)) return { ok: true, duplicate: true };
+  for (const contact of [fields.phone, fields.email].filter(Boolean)) {
+    if (!await hit(ctx, `lead-contact:${contact.toLowerCase()}`, 3, 86400)) return { ok: true };
+  }
+  const url = String(ctx.env.LEADS_WEBHOOK_URL || "").trim();
+  if (!url) throw new UserError("Sorry, this form isn\u2019t connected yet, so your answers couldn\u2019t be saved. Please try again later.", 503);
+  fields.received_at = ctx.now().toISOString();
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", body: new URLSearchParams(fields) });
+  } catch {
+    res = null;
+  }
+  if (!res?.ok) throw new UserError("We couldn\u2019t save your answers just now. Please try again in a minute.", 502);
+  return { ok: true };
+}
+__name(forwardLead, "forwardLead");
+
 // src/routes/public.js
 var escapeHtml = /* @__PURE__ */ __name((s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]), "escapeHtml");
 async function loadDeal(ctx, token) {
@@ -2673,39 +3072,21 @@ async function loadOrderByBuyerToken(ctx, token) {
 }
 __name(loadOrderByBuyerToken, "loadOrderByBuyerToken");
 function publicRoutes(r) {
-  r.get("/api/health", async ({ ctx }) => {
-    const expected = ["sellers", "sessions", "otps", "deals", "checkouts", "orders", "order_events", "disputes", "ledger", "outbox", "mock_transactions", "meta", "deal_photos", "dispute_photos"];
-    if (!ctx.env.DB) return { ok: false, database: "No D1 binding called DB. Add it under Settings \u2192 Bindings." };
-    try {
-      await ensureSchema(ctx.env);
-      const tables = (await all(ctx.env, "SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
-      const missing = expected.filter((t) => !tables.includes(t));
-      if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(", ")}. The Worker could not create them. Check Logs.` };
-      const columns = (await all(ctx.env, "PRAGMA table_info(deals)")).map((c) => c.name);
-      if (!columns.includes("processing_fee")) return { ok: false, database: "Database update 0002 not applied. Check Logs." };
-      if (!columns.includes("photo_count")) return { ok: false, database: "Database update 0005 (item photos) not applied. Check Logs." };
-      try {
-        const c = createContext(ctx.env);
-        if (c.payments.blocked) return { ok: false, database: "connected", settings: `Payments: ${c.payments.blocked}` };
-      } catch (err) {
-        return { ok: false, database: "connected", settings: err.message };
-      }
-      return { ok: true, database: "connected", settings: "ok" };
-    } catch (err) {
-      return { ok: false, database: `Database error: ${err.message}` };
-    }
+  r.get("/api/health", async ({ ctx, request }) => {
+    const h = await healthReport(ctx);
+    if (ctx.env.TEST_MODE !== "false" || await adminRequest(ctx, request)) return h;
+    return { ok: h.ok, ...h.ok ? {} : { message: "Something needs attention. Log in to the admin pages and open Orders to see what." } };
   });
   r.get("/api/config", async ({ ctx }) => ({
     test_mode: ctx.config.testMode,
-    payment_provider: ctx.payments.name,
-    payment_test: Boolean(ctx.payments.isTest),
+    // Which test bank accounts to suggest, only while testing (no provider names otherwise).
+    test_accounts: ctx.config.testMode && ctx.payments.name === "mock" ? "simulator" : ctx.payments.name === "flutterwave" && ctx.payments.isTest ? "flutterwave" : null,
     fee: ctx.config.fee,
     processing: ctx.config.processing,
     max_deal: ctx.config.maxDealKobo,
     min_price_delivery_multiple: ctx.config.minPriceDeliveryMultiple,
     inspection_hours: ctx.config.inspectionHours,
     states: STATES,
-    courier: ctx.logistics.name,
     conditions: CONDITIONS,
     expiry_options: EXPIRY_OPTIONS,
     dispute_categories: BUYER_DISPUTE_CATEGORIES,
@@ -2715,9 +3096,10 @@ function publicRoutes(r) {
     require_seller_id: ctx.config.requireSellerId
   }));
   r.get("/api/banks", async ({ ctx }) => ({ banks: await ctx.payments.listBanks() }));
+  r.post("/api/leads", ({ ctx, body }) => forwardLead(ctx, body));
   r.get("/api/deals/:token", async ({ ctx, params }) => {
     const deal = await loadDeal(ctx, params.token);
-    return { deal: await publicDealView(ctx, deal), rules: RULES(deal) };
+    return { deal: await publicDealView(ctx, deal), rules: RULES2(deal) };
   });
   r.get("/api/evidence/:token", async ({ ctx, params }) => {
     const id = (await verifyLink(ctx.config.appSecret, params.token, ctx.now()))?.match(/^dp(\d+)$/)?.[1];
@@ -2771,7 +3153,7 @@ function publicRoutes(r) {
     return new Response("ok");
   });
   r.get("/mock/pay/:txRef", async ({ ctx, params }) => {
-    if (ctx.payments.name !== "mock") throw notFound();
+    if (ctx.payments.name !== "mock" || !ctx.config.testMode) throw notFound();
     const tx = await first(ctx.env, "SELECT * FROM mock_transactions WHERE tx_ref = ?", params.txRef);
     if (!tx) throw notFound("Unknown test payment.");
     return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2785,7 +3167,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
 <button class="alt" name="result" value="failed">Simulate failed payment</button></form></div></body></html>`);
   });
   r.post("/mock/pay/:txRef", async ({ ctx, params, body }) => {
-    if (ctx.payments.name !== "mock") throw notFound();
+    if (ctx.payments.name !== "mock" || !ctx.config.testMode) throw notFound();
     await ctx.payments.setMockStatus(params.txRef, body.result === "successful" ? "successful" : "failed");
     return redirect(`${ctx.config.apiUrl}/api/payments/callback?tx_ref=${encodeURIComponent(params.txRef)}`);
   });
@@ -2814,6 +3196,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         pin: ["paid", "shipping"].includes(o.status) ? await revealPin(ctx, o) : null,
         ship_by: o.ship_by,
         delivered_at: o.delivered_at,
+        dispatched: Boolean(o.dispatched_at),
         inspection_ends_at: o.inspection_ends_at,
         refund_account: `${o.refund_bank_name} \u2022\u2022\u2022\u2022${o.refund_account_last4}`,
         price: {
@@ -2832,6 +3215,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         can_report: canReport
       },
       return: await returnView(ctx, await activeReturn(ctx, o.id)),
+      case: await caseView(ctx, await openCase(ctx, o.id), { viewer: "buyer" }),
       dispute: dispute && {
         // Only the buyer's own photos (a later report can be the seller's, about the returned item).
         photos: dispute.opened_by === "buyer" ? await evidenceUrls(ctx, dispute.id) : [],
@@ -2851,211 +3235,52 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
   });
   r.get("/api/track/:token/photo-stamp", async ({ ctx, params }) => ({ stamp: await issueStamp(ctx, await loadOrderByBuyerToken(ctx, params.token)) }));
   r.post("/api/track/:token/dispute", async ({ ctx, params, body }) => {
+    const order = await loadOrderByBuyerToken(ctx, params.token);
+    if (order.status === "disputed" && await openCase(ctx, order.id)) {
+      await addStatement(ctx, order, { party: "buyer", body: body.description, photos: body.photos, parcel: body.parcel });
+      return { ok: true, added_to_case: true };
+    }
     if (!BUYER_DISPUTE_CATEGORIES[body.category]) throw new UserError("Choose what went wrong.");
-    await openDispute(ctx, await loadOrderByBuyerToken(ctx, params.token), { by: "buyer", category: body.category, description: body.description, photos: body.photos, parcel: body.parcel });
+    await openDispute(ctx, order, { by: "buyer", category: body.category, description: body.description, photos: body.photos, parcel: body.parcel });
+    return { ok: true };
+  });
+  r.post("/api/track/:token/statement", async ({ ctx, params, body }) => {
+    await addStatement(ctx, await loadOrderByBuyerToken(ctx, params.token), { party: "buyer", body: body.body, photos: body.photos, parcel: body.parcel });
     return { ok: true };
   });
 }
 __name(publicRoutes, "publicRoutes");
-
-// src/core/sellers.js
-async function sendCode(ctx, phone, email = null) {
-  const { otp } = ctx.config;
-  const since = iso(new Date(ctx.now().getTime() - otp.windowMinutes * 6e4));
-  const recent = await first(ctx.env, "SELECT COUNT(*) n FROM otps WHERE phone = ? AND created_at > ?", phone, since);
-  if (recent.n >= otp.maxPerWindow) {
-    throw new UserError(`Too many codes requested. Wait ${otp.windowMinutes} minutes and try again.`, 429);
-  }
-  const code = randomDigits(6);
-  await insert(ctx.env, "otps", {
-    phone,
-    code_hash: await hmac(ctx.config.appSecret, `otp:${phone}:${code}`),
-    expires_at: iso(new Date(ctx.now().getTime() + otp.ttlMinutes * 6e4)),
-    created_at: iso(ctx.now())
-  });
-  await ctx.notify.send({
-    event: "login_code",
-    phone,
-    email,
-    sms: `Your TrustGap code is ${code}. It expires in ${otp.ttlMinutes} minutes. Never share it with anyone.`,
-    emailSubject: "Your TrustGap login code"
-  });
-  return ctx.config.testMode ? { dev_code: code } : {};
-}
-__name(sendCode, "sendCode");
-async function signup(ctx, input) {
-  const fullName = requireLength(input.full_name, "Full name", 3, 100);
-  if (fullName.split(/\s+/).length < 2) throw new UserError("Enter your full name (first and last name), as on your bank account.");
-  const businessName = requireLength(input.business_name, "Business name", 2, 80);
-  const phone = normalisePhone(input.phone);
-  const email = validEmail(input.email);
-  const existing = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
-  if (existing?.phone_verified_at) throw new UserError("An account with this phone number already exists. Log in instead.");
-  if (!acceptedTerms(input)) throw new UserError("Tick the box to accept the TrustGap Terms of Service and Seller Terms. You can\u2019t create an account without accepting them.");
-  const terms = { terms_accepted_at: iso(ctx.now()), terms_version: TOS_VERSION };
-  const marketing = input.marketing_opt_in === true || input.marketing_opt_in === "yes" ? iso(ctx.now()) : null;
-  if (existing) {
-    await update(ctx.env, "sellers", existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing, ...terms });
-  } else {
-    await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
-  }
-  return { phone, ...await sendCode(ctx, phone, email) };
-}
-__name(signup, "signup");
-async function requestLogin(ctx, input) {
-  const phone = normalisePhone(input.phone);
-  const seller = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
-  if (!seller) throw new UserError("No seller account uses this number. Sign up first.", 404);
-  return { phone, ...await sendCode(ctx, phone, seller.email) };
-}
-__name(requestLogin, "requestLogin");
-async function verifyCode(ctx, input) {
-  const phone = normalisePhone(input.phone);
-  const code = str(input.code);
-  const { otp } = ctx.config;
-  const row = await first(
-    ctx.env,
-    "SELECT * FROM otps WHERE phone = ? AND consumed_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1",
-    phone,
-    iso(ctx.now())
-  );
-  if (!row) throw new UserError("That code has expired. Request a new one.");
-  if (row.attempts >= otp.maxAttempts) throw new UserError("Too many wrong codes. Request a new one.");
-  if (!safeEqual(row.code_hash, await hmac(ctx.config.appSecret, `otp:${phone}:${code}`))) {
-    await run(ctx.env, "UPDATE otps SET attempts = attempts + 1 WHERE id = ?", row.id);
-    throw new UserError(`Wrong code. ${otp.maxAttempts - row.attempts - 1} attempt(s) left.`);
-  }
-  const claimed = await run(ctx.env, "UPDATE otps SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL", iso(ctx.now()), row.id);
-  if (claimed.meta.changes !== 1) throw new UserError("That code was already used. Request a new one.");
-  const seller = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
-  if (!seller) throw new UserError("No seller account uses this number.", 404);
-  if (!seller.phone_verified_at) await update(ctx.env, "sellers", seller.id, { phone_verified_at: iso(ctx.now()) });
-  return { token: await createSession(ctx, { sellerId: seller.id }) };
-}
-__name(verifyCode, "verifyCode");
-async function createSession(ctx, { sellerId = null, isAdmin = false, staffId = null }) {
-  const token = randomToken(32);
-  const hours = isAdmin || staffId ? 12 : ctx.config.sessionDays * 24;
-  await insert(ctx.env, "sessions", {
-    token_hash: await sha256Hex(token),
-    seller_id: sellerId,
-    is_admin: isAdmin,
-    ...staffId ? { staff_id: staffId } : {},
-    expires_at: iso(new Date(ctx.now().getTime() + hours * 36e5)),
-    created_at: iso(ctx.now())
-  });
-  return token;
-}
-__name(createSession, "createSession");
-async function authenticate(ctx, request) {
-  const m = (request.headers.get("Authorization") || "").match(/^Bearer\s+(\S+)$/);
-  if (!m) return null;
-  return first(ctx.env, "SELECT * FROM sessions WHERE token_hash = ? AND expires_at > ?", await sha256Hex(m[1]), iso(ctx.now()));
-}
-__name(authenticate, "authenticate");
-async function logout(ctx, session2) {
-  if (session2) await run(ctx.env, "DELETE FROM sessions WHERE token_hash = ?", session2.token_hash);
-}
-__name(logout, "logout");
-async function adminLogin(ctx, input) {
-  const { env } = ctx;
-  const windowStart = iso(new Date(ctx.now().getTime() - 15 * 6e4));
-  const fails = JSON.parse((await first(env, "SELECT value FROM meta WHERE key = 'admin_fails'"))?.value || "[]").filter((t) => t > windowStart);
-  if (fails.length >= 10) throw new UserError("Too many attempts. Try again in 15 minutes.", 429);
-  if (!ctx.config.adminPassword || !safeEqual(str(input.password), ctx.config.adminPassword)) {
-    fails.push(iso(ctx.now()));
-    await run(env, "INSERT INTO meta (key, value) VALUES ('admin_fails', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(fails));
-    throw new UserError("Wrong password.", 401);
-  }
-  return { token: await createSession(ctx, { isAdmin: true }) };
-}
-__name(adminLogin, "adminLogin");
-function sellerView(s) {
-  return {
-    id: s.id,
-    full_name: s.full_name,
-    business_name: s.business_name,
-    phone: s.phone,
-    email: s.email,
-    pickup_address: s.pickup_address,
-    pickup_state: s.pickup_state,
-    payout: s.payout_verified_at ? { bank_name: s.payout_bank_name, account_number: s.payout_account_number, account_name: s.payout_account_name } : null,
-    identity_verified: Boolean(s.identity_verified_at),
-    identity_verified_at: s.identity_verified_at,
-    id_type: s.id_type,
-    id_attempts_left: Math.max(0, 3 - (s.id_attempts || 0)),
-    amount_owed: s.amount_owed,
-    marketing_opt_in: Boolean(s.marketing_opt_in_at),
-    suspended: Boolean(s.suspended_at)
-  };
-}
-__name(sellerView, "sellerView");
-async function setPayoutAccount(ctx, seller, input) {
-  const bankCode = str(input.bank_code);
-  const accountNumber = str(input.account_number);
-  if (!/^\d{10}$/.test(accountNumber)) throw new UserError("Account number must be 10 digits.");
-  const bank = (await ctx.payments.listBanks()).find((b) => b.code === bankCode);
-  if (!bank) throw new UserError("Choose your bank.");
-  let accountName;
+async function healthReport(ctx) {
+  const expected = ["sellers", "sessions", "otps", "deals", "checkouts", "orders", "order_events", "disputes", "ledger", "outbox", "mock_transactions", "meta", "deal_photos", "dispute_photos"];
+  if (!ctx.env.DB) return { ok: false, database: "No D1 binding called DB. Add it under Settings \u2192 Bindings." };
   try {
-    ({ accountName } = await ctx.payments.resolveAccount({ bankCode, accountNumber }));
+    await ensureSchema(ctx.env);
+    const tables = (await all(ctx.env, "SELECT name FROM sqlite_master WHERE type = 'table'")).map((t) => t.name);
+    const missing = expected.filter((t) => !tables.includes(t));
+    if (missing.length) return { ok: false, database: `Tables missing: ${missing.join(", ")}. The Worker could not create them. Check Logs.` };
+    const columns = (await all(ctx.env, "PRAGMA table_info(deals)")).map((c) => c.name);
+    if (!columns.includes("processing_fee")) return { ok: false, database: "Database update 0002 not applied. Check Logs." };
+    if (!columns.includes("photo_count")) return { ok: false, database: "Database update 0005 (item photos) not applied. Check Logs." };
+    try {
+      const c = createContext(ctx.env);
+      if (c.payments.blocked) return { ok: false, database: "connected", settings: `Payments: ${c.payments.blocked}` };
+    } catch (err) {
+      return { ok: false, database: "connected", settings: err.message };
+    }
+    return { ok: true, database: "connected", settings: "ok" };
   } catch (err) {
-    throw new UserError(err.locked ? err.message : `Payout account: ${err.message}`, err.locked ? 503 : 400);
+    return { ok: false, database: `Database error: ${err.message}` };
   }
-  if (!namesMatch(seller.full_name, accountName)) {
-    throw new UserError(
-      `That account belongs to "${accountName}", which does not match your registered name "${seller.full_name}". Payouts can only go to an account in your own name.`
-    );
-  }
-  await update(ctx.env, "sellers", seller.id, {
-    payout_bank_code: bankCode,
-    payout_bank_name: bank.name,
-    payout_account_number: accountNumber,
-    payout_account_name: accountName,
-    payout_verified_at: iso(ctx.now())
-  });
-  return sellerView(await getSeller(ctx, seller.id));
 }
-__name(setPayoutAccount, "setPayoutAccount");
-async function verifyIdentity(ctx, seller, input) {
-  if (seller.identity_verified_at) throw new UserError("Your identity is already verified.");
-  const max = ctx.config.maxIdentityAttempts;
-  if (seller.id_attempts >= max) {
-    throw new UserError(`You have used all ${max} verification attempts. Contact TrustGap support to finish verification.`, 429);
-  }
-  const nin = str(input.nin ?? input.id_number).replace(/\s/g, "");
-  if (!/^\d{11}$/.test(nin)) throw new UserError("Your NIN is 11 digits.");
-  const dob = str(input.dob);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) throw new UserError("Enter your date of birth.");
-  const used = /* @__PURE__ */ __name(async () => {
-    await run(ctx.env, "UPDATE sellers SET id_attempts = id_attempts + 1 WHERE id = ?", seller.id);
-    const left = max - seller.id_attempts - 1;
-    return left > 0 ? ` You have ${left} attempt${left > 1 ? "s" : ""} left.` : " That was your last attempt. Please contact TrustGap support.";
-  }, "used");
-  let person;
+__name(healthReport, "healthReport");
+async function adminRequest(ctx, request) {
   try {
-    person = await ctx.identity.verify({ idType: "nin", idNumber: nin });
-  } catch (err) {
-    if (err.retryable) throw new UserError(`Identity check unavailable: ${err.message}`, 503);
-    throw new UserError(`Identity check failed: ${err.message}.${await used()}`);
+    return Boolean((await authenticate(ctx, request))?.is_admin);
+  } catch {
+    return false;
   }
-  const officialName = [person.firstName, person.middleName, person.lastName].filter(Boolean).join(" ");
-  if (!namesMatch(seller.full_name, officialName)) {
-    throw new UserError(`This NIN is registered to a different name. It must match your account name "${seller.full_name}".${await used()}`);
-  }
-  if (person.dob && person.dob !== dob) {
-    throw new UserError(`The date of birth does not match the NIN record.${await used()}`);
-  }
-  await update(ctx.env, "sellers", seller.id, {
-    id_type: "nin",
-    id_last4: nin.slice(-4),
-    id_verified_name: officialName.toUpperCase(),
-    id_provider_ref: person.providerRef || null,
-    identity_verified_at: iso(ctx.now())
-  });
-  return sellerView(await getSeller(ctx, seller.id));
 }
-__name(verifyIdentity, "verifyIdentity");
+__name(adminRequest, "adminRequest");
 
 // src/routes/seller.js
 async function requireSeller(ctx, request) {
@@ -3182,6 +3407,7 @@ function sellerRoutes(r) {
       dispute,
       // Includes the return PIN while the item is on its way back, to give the rider at hand-back.
       return: await returnView(ctx, await activeReturn(ctx, o.id), { withPin: true }),
+      case: await caseView(ctx, await openCase(ctx, o.id), { viewer: "seller" }),
       events: await all(ctx.env, "SELECT type, actor, created_at FROM order_events WHERE order_id = ? ORDER BY id", o.id)
     };
   });
@@ -3193,7 +3419,21 @@ function sellerRoutes(r) {
     if (!isOpenReturn(ret)) throw new UserError("There is no return waiting on this order.");
     return { order: o, ret };
   }, "sellerReturn");
-  r.get("/api/seller/orders/:id/photo-stamp", async ({ ctx, request, params }) => ({ stamp: await issueStamp(ctx, (await sellerReturn(ctx, request, params.id)).order) }));
+  const sellerOrder = /* @__PURE__ */ __name(async (ctx, request, id) => {
+    const { seller } = await requireSeller(ctx, request);
+    const o = await first(ctx.env, "SELECT * FROM orders WHERE id = ? AND seller_id = ?", Number(id), seller.id);
+    if (!o) throw notFound("Order not found.");
+    return o;
+  }, "sellerOrder");
+  r.get("/api/seller/orders/:id/photo-stamp", async ({ ctx, request, params }) => {
+    const o = await sellerOrder(ctx, request, params.id);
+    if (!isOpenReturn(await activeReturn(ctx, o.id)) && !await openCase(ctx, o.id)) throw new UserError("There is nothing to add photos to on this order.");
+    return { stamp: await issueStamp(ctx, o) };
+  });
+  r.post("/api/seller/orders/:id/statement", async ({ ctx, request, params, body }) => {
+    await addStatement(ctx, await sellerOrder(ctx, request, params.id), { party: "seller", body: body.body, photos: body.photos });
+    return { ok: true };
+  });
   r.post("/api/seller/orders/:id/return-problem", async ({ ctx, request, params, body }) => {
     await reportReturnProblem(ctx, (await sellerReturn(ctx, request, params.id)).ret, body);
     return { ok: true };
@@ -3271,6 +3511,7 @@ async function runJobs(ctx) {
     await deliver(ctx, m.id);
     result.resent++;
   }
+  await clearOldLimits(ctx);
   const dayAgo = iso(new Date(ctx.now().getTime() - 864e5));
   await ctx.env.DB.batch([
     ctx.env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
@@ -3279,6 +3520,33 @@ async function runJobs(ctx) {
   return result;
 }
 __name(runJobs, "runJobs");
+
+// src/lib/settings-check.js
+function settingsCheck(ctx) {
+  const { env, config } = ctx;
+  const out = [];
+  const add = /* @__PURE__ */ __name((level, text) => out.push({ level, text }), "add");
+  const live = !config.testMode;
+  if (ctx.payments.blocked) add("danger", `Payments are switched off: ${ctx.payments.blocked}`);
+  if (ctx.identity.blocked) add("danger", ctx.identity.blocked);
+  const key = String(env.FLW_SECRET_KEY || "").trim();
+  if (config.testMode && ctx.payments.name === "flutterwave" && key.startsWith("FLWSECK-") && !key.startsWith("FLWSECK_TEST")) {
+    add("danger", "A live Flutterwave key is in use while TEST_MODE is true: pages say \u201Cno real money moves\u201D, but it does. Set TEST_MODE = false, or use your test key.");
+  }
+  if (ctx.payments.name === "flutterwave" && !env.FLW_WEBHOOK_HASH) add("warn", "FLW_WEBHOOK_HASH isn\u2019t set, so Flutterwave\u2019s payment notifications are ignored (payments are still checked on return and by the timers).");
+  if (live) {
+    if (String(env.APP_SECRET || "").length < 32) add("danger", "APP_SECRET is shorter than 32 characters. Use a long random value.");
+    if (String(config.adminPassword || "").length < 12) add("danger", "ADMIN_PASSWORD is missing or shorter than 12 characters.");
+    for (const [k, v] of [["SITE_URL", config.siteUrl], ["API_URL", config.apiUrl]]) {
+      if (!/^https:\/\//.test(v) || /localhost|127\.0\.0\.1/.test(v)) add("danger", `${k} is \u201C${v}\u201D: it must be your real https:// address.`);
+    }
+    if (ctx.logistics.name === "manual") add("warn", "Deliveries use your own riders (LOGISTICS_PROVIDER = manual). Fine for the pilot; switch to fez when ready.");
+    if (!env.MAKE_WEBHOOK_URL) add("warn", "MAKE_WEBHOOK_URL isn\u2019t set, so no SMS or emails are sent.");
+  }
+  if (!env.LEADS_WEBHOOK_URL) add("warn", "LEADS_WEBHOOK_URL isn\u2019t set, so survey and early-access answers aren\u2019t forwarded to your Google Sheet.");
+  return out;
+}
+__name(settingsCheck, "settingsCheck");
 
 // src/providers/sheets.js
 var naira = /* @__PURE__ */ __name((kobo) => kobo == null ? "" : kobo / 100, "naira");
@@ -3520,6 +3788,8 @@ function riderRoutes(r) {
     return {
       order: {
         mode: returnJob ? "return" : "delivery",
+        // An open case the rider can add their account to (e.g. the buyer reported the refusal first).
+        case: !returnJob && await openCase(ctx, o.id) ? { open: true, mine: (await caseView(ctx, await openCase(ctx, o.id), { viewer: "rider" })).statements.filter((x) => x.party === "rider") } : null,
         return: returnJob ? await returnView(ctx, returnJob) : doorReturn,
         ref: o.ref,
         status: o.status,
@@ -3538,7 +3808,16 @@ function riderRoutes(r) {
   r.post("/api/rider/:token/status", async ({ ctx, params, body }) => {
     const { order, ret } = await riderJob(ctx, params.token);
     if (ret) await applyReturnUpdate(ctx, ret, { status: body.status, note: body.note, actor: "rider" });
-    else await applyDeliveryUpdate(ctx, order, { status: body.status, note: body.note, actor: "rider" });
+    else if (body.status === "refused" && order.status === "disputed" && await openCase(ctx, order.id)) {
+      await addStatement(ctx, order, { party: "rider", body: str(body.note) || "Buyer refused the parcel at the door.", parcel: "rider" });
+      return { ok: true, added_to_case: true };
+    } else await applyDeliveryUpdate(ctx, order, { status: body.status, note: body.note, actor: "rider" });
+    return { ok: true };
+  });
+  r.post("/api/rider/:token/statement", async ({ ctx, params, body }) => {
+    const { order, ret } = await riderJob(ctx, params.token);
+    if (ret) throw new UserError("Use the delivery link to add your account.");
+    await addStatement(ctx, order, { party: "rider", body: body.body, parcel: body.parcel || null });
     return { ok: true };
   });
   r.post("/api/rider/:token/return-pin", async ({ ctx, params, body }) => {
@@ -3601,7 +3880,8 @@ function adminRoutes(r) {
       disputes: await Promise.all((await all(ctx.env, "SELECT * FROM disputes WHERE order_id = ? ORDER BY id", o.id)).map(async (x) => ({
         ...x,
         category_label: DISPUTE_CATEGORIES[x.category] || x.category,
-        photos: await evidenceDetails(ctx, x.id)
+        photos: await evidenceDetails(ctx, x.id),
+        case: await caseView(ctx, x)
       }))),
       return: await (async () => {
         const ret = await activeReturn(ctx, o.id);
@@ -3694,6 +3974,15 @@ function adminRoutes(r) {
     return { registered: url };
   }));
   r.post("/api/admin/jobs", admin(async ({ ctx }) => ({ result: await runJobs(ctx) })));
+  r.get("/api/admin/health", admin(async ({ ctx }) => {
+    let warnings;
+    try {
+      warnings = settingsCheck(createContext(ctx.env));
+    } catch (err) {
+      warnings = [{ level: "danger", text: err.message }];
+    }
+    return { ...await healthReport(ctx), warnings };
+  }));
   r.post("/api/admin/sync-sheets", admin(async ({ ctx }) => ({ result: await syncSheets(ctx) })));
 }
 __name(adminRoutes, "adminRoutes");
@@ -3934,7 +4223,12 @@ async function teamOrderView(ctx, staff, orderId) {
       buyer: { name: o.buyer_name, phone: o.buyer_phone, email: o.buyer_email, state: o.delivery_state, address: o.delivery_address },
       seller: { business_name: s.business_name, name: s.full_name, phone: s.phone, email: s.email, identity_verified: Boolean(s.identity_verified_at) }
     },
-    disputes: await Promise.all(disputes.map(async (x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category, photos: await evidenceDetails(ctx, x.id) }))),
+    disputes: await Promise.all(disputes.map(async (x) => ({
+      ...x,
+      category_label: DISPUTE_CATEGORIES[x.category] || x.category,
+      photos: await evidenceDetails(ctx, x.id),
+      case: await caseView(ctx, await first(ctx.env, "SELECT * FROM disputes WHERE id = ?", x.id))
+    }))),
     // Present only while she holds an open "Decide a dispute" task for this order: what the decision form needs.
     decide: decideTask && {
       task_id: decideTask.id,
@@ -4084,9 +4378,11 @@ var MANUAL = {
 <li>For wrong, damaged, fake or not-as-described items, at least one photo is required (up to 2).</li>
 <li>Disputes also open automatically when the seller misses the ship-by time, when the buyer refuses the parcel at the door, or when the courier returns it.</li>
 </ul>
+<h3>One case, every side\u2019s account</h3>
+<p>There is only ever one case per problem. Whoever reports first opens it; the buyer, the seller and the rider (or Fez) then <strong>add their side</strong> to it from their own page, with photos. Nobody is told \u201Ca problem can\u2019t be reported\u201D. On the order page, <strong>Accounts</strong> lists every account in order, with photos and their checks, and says who hasn\u2019t been heard from yet. If the accounts disagree about where the parcel is (e.g. the rider says they have it, the buyer says it was left with them), a warning shows: check with both and use <em>Book a return from the buyer</em> if needed.</p>
 <h3>What you do</h3>
 <ol>
-<li>Contact both sides. Be neutral; don\u2019t take sides.</li>
+<li>Contact anyone not heard from yet (the order page lists them) and ask them to add their side on their page. Be neutral; don\u2019t take sides.</li>
 <li>Ask for evidence: live photos taken with the <strong>TrustGap camera</strong> (on the buyer\u2019s tracking page, and on the seller\u2019s order page for a return), the chat where the item was described, and the seller\u2019s packing photos or video.</li>
 <li>Write what you found in the task notes, with dates and who said what.</li>
 <li>Mark the task done and tell the admin it is ready to decide.</li>
@@ -4215,6 +4511,7 @@ var MANUAL = {
 <li>Move a task to <em>In progress</em> when you start and <em>Done</em> when finished. Add notes as you go.</li>
 <li>A <strong>Decide a dispute</strong> task has a button <em>Review evidence and decide</em>. See the section \u201CDeciding a dispute\u201D.</li>
 <li>If a task is about an order, <strong>Open order</strong> shows its status, item, both sides\u2019 contact details, delivery, any dispute and return, and the timeline. It is read only, and you can only open orders your tasks are about.</li>
+<li>Pages update themselves every 30 seconds while open (\u201CLive \xB7 updated \u2026\u201D at the top). If you\u2019re typing when something changes, a bar offers the update instead, so you never lose what you wrote.</li>
 <li>Log out when you finish, especially on a shared device. Sessions end after 12 hours.</li>
 </ol>
 <p>Forgot your password? Ask the admin to reset it.</p>`
@@ -4295,6 +4592,16 @@ function teamRoutes(r) {
 __name(teamRoutes, "teamRoutes");
 
 // src/index.js
+var MINIMAL_CONTEXT = /* @__PURE__ */ new Set(["/api/health", "/api/admin/login", "/api/admin/health"]);
+function minimalContext(env) {
+  let config = null;
+  try {
+    config = loadConfig(env);
+  } catch {
+  }
+  return { env, config, now: env.__clock || (() => /* @__PURE__ */ new Date()) };
+}
+__name(minimalContext, "minimalContext");
 var router = new Router();
 publicRoutes(router);
 sellerRoutes(router);
@@ -4311,7 +4618,8 @@ var index_default = {
       const match = router.match(request.method, url.pathname.replace(/\/{2,}/g, "/"));
       if (!match) throw new UserError("Not found", 404);
       if (url.pathname !== "/api/health") await ensureSchema(env);
-      const ctx = url.pathname === "/api/health" ? { env } : createContext(env, execCtx);
+      const ctx = MINIMAL_CONTEXT.has(url.pathname) ? minimalContext(env) : createContext(env, execCtx);
+      await enforceLimits(ctx, request, request.method, url.pathname.replace(/\/{2,}/g, "/"));
       const body = request.method === "POST" ? await readBody(request) : {};
       const out = await match.handler({ ctx, request, params: match.params, body, url });
       res = out instanceof Response ? out : json(out ?? { ok: true });
@@ -4329,6 +4637,12 @@ var index_default = {
     }
     for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
     res.headers.set("X-Content-Type-Options", "nosniff");
+    res.headers.set("X-Frame-Options", "DENY");
+    res.headers.set("Referrer-Policy", "no-referrer");
+    res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    if (!res.headers.has("Content-Security-Policy")) {
+      res.headers.set("Content-Security-Policy", (res.headers.get("Content-Type") || "").includes("text/html") ? `default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self' ${String(env.SITE_URL || "http://localhost:8080").replace(/\/$/, "")}; frame-ancestors 'none'; base-uri 'none'` : "default-src 'none'; frame-ancestors 'none'");
+    }
     return res;
   },
   // Cron trigger (wrangler.toml): timers every 5 minutes, Google Sheets copy every 15.

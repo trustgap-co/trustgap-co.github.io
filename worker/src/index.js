@@ -1,5 +1,7 @@
 import { Router, json, corsHeaders, readBody, UserError } from './lib/http.js';
 import { createContext } from './context.js';
+import { loadConfig } from './config.js';
+import { enforceLimits } from './lib/limits.js';
 import { publicRoutes } from './routes/public.js';
 import { sellerRoutes } from './routes/seller.js';
 import { adminRoutes, riderRoutes } from './routes/admin.js';
@@ -7,6 +9,13 @@ import { teamRoutes } from './routes/team.js';
 import { runJobs } from './core/jobs.js';
 import { syncSheets } from './providers/sheets.js';
 import { ensureSchema } from './lib/migrate.js';
+
+const MINIMAL_CONTEXT = new Set(['/api/health', '/api/admin/login', '/api/admin/health']);
+function minimalContext(env) {
+  let config = null;
+  try { config = loadConfig(env); } catch { /* reported by the health check */ }
+  return { env, config, now: env.__clock || (() => new Date()) };
+}
 
 const router = new Router();
 publicRoutes(router);
@@ -26,8 +35,10 @@ export default {
       const match = router.match(request.method, url.pathname.replace(/\/{2,}/g, '/'));
       if (!match) throw new UserError('Not found', 404);
       if (url.pathname !== '/api/health') await ensureSchema(env); // creates/updates tables on first use
-      // The health check builds its own context, so it can report broken settings instead of failing on them.
-      const ctx = url.pathname === '/api/health' ? { env } : createContext(env, execCtx);
+      // The health check and admin login/health build a minimal context, so they still work (and can
+      // report the problem) when a provider setting is broken.
+      const ctx = MINIMAL_CONTEXT.has(url.pathname) ? minimalContext(env) : createContext(env, execCtx);
+      await enforceLimits(ctx, request, request.method, url.pathname.replace(/\/{2,}/g, '/'));
       const body = request.method === 'POST' ? await readBody(request) : {};
       const out = await match.handler({ ctx, request, params: match.params, body, url });
       res = out instanceof Response ? out : json(out ?? { ok: true });
@@ -47,6 +58,16 @@ export default {
     }
     for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
     res.headers.set('X-Content-Type-Options', 'nosniff');
+    // The API's own pages (e.g. the test checkout) and data are never framed or leak a referrer.
+    res.headers.set('X-Frame-Options', 'DENY');
+    res.headers.set('Referrer-Policy', 'no-referrer');
+    res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    if (!res.headers.has('Content-Security-Policy')) {
+      res.headers.set('Content-Security-Policy', (res.headers.get('Content-Type') || '').includes('text/html')
+        // Forms may post here and land back on the website (the test checkout returns to tracking).
+        ? `default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self' ${String(env.SITE_URL || 'http://localhost:8080').replace(/\/$/, '')}; frame-ancestors 'none'; base-uri 'none'`
+        : "default-src 'none'; frame-ancestors 'none'");
+    }
     return res;
   },
 
