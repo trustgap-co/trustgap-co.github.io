@@ -58,6 +58,10 @@ async function render() {
           <form class="form" id="dispute">
             <label>What went wrong? <select name="category" required><option value="">Choose</option>
               ${Object.entries(config.dispute_categories).map(([k, label]) => html`<option value="${k}">${label}</option>`)}</select></label>
+            ${o.status === 'shipping' ? html`<fieldset id="parcel-where"><legend>Where is the parcel now?</legend>
+              <div class="choices"><label class="choice"><input type="radio" name="parcel" value="rider"> The rider took it back</label>
+              <label class="choice"><input type="radio" name="parcel" value="buyer"> I still have it</label></div>
+              <p class="small muted">If you refused the item, don’t give the rider your PIN. If the rider left it with you, keep it safe and unused: TrustGap books a rider to collect it, and any refund is sent once the seller has it back.</p></fieldset>` : ''}
             <label>Details <small>what you expected vs what you got</small><textarea name="description" required rows="3" maxlength="2000"></textarea></label>
             <div class="photo-field">
               <p class="label">Photos of the problem <small id="ev-rule">Up to ${config.max_dispute_photos || 2}. Show the problem clearly: the damage, the wrong label or size, the missing part.</small></p>
@@ -106,7 +110,10 @@ async function render() {
       $('#ev-note').textContent = needsPhoto.includes(e.target.value) && !evidence.list().length
         ? 'For this problem, add at least one photo showing it.' : $('#ev-note').textContent;
     });
+    const where = $('#parcel-where');
+    if (where) $('#dispute [name=category]').addEventListener('change', (e) => { where.hidden = e.target.value === 'not_delivered'; });
     onSubmit($('#dispute'), async (data) => {
+      if (where && !where.hidden && !data.parcel) throw new Error('Tell us where the parcel is now: did the rider take it back, or do you still have it?');
       const photos = evidence.list();
       if (needsPhoto.includes(data.category) && !photos.length) throw new Error('Add at least one photo showing the problem with the item.');
       await api(path + '/dispute', { method: 'POST', body: { ...data, photos } });

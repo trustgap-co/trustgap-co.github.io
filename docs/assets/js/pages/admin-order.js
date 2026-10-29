@@ -50,7 +50,7 @@ async function render() {
   </section>
   ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''} ${x.status === 'superseded' ? 'card-muted' : ''}">
     <h2>Dispute #${x.id}: ${x.category_label} (${x.status})</h2>
-    <p class="small muted">Opened by ${x.opened_by} · ${date(x.created_at)}</p>
+    <p class="small muted">Opened by ${x.opened_by} · ${date(x.created_at)}${x.parcel_location ? ` · parcel: ${x.parcel_location === 'rider' ? 'rider took it back' : 'left with the buyer'}` : ''}</p>
     <p class="pre">${x.description}</p>
     ${x.photos?.length ? evidencePhotos(x.photos) : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}
     ${x.status === 'superseded'
@@ -90,6 +90,11 @@ async function render() {
       <button class="btn btn-small btn-secondary" id="ret-cancel">Cancel return and decide again</button></div>
       <p class="small muted">Mark received only when the seller has told you they have the item. Cancel when the buyer never handed it over, or the seller says the item that came back isn’t theirs.</p>` : ''}
   </section>` : ''}
+  ${!ret && o.dispatched_at && ['disputed', 'shipping'].includes(o.status) ? html`<section class="card">
+    <h2>Return to seller</h2>
+    <p class="small">No return has started. If the parcel is with the buyer (refused but left with them), book a rider to collect it. Any refund waits until the seller has it back.</p>
+    <button class="btn btn-small" id="book-return">Book a return from the buyer</button>
+  </section>` : ''}
   <section class="card">
     <h2>Money</h2>
     <table class="breakdown">${ledger.map((l) => html`<tr><td>${l.kind} → ${l.counterparty} <small class="muted">${l.provider_ref || ''}</small></td>
@@ -122,6 +127,12 @@ async function render() {
       location.reload();
     });
   }
+  $('#book-return')?.addEventListener('click', async () => {
+    if (!confirm('Book a rider to collect the item from the buyer and take it to the seller?')) return;
+    await api(`/api/admin/orders/${id}/book-return`, { method: 'POST', body: {}, as: 'admin' }).then(() => flash.set('Return booked. The buyer and seller have been told.'))
+      .catch((e) => alert(e.message));
+    location.reload();
+  });
   $('#ret-received')?.addEventListener('click', async () => {
     if (!confirm('Mark the item as back with the seller? Any refund waiting for the return is sent now.')) return;
     await api(`/api/admin/returns/${ret.id}/received`, { method: 'POST', body: {}, as: 'admin' });
