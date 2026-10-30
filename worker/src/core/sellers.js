@@ -152,6 +152,8 @@ export function sellerView(s) {
     amount_owed: s.amount_owed,
     marketing_opt_in: Boolean(s.marketing_opt_in_at),
     suspended: Boolean(s.suspended_at),
+    suspend_reason: s.suspended_at ? s.suspend_reason : null,
+    suspended_at: s.suspended_at,
   };
 }
 

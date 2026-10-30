@@ -5,6 +5,7 @@ import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso, str } 
 import { adminLogin, authenticate } from '../core/sellers.js';
 import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceDetails, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
+import { suspendSeller, unsuspendSeller, sellerHistory } from '../core/suspension.js';
 import { healthReport } from './public.js';
 import { createContext } from '../context.js';
 import { settingsCheck } from '../lib/settings-check.js';
@@ -36,6 +37,19 @@ async function riderOrder(ctx, token) {
   const { order, ret } = await riderJob(ctx, token);
   if (ret) throw new UserError('This is a return link.');
   return order;
+}
+
+
+// Date filters for the admin lists: ?from=YYYY-MM-DD&to=YYYY-MM-DD (Lagos days, both included) and
+// ?order=oldest (newest first otherwise). Returns SQL bits for a table alias's created_at.
+function dateRange(url, col) {
+  const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
+  const from = day(url.searchParams.get('from'));
+  const to = day(url.searchParams.get('to'));
+  const start = from ? new Date(`${from}T00:00:00+01:00`).toISOString() : '0000';
+  const end = to ? new Date(new Date(`${to}T00:00:00+01:00`).getTime() + 86_400_000).toISOString() : '9999';
+  const dir = url.searchParams.get('order') === 'oldest' ? 'ASC' : 'DESC';
+  return { where: `${col} >= ? AND ${col} < ?`, args: [start, end], order: `${col} ${dir}, ${col.split('.')[0]}.id ${dir}`, from, to };
 }
 
 export function riderRoutes(r) {
@@ -108,13 +122,15 @@ export function adminRoutes(r) {
 
   r.get('/api/admin/orders', admin(async ({ ctx, url }) => {
     const status = url.searchParams.get('status') || '';
+    const range = dateRange(url, 'o.created_at');
     const orders = await all(
       ctx.env,
       `SELECT o.id, o.ref, o.status, o.amount, o.buyer_name, o.created_at, d.item_title, s.business_name
        FROM orders o JOIN deals d ON d.id = o.deal_id JOIN sellers s ON s.id = o.seller_id
-       WHERE (? = '' AND o.status != 'cancelled') OR o.status = ? ORDER BY o.id DESC LIMIT 200`,
+       WHERE ((? = '' AND o.status != 'cancelled') OR o.status = ?) AND ${range.where} ORDER BY ${range.order} LIMIT 500`,
       status,
       status,
+      ...range.args,
     );
     const counts = Object.fromEntries((await all(ctx.env, 'SELECT status, COUNT(*) n FROM orders GROUP BY status')).map((x) => [x.status, x.n]));
     return { orders, counts };
@@ -190,44 +206,55 @@ export function adminRoutes(r) {
     return { status: st?.raw || 'no update' };
   }));
 
-  r.get('/api/admin/disputes', admin(async ({ ctx }) => ({
+  r.get('/api/admin/disputes', admin(async ({ ctx, url }) => ({
     disputes: (await all(
       ctx.env,
-      `SELECT x.*, o.ref FROM disputes x JOIN orders o ON o.id = x.order_id ORDER BY x.status = 'open' DESC, x.id DESC LIMIT 200`,
+      `SELECT x.*, o.ref FROM disputes x JOIN orders o ON o.id = x.order_id WHERE ${dateRange(url, 'x.created_at').where}
+       ORDER BY ${dateRange(url, 'x.created_at').order} LIMIT 500`, ...dateRange(url, 'x.created_at').args,
     )).map((x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category })),
   })));
 
-  r.get('/api/admin/sellers', admin(async ({ ctx }) => ({
-    sellers: await all(
+  r.get('/api/admin/sellers', admin(async ({ ctx, url }) => ({
+    sellers: await Promise.all((await all(
       ctx.env,
-      `SELECT id, business_name, full_name, phone, email, phone_verified_at, payout_verified_at, payout_bank_name,
-              identity_verified_at, id_type, id_last4, amount_owed, suspended_at, created_at FROM sellers ORDER BY id DESC LIMIT 500`,
-    ),
+      `SELECT s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at, s.payout_verified_at, s.payout_bank_name,
+              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.created_at,
+              (SELECT COALESCE(SUM(l.amount), 0) FROM ledger l JOIN orders o ON o.id = l.order_id
+                WHERE o.seller_id = s.id AND l.kind = 'seller_payout' AND l.status = 'held') AS held
+       FROM sellers s WHERE ${dateRange(url, 's.created_at').where} ORDER BY ${dateRange(url, 's.created_at').order} LIMIT 500`,
+      ...dateRange(url, 's.created_at').args,
+    )).map(async (s) => ({ ...s, history: await sellerHistory(ctx, s.id) }))),
   })));
 
   r.post('/api/admin/sellers/:id', admin(async ({ ctx, params, body }) => {
+    const id = Number(params.id);
+    if (body.action === 'suspend') return { ok: true, ...(await suspendSeller(ctx, id, { reason: body.reason })) };
+    if (body.action === 'unsuspend') return { ok: true, ...(await unsuspendSeller(ctx, id, { reason: body.reason })) };
     const fields = {
       verify: { identity_verified_at: iso(ctx.now()), id_type: 'manual' },
-      suspend: { suspended_at: iso(ctx.now()) },
-      unsuspend: { suspended_at: null },
       settled: { amount_owed: 0 },
     }[body.action];
     if (!fields) throw new UserError('Unknown action.');
-    if (!(await getSeller(ctx, Number(params.id)))) throw notFound('Seller not found.');
-    await update(ctx.env, 'sellers', Number(params.id), fields);
+    if (!(await getSeller(ctx, id))) throw notFound('Seller not found.');
+    await update(ctx.env, 'sellers', id, fields);
     return { ok: true };
   }));
 
-  r.get('/api/admin/outbox', admin(async ({ ctx }) => ({
-    messages: await all(ctx.env, 'SELECT * FROM outbox ORDER BY id DESC LIMIT 300'),
-  })));
+  r.get('/api/admin/outbox', admin(async ({ ctx, url }) => {
+    const range = dateRange(url, 'm.created_at');
+    return { messages: await all(ctx.env, `SELECT m.* FROM outbox m WHERE ${range.where} ORDER BY ${range.order} LIMIT 500`, ...range.args) };
+  }));
 
-  r.get('/api/admin/ledger', admin(async ({ ctx }) => ({
+  r.get('/api/admin/ledger', admin(async ({ ctx, url }) => {
+    const range = dateRange(url, 'l.created_at');
+    return {
     held: (await first(ctx.env, "SELECT COALESCE(SUM(amount),0) t FROM orders WHERE status IN ('paid','shipping','delivered','disputed')")).t,
-    totals: await all(ctx.env, 'SELECT kind, status, SUM(amount) total FROM ledger GROUP BY kind, status ORDER BY kind'),
-    entries: await all(ctx.env, 'SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id ORDER BY l.id DESC LIMIT 300'),
+    // Totals for the chosen dates (all time when no dates are chosen).
+    totals: await all(ctx.env, `SELECT l.kind, l.status, SUM(l.amount) total FROM ledger l WHERE ${range.where} GROUP BY l.kind, l.status ORDER BY l.kind`, ...range.args),
+    entries: await all(ctx.env, `SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id WHERE ${range.where} ORDER BY ${range.order} LIMIT 1000`, ...range.args),
     sheets_synced_at: (await first(ctx.env, "SELECT value FROM meta WHERE key = 'sheets_synced_at'"))?.value || null,
-  })));
+    };
+  }));
 
   r.post('/api/admin/ledger/:id/retry', admin(async ({ ctx, params }) => ({ entry: await sendTransfer(ctx, Number(params.id), { manual: true }) })));
   r.post('/api/admin/orders/:id/sync-courier', admin(async ({ ctx, params }) => {

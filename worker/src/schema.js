@@ -63,5 +63,9 @@ export const MIGRATIONS = [
   {
     "name": "0016_rate_limits.sql",
     "sql": "-- Request counters for rate limits (per connection, per phone, and the daily SMS budget).\nCREATE TABLE IF NOT EXISTS rate_limits (\n  key TEXT PRIMARY KEY,\n  count INTEGER NOT NULL,\n  reset_at TEXT NOT NULL\n);\n"
+  },
+  {
+    "name": "0017_seller_suspension.sql",
+    "sql": "-- Suspension: why and by whom, and a history of every suspend/unsuspend. While a seller is suspended\n-- their payouts wait in the ledger with status 'held' and are sent when they're unsuspended.\nALTER TABLE sellers ADD COLUMN suspend_reason TEXT;\nALTER TABLE sellers ADD COLUMN suspended_by TEXT;\nCREATE TABLE IF NOT EXISTS seller_actions (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  action TEXT NOT NULL,\n  reason TEXT,\n  actor TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS seller_actions_seller ON seller_actions(seller_id);\n"
   }
 ];

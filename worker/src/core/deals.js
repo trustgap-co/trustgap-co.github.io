@@ -61,6 +61,7 @@ async function priceDeal(ctx, p, { promo = false } = {}) {
 
 // "Calculate price" on the seller's form.
 export async function previewDeal(ctx, input, seller) {
+  if (seller.suspended_at) throw new UserError('Your account is suspended, so you can’t create links. Contact TrustGap support.');
   const p = pricingInput(ctx, input);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
   return {
@@ -212,7 +213,8 @@ export async function publicDealView(ctx, deal) {
   const q = priceBreakdown(deal);
   return {
     token: deal.token,
-    status: deal.status,
+    // A suspended seller's open links show as paused (no payments) rather than open.
+    status: deal.status === 'open' && seller.suspended_at ? 'paused' : deal.status,
     seller: { business_name: seller.business_name, identity_verified: Boolean(seller.identity_verified_at) },
     item_title: deal.item_title,
     item_description: deal.item_description,

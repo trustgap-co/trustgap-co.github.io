@@ -998,6 +998,10 @@ ALTER TABLE disputes ADD COLUMN decided_by TEXT;
   {
     "name": "0016_rate_limits.sql",
     "sql": "-- Request counters for rate limits (per connection, per phone, and the daily SMS budget).\nCREATE TABLE IF NOT EXISTS rate_limits (\n  key TEXT PRIMARY KEY,\n  count INTEGER NOT NULL,\n  reset_at TEXT NOT NULL\n);\n"
+  },
+  {
+    "name": "0017_seller_suspension.sql",
+    "sql": "-- Suspension: why and by whom, and a history of every suspend/unsuspend. While a seller is suspended\n-- their payouts wait in the ledger with status 'held' and are sent when they're unsuspended.\nALTER TABLE sellers ADD COLUMN suspend_reason TEXT;\nALTER TABLE sellers ADD COLUMN suspended_by TEXT;\nCREATE TABLE IF NOT EXISTS seller_actions (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  action TEXT NOT NULL,\n  reason TEXT,\n  actor TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS seller_actions_seller ON seller_actions(seller_id);\n"
   }
 ];
 
@@ -1467,7 +1471,9 @@ function sellerView(s) {
     id_attempts_left: Math.max(0, 3 - (s.id_attempts || 0)),
     amount_owed: s.amount_owed,
     marketing_opt_in: Boolean(s.marketing_opt_in_at),
-    suspended: Boolean(s.suspended_at)
+    suspended: Boolean(s.suspended_at),
+    suspend_reason: s.suspended_at ? s.suspend_reason : null,
+    suspended_at: s.suspended_at
   };
 }
 __name(sellerView, "sellerView");
@@ -1755,6 +1761,7 @@ async function priceDeal(ctx, p, { promo = false } = {}) {
 }
 __name(priceDeal, "priceDeal");
 async function previewDeal(ctx, input, seller) {
+  if (seller.suspended_at) throw new UserError("Your account is suspended, so you can\u2019t create links. Contact TrustGap support.");
   const p = pricingInput(ctx, input);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
   return {
@@ -1907,7 +1914,8 @@ async function publicDealView(ctx, deal) {
   const q = priceBreakdown(deal);
   return {
     token: deal.token,
-    status: deal.status,
+    // A suspended seller's open links show as paused (no payments) rather than open.
+    status: deal.status === "open" && seller.suspended_at ? "paused" : deal.status,
     seller: { business_name: seller.business_name, identity_verified: Boolean(seller.identity_verified_at) },
     item_title: deal.item_title,
     item_description: deal.item_description,
@@ -2326,6 +2334,7 @@ __name(caseView, "caseView");
 async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
+  if ((await getSeller(ctx, deal.seller_id)).suspended_at) throw new UserError("This link isn\u2019t available right now. Contact the seller.", 410);
   const promo = await buyerPromo(ctx, deal, promoInput);
   const ackAt = acknowledged ? iso(ctx.now()) : null;
   const tosAt = termsAccepted ? iso(ctx.now()) : null;
@@ -2353,6 +2362,7 @@ async function getCheckout(ctx, deal, checkoutId) {
 }
 __name(getCheckout, "getCheckout");
 async function placeOrder(ctx, { deal, input }) {
+  if ((await getSeller(ctx, deal.seller_id)).suspended_at) throw new UserError("This link isn\u2019t available right now. Contact the seller.", 410);
   const checkout = await getCheckout(ctx, deal, input.checkout_id);
   const buyerName = requireLength(input.buyer_name, "Full name", 3, 100);
   if (buyerName.split(/\s+/).length < 2) throw new UserError("Enter your full name (first and last name).");
@@ -2968,6 +2978,10 @@ async function sendTransfer(ctx, ledgerId, { manual = false } = {}) {
   let dest;
   if (row.kind === "seller_payout") {
     const s = await getSeller(ctx, order.seller_id);
+    if (s.suspended_at) {
+      await update(ctx.env, "ledger", row.id, { status: "held" });
+      return { ...row, status: "held" };
+    }
     dest = { bankCode: s.payout_bank_code, accountNumber: s.payout_account_number, accountName: s.payout_account_name };
   } else {
     dest = {
@@ -3521,6 +3535,51 @@ async function runJobs(ctx) {
 }
 __name(runJobs, "runJobs");
 
+// src/core/suspension.js
+async function suspendSeller(ctx, sellerId, { reason, by = "admin" }) {
+  const seller = await getSeller(ctx, sellerId);
+  if (!seller) throw new UserError("Seller not found.", 404);
+  if (seller.suspended_at) throw new UserError("This seller is already suspended.");
+  const why = str(reason).slice(0, 500);
+  if (why.length < 5) throw new UserError("Give a reason for the suspension (it\u2019s sent to the seller).");
+  const now = iso(ctx.now());
+  await update(ctx.env, "sellers", seller.id, { suspended_at: now, suspend_reason: why, suspended_by: by });
+  await insert(ctx.env, "seller_actions", { seller_id: seller.id, action: "suspended", reason: why, actor: by, created_at: now });
+  await run(ctx.env, `UPDATE ledger SET status = 'held' WHERE kind = 'seller_payout' AND status IN ('pending', 'failed')
+    AND order_id IN (SELECT id FROM orders WHERE seller_id = ?)`, seller.id);
+  await ctx.notify.send({
+    event: "seller_suspended",
+    phone: seller.phone,
+    email: seller.email,
+    emailSubject: "Your TrustGap account is suspended",
+    sms: `TrustGap: your seller account is suspended. Reason: ${why}. Your links can't take new payments and payouts are on hold. Please still send items buyers have already paid for. Contact TrustGap support.`
+  });
+}
+__name(suspendSeller, "suspendSeller");
+async function unsuspendSeller(ctx, sellerId, { reason = "", by = "admin" } = {}) {
+  const seller = await getSeller(ctx, sellerId);
+  if (!seller) throw new UserError("Seller not found.", 404);
+  if (!seller.suspended_at) throw new UserError("This seller isn\u2019t suspended.");
+  const now = iso(ctx.now());
+  await update(ctx.env, "sellers", seller.id, { suspended_at: null, suspend_reason: null, suspended_by: null });
+  await insert(ctx.env, "seller_actions", { seller_id: seller.id, action: "unsuspended", reason: str(reason).slice(0, 500) || null, actor: by, created_at: now });
+  const held = await all(ctx.env, `SELECT id FROM ledger WHERE kind = 'seller_payout' AND status = 'held'
+    AND order_id IN (SELECT id FROM orders WHERE seller_id = ?)`, seller.id);
+  await run(ctx.env, `UPDATE ledger SET status = 'pending' WHERE kind = 'seller_payout' AND status = 'held'
+    AND order_id IN (SELECT id FROM orders WHERE seller_id = ?)`, seller.id);
+  for (const l of held) await sendTransfer(ctx, l.id);
+  await ctx.notify.send({
+    event: "seller_unsuspended",
+    phone: seller.phone,
+    email: seller.email,
+    emailSubject: "Your TrustGap account is active again",
+    sms: `TrustGap: your seller account is active again. Your links work and held payouts are on their way.`
+  });
+  return { released: held.length };
+}
+__name(unsuspendSeller, "unsuspendSeller");
+var sellerHistory = /* @__PURE__ */ __name((ctx, sellerId) => all(ctx.env, "SELECT action, reason, actor, created_at FROM seller_actions WHERE seller_id = ? ORDER BY id DESC", sellerId), "sellerHistory");
+
 // src/lib/settings-check.js
 function settingsCheck(ctx) {
   const { env, config } = ctx;
@@ -3597,7 +3656,7 @@ var TABS = {
   },
   Sellers: {
     sql: `SELECT * FROM sellers ORDER BY id DESC LIMIT ${ROW_LIMIT}`,
-    header: ["ID", "Business", "Full name", "Phone", "Email", "Phone verified", "ID verified", "Payout bank", "Owes (\u20A6)", "Suspended", "Joined", "News & offers opt-in", "Accepted Terms of Service at", "Terms version"],
+    header: ["ID", "Business", "Full name", "Phone", "Email", "Phone verified", "ID verified", "Payout bank", "Owes (\u20A6)", "Suspended", "Joined", "News & offers opt-in", "Accepted Terms of Service at", "Terms version", "Suspension reason"],
     row: /* @__PURE__ */ __name((s) => [
       s.id,
       s.business_name,
@@ -3612,7 +3671,8 @@ var TABS = {
       s.created_at,
       s.marketing_opt_in_at || "",
       s.terms_accepted_at || "",
-      s.terms_version || ""
+      s.terms_version || "",
+      s.suspended_at ? s.suspend_reason || "" : ""
     ], "row")
   },
   // Sellers and buyers who ticked "send me TrustGap news and offers". Only these may get newsletters
@@ -3776,6 +3836,16 @@ async function riderOrder(ctx, token) {
   return order;
 }
 __name(riderOrder, "riderOrder");
+function dateRange(url, col) {
+  const day = /* @__PURE__ */ __name((v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : null, "day");
+  const from = day(url.searchParams.get("from"));
+  const to = day(url.searchParams.get("to"));
+  const start = from ? (/* @__PURE__ */ new Date(`${from}T00:00:00+01:00`)).toISOString() : "0000";
+  const end = to ? new Date((/* @__PURE__ */ new Date(`${to}T00:00:00+01:00`)).getTime() + 864e5).toISOString() : "9999";
+  const dir = url.searchParams.get("order") === "oldest" ? "ASC" : "DESC";
+  return { where: `${col} >= ? AND ${col} < ?`, args: [start, end], order: `${col} ${dir}, ${col.split(".")[0]}.id ${dir}`, from, to };
+}
+__name(dateRange, "dateRange");
 function riderRoutes(r) {
   r.get("/api/rider/:token", async ({ ctx, params }) => {
     const { order: o, ret: returnJob } = await riderJob(ctx, params.token);
@@ -3841,13 +3911,15 @@ function adminRoutes(r) {
   }, "admin");
   r.get("/api/admin/orders", admin(async ({ ctx, url }) => {
     const status = url.searchParams.get("status") || "";
+    const range = dateRange(url, "o.created_at");
     const orders = await all(
       ctx.env,
       `SELECT o.id, o.ref, o.status, o.amount, o.buyer_name, o.created_at, d.item_title, s.business_name
        FROM orders o JOIN deals d ON d.id = o.deal_id JOIN sellers s ON s.id = o.seller_id
-       WHERE (? = '' AND o.status != 'cancelled') OR o.status = ? ORDER BY o.id DESC LIMIT 200`,
+       WHERE ((? = '' AND o.status != 'cancelled') OR o.status = ?) AND ${range.where} ORDER BY ${range.order} LIMIT 500`,
       status,
-      status
+      status,
+      ...range.args
     );
     const counts = Object.fromEntries((await all(ctx.env, "SELECT status, COUNT(*) n FROM orders GROUP BY status")).map((x) => [x.status, x.n]));
     return { orders, counts };
@@ -3926,40 +3998,52 @@ function adminRoutes(r) {
     const st = await syncReturnStatus(ctx, await adminReturn(ctx, params.id));
     return { status: st?.raw || "no update" };
   }));
-  r.get("/api/admin/disputes", admin(async ({ ctx }) => ({
+  r.get("/api/admin/disputes", admin(async ({ ctx, url }) => ({
     disputes: (await all(
       ctx.env,
-      `SELECT x.*, o.ref FROM disputes x JOIN orders o ON o.id = x.order_id ORDER BY x.status = 'open' DESC, x.id DESC LIMIT 200`
+      `SELECT x.*, o.ref FROM disputes x JOIN orders o ON o.id = x.order_id WHERE ${dateRange(url, "x.created_at").where}
+       ORDER BY ${dateRange(url, "x.created_at").order} LIMIT 500`,
+      ...dateRange(url, "x.created_at").args
     )).map((x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category }))
   })));
-  r.get("/api/admin/sellers", admin(async ({ ctx }) => ({
-    sellers: await all(
+  r.get("/api/admin/sellers", admin(async ({ ctx, url }) => ({
+    sellers: await Promise.all((await all(
       ctx.env,
-      `SELECT id, business_name, full_name, phone, email, phone_verified_at, payout_verified_at, payout_bank_name,
-              identity_verified_at, id_type, id_last4, amount_owed, suspended_at, created_at FROM sellers ORDER BY id DESC LIMIT 500`
-    )
+      `SELECT s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at, s.payout_verified_at, s.payout_bank_name,
+              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.created_at,
+              (SELECT COALESCE(SUM(l.amount), 0) FROM ledger l JOIN orders o ON o.id = l.order_id
+                WHERE o.seller_id = s.id AND l.kind = 'seller_payout' AND l.status = 'held') AS held
+       FROM sellers s WHERE ${dateRange(url, "s.created_at").where} ORDER BY ${dateRange(url, "s.created_at").order} LIMIT 500`,
+      ...dateRange(url, "s.created_at").args
+    )).map(async (s) => ({ ...s, history: await sellerHistory(ctx, s.id) })))
   })));
   r.post("/api/admin/sellers/:id", admin(async ({ ctx, params, body }) => {
+    const id = Number(params.id);
+    if (body.action === "suspend") return { ok: true, ...await suspendSeller(ctx, id, { reason: body.reason }) };
+    if (body.action === "unsuspend") return { ok: true, ...await unsuspendSeller(ctx, id, { reason: body.reason }) };
     const fields = {
       verify: { identity_verified_at: iso(ctx.now()), id_type: "manual" },
-      suspend: { suspended_at: iso(ctx.now()) },
-      unsuspend: { suspended_at: null },
       settled: { amount_owed: 0 }
     }[body.action];
     if (!fields) throw new UserError("Unknown action.");
-    if (!await getSeller(ctx, Number(params.id))) throw notFound("Seller not found.");
-    await update(ctx.env, "sellers", Number(params.id), fields);
+    if (!await getSeller(ctx, id)) throw notFound("Seller not found.");
+    await update(ctx.env, "sellers", id, fields);
     return { ok: true };
   }));
-  r.get("/api/admin/outbox", admin(async ({ ctx }) => ({
-    messages: await all(ctx.env, "SELECT * FROM outbox ORDER BY id DESC LIMIT 300")
-  })));
-  r.get("/api/admin/ledger", admin(async ({ ctx }) => ({
-    held: (await first(ctx.env, "SELECT COALESCE(SUM(amount),0) t FROM orders WHERE status IN ('paid','shipping','delivered','disputed')")).t,
-    totals: await all(ctx.env, "SELECT kind, status, SUM(amount) total FROM ledger GROUP BY kind, status ORDER BY kind"),
-    entries: await all(ctx.env, "SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id ORDER BY l.id DESC LIMIT 300"),
-    sheets_synced_at: (await first(ctx.env, "SELECT value FROM meta WHERE key = 'sheets_synced_at'"))?.value || null
-  })));
+  r.get("/api/admin/outbox", admin(async ({ ctx, url }) => {
+    const range = dateRange(url, "m.created_at");
+    return { messages: await all(ctx.env, `SELECT m.* FROM outbox m WHERE ${range.where} ORDER BY ${range.order} LIMIT 500`, ...range.args) };
+  }));
+  r.get("/api/admin/ledger", admin(async ({ ctx, url }) => {
+    const range = dateRange(url, "l.created_at");
+    return {
+      held: (await first(ctx.env, "SELECT COALESCE(SUM(amount),0) t FROM orders WHERE status IN ('paid','shipping','delivered','disputed')")).t,
+      // Totals for the chosen dates (all time when no dates are chosen).
+      totals: await all(ctx.env, `SELECT l.kind, l.status, SUM(l.amount) total FROM ledger l WHERE ${range.where} GROUP BY l.kind, l.status ORDER BY l.kind`, ...range.args),
+      entries: await all(ctx.env, `SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id WHERE ${range.where} ORDER BY ${range.order} LIMIT 1000`, ...range.args),
+      sheets_synced_at: (await first(ctx.env, "SELECT value FROM meta WHERE key = 'sheets_synced_at'"))?.value || null
+    };
+  }));
   r.post("/api/admin/ledger/:id/retry", admin(async ({ ctx, params }) => ({ entry: await sendTransfer(ctx, Number(params.id), { manual: true }) })));
   r.post("/api/admin/orders/:id/sync-courier", admin(async ({ ctx, params }) => {
     const o = await getOrder(ctx, Number(params.id));
@@ -4497,6 +4581,7 @@ var MANUAL = {
 <li>Write everything important in the task notes: who you spoke to, when, what they said, what evidence you got. The notes are the record if a case is challenged.</li>
 <li>Be polite and neutral. Don\u2019t argue, don\u2019t blame, don\u2019t promise outcomes.</li>
 <li>Decide a dispute only with a \u201CDecide a dispute\u201D task for that order, and never one involving a friend, relative or a business you have a link to. If that happens, tell the admin and don\u2019t decide it.</li>
+<li>If a seller tells you their account is suspended: they can\u2019t create links, their open links don\u2019t take payments and their payouts are held until the admin lifts it. They should still send items buyers have already paid for. Only the admin suspends or unsuspends; pass questions to them.</li>
 <li><strong>Pass to the admin straight away</strong> if: someone threatens legal action or the police; you suspect fraud or a fake identity; someone asks to change bank details; a payment looks missing or doubled; anyone is in danger; a journalist or regulator contacts you.</li>
 <li>Marketing messages go only to people who ticked \u201CSend me TrustGap news and offers\u201D (the Marketing contacts tab). Never add anyone else.</li>
 </ul>`

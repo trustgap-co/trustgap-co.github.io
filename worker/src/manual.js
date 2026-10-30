@@ -228,6 +228,7 @@ export const MANUAL = {
 <li>Write everything important in the task notes: who you spoke to, when, what they said, what evidence you got. The notes are the record if a case is challenged.</li>
 <li>Be polite and neutral. Don’t argue, don’t blame, don’t promise outcomes.</li>
 <li>Decide a dispute only with a “Decide a dispute” task for that order, and never one involving a friend, relative or a business you have a link to. If that happens, tell the admin and don’t decide it.</li>
+<li>If a seller tells you their account is suspended: they can’t create links, their open links don’t take payments and their payouts are held until the admin lifts it. They should still send items buyers have already paid for. Only the admin suspends or unsuspends; pass questions to them.</li>
 <li><strong>Pass to the admin straight away</strong> if: someone threatens legal action or the police; you suspect fraud or a fake identity; someone asks to change bank details; a payment looks missing or doubled; anyone is in danger; a journalist or regulator contacts you.</li>
 <li>Marketing messages go only to people who ticked “Send me TrustGap news and offers” (the Marketing contacts tab). Never add anyone else.</li>
 </ul>`,

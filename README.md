@@ -97,6 +97,13 @@ shown to admin on the order page and copied to Google Sheets.
    every page (`tools/security.py`); health details and risky-settings warnings only for the admin;
    `security.txt`.
 
+13. **Suspending a seller** (Admin → Sellers, with a reason sent to them by SMS): no new links, their
+   open links stop taking payments ("paused"), payouts are held and released on unsuspend, and buyers
+   who already paid still get their items. Reason, date and history show on the Sellers page and Sheet.
+14. **Records by date**: Orders, Disputes, Sellers, Messages and Ledger are grouped by day, with
+   From/To filters, one-tap ranges (Today, Yesterday, Last 7 days, This month) and newest/oldest order;
+   the ledger shows money in and out per day and totals for the chosen dates.
+
 **Fees**, shown as two lines on every link: **TrustGap fee** 1.5% of the item price (minimum ₦100,
 maximum ₦3,000; the item price must be at least twice the delivery fee) and **Payment processing**, Flutterwave's charges passed on at cost (2%, capped at ₦2,000,
 plus the ₦57.79 payout fee). About 3.9% in total and never more than ₦5,058;

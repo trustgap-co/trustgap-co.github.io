@@ -21,9 +21,9 @@ const TABS = {
   },
   Sellers: {
     sql: `SELECT * FROM sellers ORDER BY id DESC LIMIT ${ROW_LIMIT}`,
-    header: ['ID', 'Business', 'Full name', 'Phone', 'Email', 'Phone verified', 'ID verified', 'Payout bank', 'Owes (₦)', 'Suspended', 'Joined', 'News & offers opt-in', 'Accepted Terms of Service at', 'Terms version'],
+    header: ['ID', 'Business', 'Full name', 'Phone', 'Email', 'Phone verified', 'ID verified', 'Payout bank', 'Owes (₦)', 'Suspended', 'Joined', 'News & offers opt-in', 'Accepted Terms of Service at', 'Terms version', 'Suspension reason'],
     row: (s) => [s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at ? 'yes' : 'no', s.identity_verified_at ? 'yes' : 'no',
-      s.payout_bank_name || '', naira(s.amount_owed), s.suspended_at ? 'yes' : '', s.created_at, s.marketing_opt_in_at || '', s.terms_accepted_at || '', s.terms_version || ''],
+      s.payout_bank_name || '', naira(s.amount_owed), s.suspended_at ? 'yes' : '', s.created_at, s.marketing_opt_in_at || '', s.terms_accepted_at || '', s.terms_version || '', s.suspended_at ? s.suspend_reason || '' : ''],
   },
   // Sellers and buyers who ticked "send me TrustGap news and offers". Only these may get newsletters
   // and promotions. One row per buyer phone number (their latest order).

@@ -35,6 +35,7 @@ import {
 export async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== 'open') throw new UserError('This link is no longer available.', 410);
+  if ((await getSeller(ctx, deal.seller_id)).suspended_at) throw new UserError('This link isn’t available right now. Contact the seller.', 410);
   const promo = await buyerPromo(ctx, deal, promoInput);
   const ackAt = acknowledged ? iso(ctx.now()) : null;
   const tosAt = termsAccepted ? iso(ctx.now()) : null;
@@ -63,6 +64,7 @@ async function getCheckout(ctx, deal, checkoutId) {
 }
 
 export async function placeOrder(ctx, { deal, input }) {
+  if ((await getSeller(ctx, deal.seller_id)).suspended_at) throw new UserError('This link isn’t available right now. Contact the seller.', 410);
   const checkout = await getCheckout(ctx, deal, input.checkout_id);
   const buyerName = requireLength(input.buyer_name, 'Full name', 3, 100);
   if (buyerName.split(/\s+/).length < 2) throw new UserError('Enter your full name (first and last name).');
@@ -715,6 +717,11 @@ export async function sendTransfer(ctx, ledgerId, { manual = false } = {}) {
   let dest;
   if (row.kind === 'seller_payout') {
     const s = await getSeller(ctx, order.seller_id);
+    if (s.suspended_at) {
+      // Suspended: the payout waits, and goes out when the seller is unsuspended (core/suspension.js).
+      await update(ctx.env, 'ledger', row.id, { status: 'held' });
+      return { ...row, status: 'held' };
+    }
     dest = { bankCode: s.payout_bank_code, accountNumber: s.payout_account_number, accountName: s.payout_account_name };
   } else {
     dest = {
