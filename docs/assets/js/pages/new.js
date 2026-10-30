@@ -6,6 +6,14 @@ const MAX_PHOTOS = 4;
 
 try {
   const { seller } = await api('/api/seller/me', { as: 'seller' });
+  if (seller.suspended) {
+    // Shown instead of the form (the Worker refuses new links anyway).
+    show('#app', html`<section class="card narrow"><h1>Your account is suspended</h1>
+      <p>You can’t create payment links right now.${seller.suspend_reason ? html` Reason: ${seller.suspend_reason}.` : ''}</p>
+      <p>Please still pack and send items buyers have already paid for. Contact TrustGap support to sort it out.</p>
+      <p><a class="btn btn-secondary" href="${link('seller/dashboard.html')}">Back to your dashboard</a></p></section>`);
+    throw Object.assign(new Error('suspended'), { shown: true });
+  }
   let v = { quantity: 1, weight_kg: 1, delivery_days: 2, expires_hours: 24, pickup_address: seller.pickup_address, pickup_state: seller.pickup_state };
   if (params.get('revise')) {
     const { deal } = await api(`/api/seller/deals/${encodeURIComponent(params.get('revise'))}`, { as: 'seller' });
@@ -179,5 +187,5 @@ try {
     }, link(`seller/deal.html?id=${deal.id}&new=1`));
   });
 } catch (err) {
-  fail(err);
+  if (!err.shown) fail(err);
 }

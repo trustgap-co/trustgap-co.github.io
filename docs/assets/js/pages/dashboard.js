@@ -8,7 +8,10 @@ try {
     !s.payout && html`<li>Add the bank account you want to be paid into</li>`,
     !s.identity_verified && html`<li>Verify your identity with your NIN</li>`,
   ].filter(Boolean);
-  show('#app', html`<h1>Hi ${s.business_name}</h1>
+  show('#app', html`${s.suspended ? html`<div class="callout warn"><strong>Your account is suspended.</strong> ${s.suspend_reason ? html`Reason: ${s.suspend_reason}. ` : ''}
+      Your links can’t take new payments and your payouts are on hold. Please still pack and send items buyers have already paid for.
+      Contact TrustGap support to sort it out.</div>` : ''}
+    <h1>Hi ${s.business_name}</h1>
     ${setup.length ? html`<div class="callout warn"><strong>Before you can create payment links:</strong><ul>${setup}</ul>
       <a class="btn btn-small" href="${link('seller/settings.html')}">Finish setup →</a></div>` : ''}
     ${params.get('debt') === 'paid' ? html`<div class="callout ok">Thank you, your payment was received.${s.amount_owed > 0 ? ` You still owe ${money(s.amount_owed)}.` : ' Your balance is cleared.'}</div>` : ''}
@@ -24,7 +27,7 @@ try {
       <div class="stat"><span>${money(stats.held)}</span>held for you</div>
       <div class="stat"><span>${stats.completed}</span>completed</div>
     </div>
-    ${setup.length || s.amount_owed > 0 ? '' : html`<p><a class="btn" href="${link('seller/new.html')}">+ Create a payment link</a></p>`}
+    ${setup.length || s.amount_owed > 0 || s.suspended ? '' : html`<p><a class="btn" href="${link('seller/new.html')}">+ Create a payment link</a></p>`}
     <h2>Orders</h2>
     ${orders.length
       ? html`<div class="list">${orders.map((o) => html`<a class="row" href="${link(`seller/order.html?id=${o.id}`)}">

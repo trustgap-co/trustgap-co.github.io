@@ -1,4 +1,4 @@
-import { api, html, show, shell, money, date, orderBadge, link, params, flash, fail, keepFresh, $ } from '../core.js';
+import { api, html, show, shell, money, date, orderBadge, link, params, flash, fail, keepFresh, $, dateFilters, wireDateFilters, dateQuery, byDay } from '../core.js';
 
 await shell('admin');
 const FILTERS = ['', 'awaiting_payment', 'paid', 'shipping', 'delivered', 'disputed', 'completed', 'refunded', 'cancelled'];
@@ -11,21 +11,25 @@ const settingsBox = (h) => (!h ? '' : !h.ok || h.warnings?.length ? html`<sectio
   <p class="small muted">Change these under Cloudflare → your Worker → Settings → Variables and Secrets. SETUP.md explains each one.</p>
 </section>` : '');
 
+const ordersPath = () => `/api/admin/orders?status=${encodeURIComponent(params.get('status') || '')}${dateQuery() ? `&${dateQuery()}` : ''}`;
+
 async function render() {
   const status = params.get('status') || '';
   const [{ orders, counts }, health] = await Promise.all([
-    api(`/api/admin/orders?status=${encodeURIComponent(status)}`, { as: 'admin' }),
+    api(ordersPath(), { as: 'admin' }),
     api('/api/admin/health', { as: 'admin', peek: true }).catch(() => null),
   ]);
   show('#app', html`${settingsBox(health)}<div class="spread"><h1>Orders</h1>
       <div class="actions"><button class="btn btn-small btn-secondary" id="jobs">Run timers now</button>
       <button class="btn btn-small btn-secondary" id="sync">Copy to Google Sheets now</button>
       <button class="btn btn-small btn-secondary" id="fezhook">Register Fez webhook</button></div></div>
-    <p class="filters">${FILTERS.map((f) => html`<a class="${f === status ? 'on' : ''}" href="${link(`admin/orders.html?status=${f}`)}">${f || 'active'}${f ? ` (${counts[f] || 0})` : ''}</a> `)}</p>
-    <div class="list">${orders.map((o) => html`<a class="row" href="${link(`admin/order.html?id=${o.id}`)}">
+    <p class="filters">${FILTERS.map((f) => html`<a class="${f === status ? 'on' : ''}" href="${link(`admin/orders.html?status=${f}${dateQuery() ? `&${dateQuery()}` : ''}`)}">${f || 'active'}${f ? ` (${counts[f] || 0})` : ''}</a> `)}</p>
+    ${dateFilters()}
+    <div class="list">${byDay(orders, (o) => html`<a class="row" href="${link(`admin/order.html?id=${o.id}`)}">
       <div><strong>${o.ref}</strong> · ${o.item_title}<br><small class="muted">${o.business_name} → ${o.buyer_name} · ${date(o.created_at)}</small></div>
-      <div class="right">${orderBadge(o.status)}<br><small>${money(o.amount)}</small></div></a>`)}</div>
-    ${orders.length ? '' : html`<p class="muted">No orders here.</p>`}`);
+      <div class="right">${orderBadge(o.status)}<br><small>${money(o.amount)}</small></div></a>`,
+      { summary: (day) => money(day.reduce((n, o) => n + o.amount, 0)) })}</div>`);
+  wireDateFilters();
   $('#jobs').addEventListener('click', async () => {
     flash.set('Timers run: ' + JSON.stringify((await api('/api/admin/jobs', { method: 'POST', body: {}, as: 'admin' })).result));
     location.reload();
@@ -49,4 +53,4 @@ async function render() {
     location.reload();
   });
 }
-render().then(() => keepFresh(`/api/admin/orders?status=${encodeURIComponent(params.get('status') || '')}`, render, { as: 'admin' })).catch(fail);
+render().then(() => keepFresh(ordersPath(), render, { as: 'admin' })).catch(fail);

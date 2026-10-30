@@ -13,6 +13,7 @@ const UNAVAILABLE = {
   expired: 'This payment link has expired. Ask the seller to send you a new one.',
   cancelled: 'The seller cancelled this link. Ask them for a new one if you still want the item.',
   replaced: 'The seller changed this deal and sent a newer link. Ask them for the latest one.',
+  paused: 'This link isn’t available right now, so it can’t be paid. Don’t send money any other way: contact the seller, or TrustGap support.',
 };
 
 // Analytics description of this deal (no address, names or token; see analytics.js).

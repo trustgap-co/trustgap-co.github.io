@@ -628,3 +628,14 @@ body.is-live .when-prelaunch { display: none !important; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.18); }
 .live-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 64px; z-index: 60; background: var(--navy); color: #fff;
   border-radius: 12px; padding: 10px 12px 10px 16px; display: flex; gap: 10px; align-items: center; box-shadow: 0 8px 24px rgba(0,0,0,.25); max-width: calc(100vw - 32px); }
+/* Admin records by date. */
+.date-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin: 8px 0 14px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+.date-filters .quick { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.date-filters .quick a { font-size: .85rem; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; }
+.date-filters .quick a.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.date-filters label { display: grid; gap: 2px; font-size: .8rem; font-weight: 600; }
+.date-filters input, .date-filters select { font: inherit; font-size: .9rem; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+.day-group { margin: 0 0 14px; }
+.day-head { margin: 10px 0 6px; padding: 6px 10px; font-size: .95rem; background: var(--info-soft); border-radius: 8px; }
+.list .day-group { margin: 0; }
+.list .day-head { margin: 0; border-radius: 0; border-bottom: 1px solid var(--line); }

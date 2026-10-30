@@ -293,6 +293,66 @@ export const caseAccounts = (c, { staff = false, me = null } = {}) => (c?.statem
     <p class="pre">${s.body}</p>
     ${s.photos?.length ? (staff ? evidencePhotos(s.photos) : gallery(s.photos, 'Photo')) : ''}</li>`)}</ul>` : '');
 
+// ---------------------------------------------------------------- records by date (admin lists)
+// Dates are Lagos days. The filter lives in the page address (?from=&to=&order=), so a filtered view
+// can be bookmarked or shared, and survives a refresh.
+const lagosDay = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+const shiftDay = (key, days) => lagosDay(new Date(`${key}T12:00:00+01:00`).getTime() + days * 86_400_000);
+export const dateQuery = () => {
+  const q = new URLSearchParams();
+  for (const k of ['from', 'to', 'order']) if (params.get(k)) q.set(k, params.get(k));
+  return q.toString();
+};
+const dayTitle = (key) => {
+  const today = lagosDay(Date.now());
+  if (key === today) return 'Today';
+  if (key === shiftDay(today, -1)) return 'Yesterday';
+  return new Date(`${key}T12:00:00+01:00`).toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Africa/Lagos' });
+};
+
+// From / To / newest-oldest, plus one-tap ranges. Changing it reloads the page with the new address.
+export function dateFilters() {
+  const today = lagosDay(Date.now());
+  const monthStart = `${today.slice(0, 8)}01`;
+  const go = (from, to) => { const q = new URLSearchParams(location.search); for (const [k, v] of [['from', from], ['to', to]]) (v ? q.set(k, v) : q.delete(k)); return `?${q}`; };
+  const on = (from, to) => (params.get('from') || '') === from && (params.get('to') || '') === to;
+  return html`<form class="date-filters" id="date-filters">
+    <div class="quick">${[['Today', today, today], ['Yesterday', shiftDay(today, -1), shiftDay(today, -1)], ['Last 7 days', shiftDay(today, -6), today],
+      ['This month', monthStart, today], ['All', '', '']].map(([label, f, t]) => html`<a class="${on(f, t) ? 'on' : ''}" href="${go(f, t)}">${label}</a>`)}</div>
+    <label>From <input type="date" name="from" value="${params.get('from') || ''}"></label>
+    <label>To <input type="date" name="to" value="${params.get('to') || ''}"></label>
+    <label>Show <select name="order"><option value="">Newest first</option><option value="oldest" ${params.get('order') === 'oldest' ? 'selected' : ''}>Oldest first</option></select></label>
+    <button class="btn btn-small btn-secondary">Apply</button>
+  </form>`;
+}
+export function wireDateFilters() {
+  const f = $('#date-filters');
+  if (!f) return;
+  const apply = (e) => {
+    e?.preventDefault();
+    const q = new URLSearchParams(location.search);
+    for (const k of ['from', 'to', 'order']) (f.elements[k].value ? q.set(k, f.elements[k].value) : q.delete(k));
+    location.search = q.toString();
+  };
+  f.addEventListener('submit', apply);
+  f.elements.order.addEventListener('change', apply);
+}
+
+// Rows grouped under a heading per day (in the order the server sent them), with an optional
+// summary for each day (e.g. money in and out on the ledger).
+export function byDay(items, row, { when = (x) => x.created_at, summary = null } = {}) {
+  if (!items.length) return html`<p class="muted">Nothing in these dates.</p>`;
+  const groups = [];
+  for (const item of items) {
+    const key = lagosDay(when(item));
+    if (groups.at(-1)?.key !== key) groups.push({ key, items: [] });
+    groups.at(-1).items.push(item);
+  }
+  return html`${groups.map((g) => html`<section class="day-group">
+    <h3 class="day-head">${dayTitle(g.key)} <span class="muted">· ${g.items.length}${summary ? html` · ${summary(g.items)}` : ''}</span></h3>
+    ${g.items.map(row)}</section>`)}`;
+}
+
 export const errorBox = (msg) => (msg ? html`<div class="error" role="alert">${msg}</div>` : '');
 export const flash = {
   set: (m) => session.set('tg_flash', m),
