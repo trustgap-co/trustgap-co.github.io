@@ -3,7 +3,7 @@ import { parsePhotos, photoUrls } from '../lib/photos.js';
 import { checkSellerPromo } from './promo.js';
 import { fillConsent } from '../lib/terms.js';
 import { randomToken } from '../lib/crypto.js';
-import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira } from '../lib/money.js';
+import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira, deliveryPrice, disputeFee } from '../lib/money.js';
 import { normaliseState } from '../lib/states.js';
 import { UserError, CONDITIONS, EXPIRY_OPTIONS, iso, addHours, str, requireLength, getDeal, getSeller } from './common.js';
 
@@ -11,11 +11,12 @@ const PAYERS = ['buyer', 'seller', 'split'];
 
 // The fields that decide the price. Shared by the seller's "Calculate price" preview and link
 // creation, so the preview is always exactly what the link will charge.
-function pricingInput(ctx, input) {
+function pricingInput(ctx, input, seller) {
   const itemPrice = nairaToKobo(input.item_price);
   if (itemPrice == null || itemPrice < 500 * 100) throw new UserError('Price must be at least ₦500.');
-  if (itemPrice > ctx.config.maxDealKobo) {
-    throw new UserError(`During the pilot, deals are limited to ${formatNaira(ctx.config.maxDealKobo)}.`);
+  const limit = dealLimit(ctx, seller);
+  if (itemPrice > limit) {
+    throw Object.assign(new UserError(`Deals above ${formatNaira(limit)} get a more secure link, set up with TrustGap support. Contact support with the item and the price, and we’ll arrange it with you.`), { code: 'needs_support', limit });
   }
   const pickupState = normaliseState(input.pickup_state);
   if (!pickupState) throw new UserError('Enter the state you ship from (one of the 36 states or FCT).');
@@ -31,15 +32,25 @@ function pricingInput(ctx, input) {
   return { itemPrice, pickupState, deliveryState, weightKg, deliveryPayer, feePayer };
 }
 
-// Delivery price from the courier (Fez /order/cost, or the manual table), the TrustGap fee, and
-// payment processing grossed up on the real total. With an early-access code there is no TrustGap fee.
+// The largest item price this seller can put on a link themselves (the admin can raise it per seller).
+export const dealLimit = (ctx, seller) => Math.max(ctx.config.maxDealKobo, seller?.deal_limit || 0);
+
+// TrustGap's delivery price for a courier cost: the cost plus the handling margin. Your own riders'
+// prices (manual) are already your prices.
+export const ourDeliveryPrice = (ctx, courierKobo) =>
+  (ctx.logistics.name === 'manual' ? courierKobo : deliveryPrice(courierKobo, ctx.config.deliveryMargin));
+
+// Delivery price (courier cost from Fez /order/cost or the manual table, plus TrustGap's margin), the
+// TrustGap fee, and payment processing grossed up on the real total. With an early-access code there
+// is no TrustGap fee. Returns the price and, separately, the courier's cost (never shown to users).
 async function priceDeal(ctx, p, { promo = false } = {}) {
-  let deliveryFee;
+  let courierCost;
   try {
-    ({ feeKobo: deliveryFee } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
+    ({ feeKobo: courierCost } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
   } catch (err) {
     throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
   }
+  const deliveryFee = ourDeliveryPrice(ctx, courierCost);
   // If the buyer refuses a correct item, both delivery trips come out of their refund; the price
   // has to be big enough for that to be covered by what they paid.
   const minPrice = ctx.config.minPriceDeliveryMultiple * deliveryFee;
@@ -56,18 +67,20 @@ async function priceDeal(ctx, p, { promo = false } = {}) {
   if (q.sellerPayout <= 0) {
     throw new UserError(`Delivery to ${p.deliveryState} plus fees is more than you would receive. Adjust the price or who pays.`);
   }
-  return q;
+  return { q, courierCost };
 }
 
 // "Calculate price" on the seller's form.
 export async function previewDeal(ctx, input, seller) {
   if (seller.suspended_at) throw new UserError('Your account is suspended, so you can’t create links. Contact TrustGap support.');
-  const p = pricingInput(ctx, input);
+  const p = pricingInput(ctx, input, seller);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
+  const { q } = await priceDeal(ctx, p, { promo: Boolean(promo) });
   return {
     pickup_state: p.pickupState,
     delivery_state: p.deliveryState,
-    price: await priceDeal(ctx, p, { promo: Boolean(promo) }),
+    price: q,
+    dispute_fee: disputeFee(p.itemPrice, ctx.config.disputeFee),
     promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) },
   };
 }
@@ -103,9 +116,10 @@ export async function createDeal(ctx, seller, input) {
   const copyPhotosFrom = !photos.length && replaced?.photo_count ? replaced : null;
   const photoCount = photos.length || copyPhotosFrom?.photo_count || 0;
   if (!photoCount) throw new UserError('Add at least one photo of the item, so the buyer can see what they are paying for.');
-  const p = pricingInput(ctx, input);
+  const p = pricingInput(ctx, input, seller);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
-  const q = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const { q, courierCost } = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const dFee = disputeFee(p.itemPrice, ctx.config.disputeFee);
   // The seller confirms the item's condition in a pop-up, seeing what a false description costs them.
   if (input.condition_confirmed !== true && input.condition_confirmed !== 'yes') {
     throw new UserError('Confirm that the item is in good condition, exactly as agreed with the buyer.');
@@ -139,6 +153,8 @@ export async function createDeal(ctx, seller, input) {
       delivery_state: p.deliveryState,
       delivery_zone: p.deliveryState, // legacy column, kept filled
       delivery_fee: q.deliveryFee,
+      courier_cost: courierCost,
+      dispute_fee: dFee,
       delivery_payer: p.deliveryPayer,
       fee_payer: p.feePayer,
       platform_fee: q.platformFee,
@@ -150,7 +166,7 @@ export async function createDeal(ctx, seller, input) {
       photo_count: photoCount,
       promo_code: promo,
       condition_confirmed_at: iso(now),
-      condition_pledge: fillConsent('seller', q.deliveryFee),
+      condition_pledge: fillConsent('seller', q.deliveryFee, dFee),
       status: 'open',
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now),
@@ -226,6 +242,7 @@ export async function publicDealView(ctx, deal) {
     delivery_payer: deal.delivery_payer,
     delivery_days: deal.delivery_days,
     inspection_hours: deal.inspection_hours,
+    dispute_fee: deal.dispute_fee,
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
     promo_applied: Boolean(deal.promo_code),

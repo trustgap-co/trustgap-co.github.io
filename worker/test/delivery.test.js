@@ -82,7 +82,7 @@ describe('states instead of fixed areas', () => {
 
 describe('Fez', () => {
   // No FEZ_SECRET_KEY: the secret key comes from the login reply, as in Fez's docs.
-  const FEZ = { LOGISTICS_PROVIDER: 'fez', FEZ_USER_ID: 'G-123', FEZ_PASSWORD: 'pw', FEZ_API_BASE: 'https://fez.test/v1' };
+  const FEZ = { LOGISTICS_PROVIDER: 'fez', FEZ_USER_ID: 'G-123', FEZ_PASSWORD: 'pw', FEZ_API_BASE: 'https://apisandbox.fez.test/v1' };
 
   let tokenSeq = 0; // tokens stay unique across tests (the Worker caches its Fez session)
 
@@ -118,6 +118,17 @@ describe('Fez', () => {
     return { calls, state };
   }
 
+  test('live Fez with simulated payments: real prices, but no real rider is booked', async () => {
+    const fez = fakeFez();
+    const t = boot({ ...FEZ, FEZ_API_BASE: ' https://fez.test/v1 ', FEZ_USER_ID: ' G-123\n' });
+    const { seller, order } = await paidFezOrder(t);
+    assert.equal(fez.calls.find((c) => c.url.endsWith('/user/authenticate')).body.user_id, 'G-123');
+    const r = await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Black, serial 123' }, seller);
+    assert.match(r.data.error, /real rider/);
+    assert.equal((await t.one('SELECT status FROM orders')).status, 'paid');
+    assert.ok(!fez.calls.some((c) => c.url.endsWith('/order') && c.method === 'POST'));
+  });
+
   async function paidFezOrder(t) {
     const seller = await onboardSeller(t);
     const deal = await createDeal(t, seller, { ...DEAL, weight_kg: 2, fragile: 'yes' });
@@ -141,7 +152,10 @@ describe('Fez', () => {
     const t = boot(FEZ);
     const seller = await onboardSeller(t);
     const q = await t.post('/api/seller/quote', { ...DEAL, delivery_state: 'Kano', weight_kg: 2 }, seller);
-    assert.equal(q.data.price.deliveryFee, 645_000);
+    // Fez's ₦6,450 plus TrustGap's 15% handling margin (₦967.50), rounded up: ₦7,418. The courier's
+    // own cost is never sent to the seller.
+    assert.equal(q.data.price.deliveryFee, 741_800);
+    assert.ok(!JSON.stringify(q.data).includes('645000'));
     const cost = fez.calls.find((c) => c.url.endsWith('/order/cost'));
     assert.deepEqual(cost.body, { state: 'Kano', pickUpState: 'Lagos', weight: 2 });
     assert.equal(cost.headers['secret-key'], 'fez-secret');
@@ -155,6 +169,9 @@ describe('Fez', () => {
     const pin = (await t.get(`/api/track/${trackToken}`)).data.order.pin;
     const booked = await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box, serial 42' }, seller);
     assert.equal(booked.status, 200, JSON.stringify(booked.data));
+    // The ledger keeps Fez's cost and TrustGap's margin apart (same state: Fez ₦2,688 + 15% → ₦3,092).
+    const rows = await t.db("SELECT kind, amount FROM ledger WHERE kind IN ('delivery_cost', 'delivery_margin') ORDER BY kind");
+    assert.deepEqual(rows.map((r) => [r.kind, r.amount]), [['delivery_cost', 268_800], ['delivery_margin', 40_400]]);
     const create = fez.calls.find((c) => c.url.endsWith('/order') && c.method === 'POST').body;
     assert.equal(create.length, 1);
     assert.equal(create[0].uniqueID, order.ref);

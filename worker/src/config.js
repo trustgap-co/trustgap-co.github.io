@@ -18,12 +18,28 @@ export function loadConfig(env) {
     logisticsProvider: choice(env.LOGISTICS_PROVIDER, 'manual'),
     identityProvider: choice(env.IDENTITY_PROVIDER, 'mock'),
     requireSellerId: env.REQUIRE_SELLER_ID !== 'false',
-    // TrustGap fee (capped) and the "Payment processing" line that passes Flutterwave's costs on.
-    // A cap of 0 means no cap.
+    // TrustGap fee: FEE_PERCENT of the price up to FEE_TIER_NAIRA, FEE_PERCENT_ABOVE on the rest,
+    // with a minimum and a cap (a cap of 0 means no cap). 1.5% to ₦200,000, then 1%, at most ₦15,000.
     fee: {
       percent: num(env.FEE_PERCENT, 1.5),
+      tierKobo: num(env.FEE_TIER_NAIRA, 200000) * 100,
+      percentAbove: num(env.FEE_PERCENT_ABOVE, 1),
       minKobo: num(env.FEE_MIN_NAIRA, 100) * 100,
-      maxKobo: num(env.FEE_CAP_NAIRA, 3000) * 100,
+      maxKobo: num(env.FEE_CAP_NAIRA, 15000) * 100,
+    },
+    // Delivery is TrustGap's own service, priced as the courier's cost plus a handling margin
+    // (DELIVERY_MARGIN_PERCENT, at most DELIVERY_MARGIN_CAP_NAIRA). Not added to your own riders'
+    // prices (LOGISTICS_PROVIDER=manual), which you set directly.
+    deliveryMargin: {
+      percent: num(env.DELIVERY_MARGIN_PERCENT, 15),
+      capKobo: num(env.DELIVERY_MARGIN_CAP_NAIRA, 2000) * 100,
+    },
+    // Dispute fee, paid by whoever TrustGap finds at fault: DISPUTE_FEE_PERCENT of the item price,
+    // between DISPUTE_FEE_MIN_NAIRA and DISPUTE_FEE_NAIRA. DISPUTE_FEE_NAIRA = 0 switches it off.
+    disputeFee: {
+      maxKobo: num(env.DISPUTE_FEE_NAIRA, 3000) * 100,
+      percent: num(env.DISPUTE_FEE_PERCENT, 10),
+      minKobo: num(env.DISPUTE_FEE_MIN_NAIRA, 1000) * 100,
     },
     processing: {
       percent: num(env.PROCESSING_PERCENT, 2), // Flutterwave's charge on local NGN collections
@@ -34,7 +50,9 @@ export function loadConfig(env) {
     settlementHours: num(env.SETTLEMENT_HOURS, 24),
     maxTransferAttempts: 3,
     maxIdentityAttempts: 3,
-    maxDealKobo: num(env.MAX_DEAL_NAIRA, 300000) * 100,
+    // Largest deal a seller can create themselves; above it they contact support, and the admin can
+    // raise the limit for that seller (Admin → Sellers).
+    maxDealKobo: num(env.MAX_DEAL_NAIRA, 1000000) * 100,
     // The item price must be at least this many times the delivery fee, so a buyer who refuses a
     // correct item has paid enough to cover both delivery trips. 0 turns the rule off.
     minPriceDeliveryMultiple: num(env.MIN_PRICE_DELIVERY_MULTIPLE, 2),

@@ -87,12 +87,28 @@ function loadConfig(env) {
     logisticsProvider: choice(env.LOGISTICS_PROVIDER, "manual"),
     identityProvider: choice(env.IDENTITY_PROVIDER, "mock"),
     requireSellerId: env.REQUIRE_SELLER_ID !== "false",
-    // TrustGap fee (capped) and the "Payment processing" line that passes Flutterwave's costs on.
-    // A cap of 0 means no cap.
+    // TrustGap fee: FEE_PERCENT of the price up to FEE_TIER_NAIRA, FEE_PERCENT_ABOVE on the rest,
+    // with a minimum and a cap (a cap of 0 means no cap). 1.5% to ₦200,000, then 1%, at most ₦15,000.
     fee: {
       percent: num(env.FEE_PERCENT, 1.5),
+      tierKobo: num(env.FEE_TIER_NAIRA, 2e5) * 100,
+      percentAbove: num(env.FEE_PERCENT_ABOVE, 1),
       minKobo: num(env.FEE_MIN_NAIRA, 100) * 100,
-      maxKobo: num(env.FEE_CAP_NAIRA, 3e3) * 100
+      maxKobo: num(env.FEE_CAP_NAIRA, 15e3) * 100
+    },
+    // Delivery is TrustGap's own service, priced as the courier's cost plus a handling margin
+    // (DELIVERY_MARGIN_PERCENT, at most DELIVERY_MARGIN_CAP_NAIRA). Not added to your own riders'
+    // prices (LOGISTICS_PROVIDER=manual), which you set directly.
+    deliveryMargin: {
+      percent: num(env.DELIVERY_MARGIN_PERCENT, 15),
+      capKobo: num(env.DELIVERY_MARGIN_CAP_NAIRA, 2e3) * 100
+    },
+    // Dispute fee, paid by whoever TrustGap finds at fault: DISPUTE_FEE_PERCENT of the item price,
+    // between DISPUTE_FEE_MIN_NAIRA and DISPUTE_FEE_NAIRA. DISPUTE_FEE_NAIRA = 0 switches it off.
+    disputeFee: {
+      maxKobo: num(env.DISPUTE_FEE_NAIRA, 3e3) * 100,
+      percent: num(env.DISPUTE_FEE_PERCENT, 10),
+      minKobo: num(env.DISPUTE_FEE_MIN_NAIRA, 1e3) * 100
     },
     processing: {
       percent: num(env.PROCESSING_PERCENT, 2),
@@ -106,7 +122,9 @@ function loadConfig(env) {
     settlementHours: num(env.SETTLEMENT_HOURS, 24),
     maxTransferAttempts: 3,
     maxIdentityAttempts: 3,
-    maxDealKobo: num(env.MAX_DEAL_NAIRA, 3e5) * 100,
+    // Largest deal a seller can create themselves; above it they contact support, and the admin can
+    // raise the limit for that seller (Admin → Sellers).
+    maxDealKobo: num(env.MAX_DEAL_NAIRA, 1e6) * 100,
     // The item price must be at least this many times the delivery fee, so a buyer who refuses a
     // correct item has paid enough to cover both delivery trips. 0 turns the rule off.
     minPriceDeliveryMultiple: num(env.MIN_PRICE_DELIVERY_MULTIPLE, 2),
@@ -611,7 +629,8 @@ function parseFezExpiry(value) {
 }
 __name(parseFezExpiry, "parseFezExpiry");
 function createFezLogistics(ctx) {
-  const { env } = ctx;
+  const clean = /* @__PURE__ */ __name((v) => String(v ?? "").trim(), "clean");
+  const env = { ...ctx.env, FEZ_USER_ID: clean(ctx.env.FEZ_USER_ID), FEZ_PASSWORD: clean(ctx.env.FEZ_PASSWORD), FEZ_SECRET_KEY: clean(ctx.env.FEZ_SECRET_KEY), FEZ_API_BASE: clean(ctx.env.FEZ_API_BASE) };
   if (!env.FEZ_USER_ID || !env.FEZ_PASSWORD) {
     throw new Error("FEZ_USER_ID and FEZ_PASSWORD are required when LOGISTICS_PROVIDER=fez");
   }
@@ -632,7 +651,9 @@ function createFezLogistics(ctx) {
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || String(data.status).toLowerCase() === "error") {
-      throw Object.assign(new Error(`Fez: ${data.description || data.message || res.status}`), { status: res.status });
+      const sandbox = base.includes("sandbox") ? "sandbox" : "live";
+      const hint = path === "/user/authenticate" ? ` (checked against Fez ${sandbox} at ${base}; ${sandbox === "sandbox" ? "sandbox logins are separate from your normal Fez account" : "use your live Fez API user ID and password"})` : "";
+      throw Object.assign(new Error(`Fez: ${data.description || data.message || res.status}${hint}`), { status: res.status });
     }
     return data;
   }
@@ -661,6 +682,8 @@ function createFezLogistics(ctx) {
   __name(call, "call");
   return {
     name: "fez",
+    // Live Fez books real pickups that Fez bills for; the sandbox doesn't.
+    live: !base.includes("sandbox"),
     // POST /order/cost: the amount charged is cost + VAT ("totalCost").
     async quote({ pickupState, dropoffState, weightKg }) {
       const data = await call("POST", "/order/cost", { state: dropoffState, pickUpState: pickupState, weight: weightKg });
@@ -1002,6 +1025,10 @@ ALTER TABLE disputes ADD COLUMN decided_by TEXT;
   {
     "name": "0017_seller_suspension.sql",
     "sql": "-- Suspension: why and by whom, and a history of every suspend/unsuspend. While a seller is suspended\n-- their payouts wait in the ledger with status 'held' and are sent when they're unsuspended.\nALTER TABLE sellers ADD COLUMN suspend_reason TEXT;\nALTER TABLE sellers ADD COLUMN suspended_by TEXT;\nCREATE TABLE IF NOT EXISTS seller_actions (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  action TEXT NOT NULL,\n  reason TEXT,\n  actor TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS seller_actions_seller ON seller_actions(seller_id);\n"
+  },
+  {
+    "name": "0018_fees_and_limits.sql",
+    "sql": "-- Revenue: delivery as TrustGap's own service (courier cost kept apart from the price charged),\n-- a dispute fee paid by whoever is at fault, and a per-seller deal limit the admin can raise.\nALTER TABLE deals ADD COLUMN courier_cost INTEGER;\nALTER TABLE deals ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\nALTER TABLE sellers ADD COLUMN deal_limit INTEGER;\nALTER TABLE disputes ADD COLUMN fault TEXT;\nALTER TABLE disputes ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\n-- The part of the fee kept from the held money (the rest, if any, was added to the seller's debt).\nALTER TABLE disputes ADD COLUMN dispute_fee_taken INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];
 
@@ -1065,10 +1092,24 @@ function formatNaira(kobo) {
 }
 __name(formatNaira, "formatNaira");
 function platformFee(itemPriceKobo, fee) {
-  const pf = Math.max(fee.minKobo, Math.round(itemPriceKobo * fee.percent / 100));
+  const tier = fee.tierKobo || Infinity;
+  const above = Math.max(0, itemPriceKobo - tier);
+  const raw = ((itemPriceKobo - above) * fee.percent + above * (fee.percentAbove ?? fee.percent)) / 100;
+  const pf = Math.max(fee.minKobo, Math.round(raw));
   return fee.maxKobo ? Math.min(fee.maxKobo, pf) : pf;
 }
 __name(platformFee, "platformFee");
+function deliveryPrice(courierKobo, margin) {
+  if (!margin?.percent) return courierKobo;
+  const m = Math.round(courierKobo * margin.percent / 100);
+  return Math.ceil((courierKobo + (margin.capKobo ? Math.min(m, margin.capKobo) : m)) / 100) * 100;
+}
+__name(deliveryPrice, "deliveryPrice");
+function disputeFee(itemPriceKobo, d) {
+  if (!d?.maxKobo) return 0;
+  return Math.min(d.maxKobo, Math.max(d.minKobo, Math.round(itemPriceKobo * d.percent / 100 / 100) * 100));
+}
+__name(disputeFee, "disputeFee");
 var ceilNaira = /* @__PURE__ */ __name((kobo) => Math.ceil(kobo / 100) * 100, "ceilNaira");
 function processingFee({ itemPrice, buyerDelivery, platform, buyerShare }, processing) {
   const r = processing.percent / 100;
@@ -1151,7 +1192,7 @@ __name(normaliseState, "normaliseState");
 
 // src/lib/terms.js
 var TERMS_VERSION = "2026-10-pilot-1";
-var TOS_VERSION = "2026-10-29";
+var TOS_VERSION = "2026-10-31";
 var TOS_DOCUMENTS = {
   seller: ["legal/terms.html", "legal/seller-terms.html", "legal/privacy.html"],
   buyer: ["legal/terms.html", "legal/disputes.html", "legal/privacy.html"]
@@ -1165,7 +1206,8 @@ var RULES2 = /* @__PURE__ */ __name((deal) => [
   `If the seller does not hand the item to the courier within ${deal.delivery_days} day(s), you get a full refund.`,
   "Wrong, fake, damaged or not-as-described item: the item goes back to the seller and you get a full refund.",
   "If you refuse a correct item, the cost of delivery and return may be deducted from your refund. Every deduction is shown to you in writing.",
-  "Disputes are decided by TrustGap staff using evidence from both sides and the courier. You can appeal once by replying to the decision."
+  "Disputes are decided by TrustGap staff using evidence from both sides and the courier. You can appeal once by replying to the decision.",
+  ...deal.dispute_fee ? [`If TrustGap decides a dispute, whoever is found at fault (buyer or seller) pays a dispute fee of ${formatNaira(deal.dispute_fee)}. No fee is charged when the courier is at fault or no one is.`] : []
 ], "RULES");
 async function snapshotTerms(deal, seller, photoHashes = [], promo = null, acknowledgedAt = null, tosAcceptedAt = null) {
   const terms = {
@@ -1183,6 +1225,7 @@ async function snapshotTerms(deal, seller, photoHashes = [], promo = null, ackno
       item_price: deal.item_price,
       delivery_fee: deal.delivery_fee,
       delivery_payer: deal.delivery_payer,
+      dispute_fee: deal.dispute_fee || 0,
       platform_fee: deal.platform_fee,
       processing_fee: deal.processing_fee,
       fee_payer: deal.fee_payer,
@@ -1201,7 +1244,7 @@ async function snapshotTerms(deal, seller, photoHashes = [], promo = null, ackno
     inspection_hours: deal.inspection_hours,
     rules: RULES2(deal),
     // The change-of-mind notice the buyer accepted in a pop-up before continuing (exact wording).
-    buyer_acknowledgement: acknowledgedAt && { text: fillConsent("buyer", deal.delivery_fee), at: acknowledgedAt },
+    buyer_acknowledgement: acknowledgedAt && { text: fillConsent("buyer", deal.delivery_fee, deal.dispute_fee), at: acknowledgedAt },
     // The buyer ticked "I agree to the TrustGap Terms of Service" in step 1.
     terms_of_service: tosAcceptedAt && { version: TOS_VERSION, documents: TOS_DOCUMENTS.buyer, at: tosAcceptedAt }
   };
@@ -1212,16 +1255,17 @@ __name(snapshotTerms, "snapshotTerms");
 var CONSENTS = {
   seller: {
     title: "Is the item in good condition, exactly as agreed with the buyer?",
-    body: "If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer\u2019s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}).",
+    body: "If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer\u2019s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}), plus the dispute fee ({dispute}).",
     confirm: "The item is in good condition as agreed"
   },
   buyer: {
     title: "Before you pay: changing your mind has a cost",
-    body: "Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}). If the item is wrong, damaged, fake or not as described, you get a full refund.",
+    body: "Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If the item is wrong, damaged, fake or not as described, you get a full refund.",
     confirm: "I understand. Continue"
   }
 };
-var fillConsent = /* @__PURE__ */ __name((who, deliveryFeeKobo) => `${CONSENTS[who].title} ${CONSENTS[who].body.replace("{fee}", formatNaira(2 * deliveryFeeKobo))}`, "fillConsent");
+var fillConsentBody = /* @__PURE__ */ __name((body, deliveryFeeKobo, disputeFeeKobo = 0) => (disputeFeeKobo ? body.replace("{dispute}", formatNaira(disputeFeeKobo)) : body.replace(/, plus the dispute fee \(\{dispute\}\)( if TrustGap has to decide it)?/, "")).replace("{fee}", formatNaira(2 * deliveryFeeKobo)), "fillConsentBody");
+var fillConsent = /* @__PURE__ */ __name((who, deliveryFeeKobo, disputeFeeKobo = 0) => `${CONSENTS[who].title} ${fillConsentBody(CONSENTS[who].body, deliveryFeeKobo, disputeFeeKobo)}`, "fillConsent");
 
 // src/lib/names.js
 var tokens = /* @__PURE__ */ __name((name) => String(name || "").toUpperCase().replace(/[^A-Z\s-]/g, " ").split(/[\s-]+/).filter((t) => t.length > 1), "tokens");
@@ -1717,11 +1761,12 @@ __name(buyerUsedPromo, "buyerUsedPromo");
 
 // src/core/deals.js
 var PAYERS = ["buyer", "seller", "split"];
-function pricingInput(ctx, input) {
+function pricingInput(ctx, input, seller) {
   const itemPrice = nairaToKobo(input.item_price);
   if (itemPrice == null || itemPrice < 500 * 100) throw new UserError("Price must be at least \u20A6500.");
-  if (itemPrice > ctx.config.maxDealKobo) {
-    throw new UserError(`During the pilot, deals are limited to ${formatNaira(ctx.config.maxDealKobo)}.`);
+  const limit = dealLimit(ctx, seller);
+  if (itemPrice > limit) {
+    throw Object.assign(new UserError(`Deals above ${formatNaira(limit)} get a more secure link, set up with TrustGap support. Contact support with the item and the price, and we\u2019ll arrange it with you.`), { code: "needs_support", limit });
   }
   const pickupState = normaliseState(input.pickup_state);
   if (!pickupState) throw new UserError("Enter the state you ship from (one of the 36 states or FCT).");
@@ -1736,13 +1781,16 @@ function pricingInput(ctx, input) {
   return { itemPrice, pickupState, deliveryState, weightKg, deliveryPayer, feePayer };
 }
 __name(pricingInput, "pricingInput");
+var dealLimit = /* @__PURE__ */ __name((ctx, seller) => Math.max(ctx.config.maxDealKobo, seller?.deal_limit || 0), "dealLimit");
+var ourDeliveryPrice = /* @__PURE__ */ __name((ctx, courierKobo) => ctx.logistics.name === "manual" ? courierKobo : deliveryPrice(courierKobo, ctx.config.deliveryMargin), "ourDeliveryPrice");
 async function priceDeal(ctx, p, { promo = false } = {}) {
-  let deliveryFee;
+  let courierCost;
   try {
-    ({ feeKobo: deliveryFee } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
+    ({ feeKobo: courierCost } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
   } catch (err) {
     throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
   }
+  const deliveryFee = ourDeliveryPrice(ctx, courierCost);
   const minPrice = ctx.config.minPriceDeliveryMultiple * deliveryFee;
   if (minPrice && p.itemPrice < minPrice) {
     throw new UserError(`For delivery to ${p.deliveryState} (${formatNaira(deliveryFee)}), the item price must be at least ${formatNaira(minPrice)}: ${ctx.config.minPriceDeliveryMultiple === 2 ? "twice" : `${ctx.config.minPriceDeliveryMultiple} times`} the delivery fee, so a return is always covered.`);
@@ -1757,17 +1805,19 @@ async function priceDeal(ctx, p, { promo = false } = {}) {
   if (q.sellerPayout <= 0) {
     throw new UserError(`Delivery to ${p.deliveryState} plus fees is more than you would receive. Adjust the price or who pays.`);
   }
-  return q;
+  return { q, courierCost };
 }
 __name(priceDeal, "priceDeal");
 async function previewDeal(ctx, input, seller) {
   if (seller.suspended_at) throw new UserError("Your account is suspended, so you can\u2019t create links. Contact TrustGap support.");
-  const p = pricingInput(ctx, input);
+  const p = pricingInput(ctx, input, seller);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
+  const { q } = await priceDeal(ctx, p, { promo: Boolean(promo) });
   return {
     pickup_state: p.pickupState,
     delivery_state: p.deliveryState,
-    price: await priceDeal(ctx, p, { promo: Boolean(promo) }),
+    price: q,
+    dispute_fee: disputeFee(p.itemPrice, ctx.config.disputeFee),
     promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) }
   };
 }
@@ -1801,9 +1851,10 @@ async function createDeal(ctx, seller, input) {
   const copyPhotosFrom = !photos.length && replaced?.photo_count ? replaced : null;
   const photoCount = photos.length || copyPhotosFrom?.photo_count || 0;
   if (!photoCount) throw new UserError("Add at least one photo of the item, so the buyer can see what they are paying for.");
-  const p = pricingInput(ctx, input);
+  const p = pricingInput(ctx, input, seller);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
-  const q = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const { q, courierCost } = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const dFee = disputeFee(p.itemPrice, ctx.config.disputeFee);
   if (input.condition_confirmed !== true && input.condition_confirmed !== "yes") {
     throw new UserError("Confirm that the item is in good condition, exactly as agreed with the buyer.");
   }
@@ -1837,6 +1888,8 @@ async function createDeal(ctx, seller, input) {
       delivery_zone: p.deliveryState,
       // legacy column, kept filled
       delivery_fee: q.deliveryFee,
+      courier_cost: courierCost,
+      dispute_fee: dFee,
       delivery_payer: p.deliveryPayer,
       fee_payer: p.feePayer,
       platform_fee: q.platformFee,
@@ -1848,7 +1901,7 @@ async function createDeal(ctx, seller, input) {
       photo_count: photoCount,
       promo_code: promo,
       condition_confirmed_at: iso(now),
-      condition_pledge: fillConsent("seller", q.deliveryFee),
+      condition_pledge: fillConsent("seller", q.deliveryFee, dFee),
       status: "open",
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now)
@@ -1927,6 +1980,7 @@ async function publicDealView(ctx, deal) {
     delivery_payer: deal.delivery_payer,
     delivery_days: deal.delivery_days,
     inspection_hours: deal.inspection_hours,
+    dispute_fee: deal.dispute_fee,
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
     promo_applied: Boolean(deal.promo_code),
@@ -2084,6 +2138,7 @@ async function bookPickupReturn(ctx, order, { parcelWithBuyer = false, by = "adm
   if (!order.delivered_at && !parcelWithBuyer) throw new UserError("The item never reached the buyer, so there is nothing to collect.");
   const deal = await getDeal(ctx, order.deal_id);
   const seller = await getSeller(ctx, order.seller_id);
+  if (fakePaymentRealCourier(ctx)) throw new UserError(FAKE_PAYMENT_REAL_COURIER);
   const { pin, enc: enc2 } = await newPin(ctx);
   const deadline = addHours(ctx.now(), ctx.config.returnPickupDays * 24);
   const id = await insert(ctx.env, "returns", {
@@ -2331,6 +2386,8 @@ async function caseView(ctx, dispute, { viewer = "staff" } = {}) {
 __name(caseView, "caseView");
 
 // src/core/orders.js
+var fakePaymentRealCourier = /* @__PURE__ */ __name((ctx) => ctx.payments.name === "mock" && Boolean(ctx.logistics.live), "fakePaymentRealCourier");
+var FAKE_PAYMENT_REAL_COURIER = "Payments are simulated (test mode) but Fez is live, so booking would send a real rider for an unpaid order. Use Fez sandbox for testing, or switch to real payments.";
 async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== "open") throw new UserError("This link is no longer available.", 410);
@@ -2560,6 +2617,7 @@ async function bookPickup(ctx, seller, orderId, packingNote) {
   if (note.length < 5) {
     throw new UserError("Add a short packing note (serial number, colour, what is in the box). It is your evidence if there is a dispute.");
   }
+  if (fakePaymentRealCourier(ctx)) throw new UserError(FAKE_PAYMENT_REAL_COURIER);
   const deal = await getDeal(ctx, order.deal_id);
   const won = await transition(ctx, order.id, ["paid"], {
     status: "shipping",
@@ -2575,6 +2633,18 @@ async function bookPickup(ctx, seller, orderId, packingNote) {
     await update(ctx.env, "orders", order.id, { status: "paid", delivery_status: "not_booked", dispatched_at: null });
     throw new UserError(`Could not book the courier: ${err.message}`);
   }
+  const courierCost = Math.min(deal.courier_cost ?? order.delivery_fee, order.delivery_fee);
+  const margin = order.delivery_fee - courierCost;
+  const ledgerInsert = /* @__PURE__ */ __name((kind, amount, to) => stmt(
+    ctx.env,
+    "INSERT INTO ledger (order_id, kind, amount, counterparty, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    order.id,
+    kind,
+    amount,
+    to,
+    "pending",
+    iso(ctx.now())
+  ), "ledgerInsert");
   await ctx.env.DB.batch([
     stmt(
       ctx.env,
@@ -2584,16 +2654,8 @@ async function bookPickup(ctx, seller, orderId, packingNote) {
       ctx.logistics.name,
       order.id
     ),
-    stmt(
-      ctx.env,
-      "INSERT INTO ledger (order_id, kind, amount, counterparty, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      order.id,
-      "delivery_cost",
-      order.delivery_fee,
-      ctx.logistics.name,
-      "pending",
-      iso(ctx.now())
-    )
+    ledgerInsert("delivery_cost", courierCost, ctx.logistics.name),
+    ...margin > 0 ? [ledgerInsert("delivery_margin", margin, "trustgap")] : []
   ]);
   await logEvent(ctx, order.id, "seller", "pickup_booked", { delivery_ref: booking.deliveryRef, packing_note: note });
   await ctx.notify.send({
@@ -2670,7 +2732,7 @@ async function markDelivered(ctx, order, actor, eventType) {
     ["shipping"],
     { status: "delivered", delivery_status: "delivered", delivered_at: iso(now), inspection_ends_at: iso(ends) },
     (h) => [
-      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'delivery_cost'", order.id),
+      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind IN ('delivery_cost', 'delivery_margin')", order.id),
       h.event(actor, eventType)
     ]
   );
@@ -2760,7 +2822,8 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
   ]);
   if (!won) throw new UserError("This order changed while you were reporting. Refresh and try again.", 409);
   const seller = await getSeller(ctx, order.seller_id);
-  const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.`;
+  const dFee = (await getDeal(ctx, order.deal_id)).dispute_fee;
+  const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.${dFee ? ` If TrustGap has to decide, whoever is at fault pays a dispute fee of ${formatNaira(dFee)}.` : ""}`;
   await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: order.buyer_phone, sms });
   await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: seller.phone, sms });
   if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
@@ -2835,7 +2898,9 @@ async function resolveDispute(ctx, disputeId, input, { by = "admin" } = {}) {
     throw new UserError(`Refund plus payout cannot exceed the ${formatNaira(order.amount)} collected.`);
   }
   const note = requireLength(input.note, "Decision note", 10, 2e3);
-  const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
+  const fault = str(input.fault || "none");
+  if (!FAULTS[fault]) throw new UserError("Choose who is at fault.");
+  const decision = { buyerRefund, sellerPayout, sellerCharge, note, by, fault, ...applyDisputeFee((await getDeal(ctx, order.deal_id)).dispute_fee, fault, { buyerRefund, sellerPayout, sellerCharge }) };
   let ret = await activeReturn(ctx, order.id);
   const withBuyer = Boolean(order.delivered_at) || dispute.parcel_location === "buyer";
   if (sellerPayout > 0 && (ret && !ret.problem_at || buyerRefund > 0 && withBuyer && !ret)) {
@@ -2845,16 +2910,19 @@ async function resolveDispute(ctx, disputeId, input, { by = "admin" } = {}) {
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(
       ctx.env,
-      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, decided_by = ? WHERE id = ? AND status = 'open'",
+      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, decided_by = ?, fault = ?, dispute_fee = ?, dispute_fee_taken = ? WHERE id = ? AND status = 'open'",
       note,
-      buyerRefund,
-      sellerPayout,
-      sellerCharge,
+      decision.buyerRefund,
+      decision.sellerPayout,
+      decision.sellerCharge,
       by,
+      fault,
+      decision.disputeFee,
+      decision.feeTaken,
       dispute.id
     );
     if (res.meta.changes !== 1) throw new UserError("This dispute was already decided.");
-    await logEvent(ctx, order.id, by, "dispute_decided_after_return", { buyerRefund, sellerPayout, sellerCharge, note });
+    await logEvent(ctx, order.id, by, "dispute_decided_after_return", { buyerRefund: decision.buyerRefund, sellerPayout: decision.sellerPayout, sellerCharge: decision.sellerCharge, fault, disputeFee: decision.disputeFee, note });
     const seller = await getSeller(ctx, order.seller_id);
     const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
     await ctx.notify.send({ orderId: order.id, event: "dispute_decided", phone: order.buyer_phone, email: order.buyer_email, sms });
@@ -2873,15 +2941,29 @@ async function settleAfterReturn(ctx, order) {
     sellerPayout: dispute.seller_payout,
     sellerCharge: dispute.seller_charge,
     note: dispute.resolution_note,
-    by: dispute.decided_by || "admin"
+    by: dispute.decided_by || "admin",
+    fault: dispute.fault || "none",
+    disputeFee: dispute.dispute_fee || 0,
+    feeTaken: dispute.dispute_fee_taken || 0
   });
   return true;
 }
 __name(settleAfterReturn, "settleAfterReturn");
-var decisionSummary = /* @__PURE__ */ __name(({ buyerRefund, sellerPayout, sellerCharge, note }) => `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ""} Reason: ${note}`, "decisionSummary");
-async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note, by = "admin" }) {
+var FAULTS = { buyer: "The buyer", seller: "The seller", courier: "The courier", none: "No one (or both)" };
+function applyDisputeFee(fee, fault, { buyerRefund, sellerPayout, sellerCharge }) {
+  if (!fee || !["buyer", "seller"].includes(fault)) return { disputeFee: 0, feeTaken: 0 };
+  if (fault === "buyer") {
+    const taken2 = Math.min(fee, buyerRefund);
+    return { buyerRefund: buyerRefund - taken2, disputeFee: taken2, feeTaken: taken2 };
+  }
+  const taken = Math.min(fee, sellerPayout);
+  return { sellerPayout: sellerPayout - taken, sellerCharge: sellerCharge + fee - taken, disputeFee: fee, feeTaken: taken };
+}
+__name(applyDisputeFee, "applyDisputeFee");
+var decisionSummary = /* @__PURE__ */ __name(({ buyerRefund, sellerPayout, sellerCharge, note, fault, disputeFee: dFee }) => `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ""}${dFee ? ` At fault: the ${fault}, who pays the ${formatNaira(dFee)} dispute fee (included above).` : ""} Reason: ${note}`, "decisionSummary");
+async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note, by = "admin", fault = "none", disputeFee: dFee = 0, feeTaken = 0 }) {
   const now = iso(ctx.now());
-  const retained = order.amount - buyerRefund - sellerPayout;
+  const retained = order.amount - buyerRefund - sellerPayout - feeTaken;
   const settles = iso(settlesAt(ctx, order.paid_at));
   const won = await transition(
     ctx,
@@ -2890,27 +2972,33 @@ async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, s
     { status: sellerPayout > 0 ? "completed" : "refunded", closed_at: now },
     (h) => [
       h.sql(
-        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ?, decided_by = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
+        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ?, decided_by = ?, fault = ?, dispute_fee = ?, dispute_fee_taken = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
         note,
         buyerRefund,
         sellerPayout,
         sellerCharge,
         now,
         by,
+        fault,
+        dFee,
+        feeTaken,
         dispute.id
       ),
       h.sql("UPDATE sellers SET amount_owed = amount_owed + ? WHERE id = ?", sellerCharge, order.seller_id),
-      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'delivery_cost'", order.id),
+      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind IN ('delivery_cost', 'delivery_margin')", order.id),
       ...buyerRefund > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "buyer_refund", buyerRefund, "buyer", "pending", settles))] : [],
       ...sellerPayout > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "seller_payout", sellerPayout, "seller", "pending", settles))] : [],
       ...retained > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "platform_retained", retained, "trustgap", "success"))] : [],
-      h.event(by, "dispute_resolved", { buyerRefund, sellerPayout, sellerCharge, note })
+      // The dispute fee: kept from the held money now, or added to the seller's debt (status 'owed').
+      ...feeTaken > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "dispute_fee", feeTaken, fault, "success"))] : [],
+      ...dFee > feeTaken ? [h.insert("ledger", ledgerRow(ctx, order.id, "dispute_fee", dFee - feeTaken, fault, "owed"))] : [],
+      h.event(by, "dispute_resolved", { buyerRefund, sellerPayout, sellerCharge, fault, disputeFee: dFee, note })
     ]
   );
   if (!won) throw new UserError("This order was already decided.");
   await sendPendingTransfers(ctx, order.id);
   const seller = await getSeller(ctx, order.seller_id);
-  const summary = decisionSummary({ buyerRefund, sellerPayout, sellerCharge, note });
+  const summary = decisionSummary({ buyerRefund, sellerPayout, sellerCharge, note, fault, disputeFee: dFee });
   await ctx.notify.send({ orderId: order.id, event: "dispute_resolved", phone: order.buyer_phone, email: order.buyer_email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
   await ctx.notify.send({ orderId: order.id, event: "dispute_resolved", phone: seller.phone, email: seller.email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
 }
@@ -3592,6 +3680,7 @@ function settingsCheck(ctx) {
   if (config.testMode && ctx.payments.name === "flutterwave" && key.startsWith("FLWSECK-") && !key.startsWith("FLWSECK_TEST")) {
     add("danger", "A live Flutterwave key is in use while TEST_MODE is true: pages say \u201Cno real money moves\u201D, but it does. Set TEST_MODE = false, or use your test key.");
   }
+  if (ctx.payments.name === "mock" && ctx.logistics.live) add("warn", "Fez is live (FEZ_API_BASE has no \u201Csandbox\u201D) while payments are simulated. Delivery prices are real; courier bookings are refused so no real rider is sent for a test order.");
   if (ctx.payments.name === "flutterwave" && !env.FLW_WEBHOOK_HASH) add("warn", "FLW_WEBHOOK_HASH isn\u2019t set, so Flutterwave\u2019s payment notifications are ignored (payments are still checked on return and by the timers).");
   if (live) {
     if (String(env.APP_SECRET || "").length < 32) add("danger", "APP_SECRET is shorter than 32 characters. Use a long random value.");
@@ -3602,6 +3691,8 @@ function settingsCheck(ctx) {
     if (ctx.logistics.name === "manual") add("warn", "Deliveries use your own riders (LOGISTICS_PROVIDER = manual). Fine for the pilot; switch to fez when ready.");
     if (!env.MAKE_WEBHOOK_URL) add("warn", "MAKE_WEBHOOK_URL isn\u2019t set, so no SMS or emails are sent.");
   }
+  if (env.FEE_CAP_NAIRA && Number(env.FEE_CAP_NAIRA) < 15e3) add("warn", `FEE_CAP_NAIRA is set to ${env.FEE_CAP_NAIRA}, so the TrustGap fee stops there instead of the new \u20A615,000. Delete it (or set 15000) under Settings \u2192 Variables.`);
+  if (env.MAX_DEAL_NAIRA && Number(env.MAX_DEAL_NAIRA) < 1e6) add("warn", `MAX_DEAL_NAIRA is set to ${env.MAX_DEAL_NAIRA}, below the new \u20A61,000,000. Delete it (or set 1000000) under Settings \u2192 Variables.`);
   if (!env.LEADS_WEBHOOK_URL) add("warn", "LEADS_WEBHOOK_URL isn\u2019t set, so survey and early-access answers aren\u2019t forwarded to your Google Sheet.");
   return out;
 }
@@ -4010,7 +4101,7 @@ function adminRoutes(r) {
     sellers: await Promise.all((await all(
       ctx.env,
       `SELECT s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at, s.payout_verified_at, s.payout_bank_name,
-              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.created_at,
+              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.deal_limit, s.created_at,
               (SELECT COALESCE(SUM(l.amount), 0) FROM ledger l JOIN orders o ON o.id = l.order_id
                 WHERE o.seller_id = s.id AND l.kind = 'seller_payout' AND l.status = 'held') AS held
        FROM sellers s WHERE ${dateRange(url, "s.created_at").where} ORDER BY ${dateRange(url, "s.created_at").order} LIMIT 500`,
@@ -4021,6 +4112,14 @@ function adminRoutes(r) {
     const id = Number(params.id);
     if (body.action === "suspend") return { ok: true, ...await suspendSeller(ctx, id, { reason: body.reason }) };
     if (body.action === "unsuspend") return { ok: true, ...await unsuspendSeller(ctx, id, { reason: body.reason }) };
+    if (body.action === "limit") {
+      if (!await getSeller(ctx, id)) throw notFound("Seller not found.");
+      const limit = body.limit === "" || body.limit == null ? null : nairaToKobo(body.limit);
+      if (limit !== null && (!limit || limit <= ctx.config.maxDealKobo)) throw new UserError(`Enter an amount above the normal limit of ${formatNaira(ctx.config.maxDealKobo)}, or leave it empty to go back to it.`);
+      await update(ctx.env, "sellers", id, { deal_limit: limit });
+      await insert(ctx.env, "seller_actions", { seller_id: id, action: "limit", reason: limit ? `Deals up to ${formatNaira(limit)}${body.reason ? ` \xB7 ${String(body.reason).slice(0, 300)}` : ""}` : "Back to the normal limit", actor: "admin", created_at: iso(ctx.now()) });
+      return { ok: true };
+    }
     const fields = {
       verify: { identity_verified_at: iso(ctx.now()), id_type: "manual" },
       settled: { amount_owed: 0 }
@@ -4320,6 +4419,7 @@ async function teamOrderView(ctx, staff, orderId) {
       amount: o.amount,
       seller_payout: o.seller_payout,
       delivery_fee: o.delivery_fee,
+      dispute_fee: d.dispute_fee || 0,
       delivered: Boolean(o.delivered_at),
       item_with_seller: await (async () => {
         const r = await activeReturn(ctx, o.id);
@@ -4355,8 +4455,8 @@ __name(teamResolveDispute, "teamResolveDispute");
 
 // src/manual.js
 var MANUAL = {
-  updated: "2026-10-29",
-  // decide-a-dispute tasks added
+  updated: "2026-10-31",
+  // dispute fee, deal limit, delivery as a TrustGap service
   sections: [
     {
       id: "start",
@@ -4538,6 +4638,14 @@ var MANUAL = {
 </table>
 <p><strong>Returned item isn\u2019t what was delivered</strong> (opened by the seller): compare the seller\u2019s photos of what came back with the buyer\u2019s photos and the listing. If the buyer swapped or damaged it, refuse or reduce the refund; the seller may be paid even though they have the item, because it isn\u2019t the item they sent. If the seller\u2019s claim doesn\u2019t hold up, refund the buyer as originally decided.</p>
 <p>The presets only fill in the amounts; you can adjust the deductions or the seller charge. The system refuses amounts that add up to more than the buyer paid. <strong>When the item goes back to the seller</strong> (refused at the door, or any refund after delivery), the seller can\u2019t also be paid: they get the item back instead. So on a door refusal there is no \u201Cpay the seller\u201D option: if the item was correct, use <em>Buyer refused a correct item</em>.</p>
+<h3>Who is at fault, and the dispute fee</h3>
+<p>Every decision says who is at fault. Each deal shows its dispute fee (10% of the item price, between \u20A61,000 and \u20A63,000; older deals have none). The presets choose a fault for you; check it.</p>
+<ul>
+<li><strong>The buyer</strong>: the fee comes out of their refund. If they get nothing back, it isn\u2019t charged.</li>
+<li><strong>The seller</strong>: the fee comes out of their payout, or is added to what they owe (they can\u2019t create links until it\u2019s paid).</li>
+<li><strong>The courier</strong> (lost or damaged it in transit) or <strong>no one / both</strong>: no fee. Use \u201Cno one\u201D too when the buyer and seller agreed a solution between themselves.</li>
+</ul>
+<p>Enter the refund, payout and charge <em>before</em> the fee; the system applies it. The decision SMS tells both sides who was at fault and the fee.</p>
 <h3>The decision note</h3>
 <p>Both sides get it by SMS, so write it plainly: what the evidence showed and why these amounts. Example: \u201CThe buyer\u2019s photos show a torn sole on the left shoe, and the seller\u2019s packing note doesn\u2019t mention damage. Full refund; the seller pays both delivery trips.\u201D Never write anything rude, personal or a guess.</p>
 <h3>After you decide</h3>
@@ -4614,6 +4722,9 @@ var MANUAL = {
 <dt>Packing note</dt><dd>The seller\u2019s description of what they packed, written when booking pickup.</dd>
 <dt>Settlement</dt><dd>Flutterwave moving the buyer\u2019s payment into our account, the next working day.</dd>
 <dt>Seller charge / debt</dt><dd>An amount a seller owes after losing a dispute. Paid on the dashboard or taken from the next payout.</dd>
+<dt>Dispute fee</dt><dd>Paid only by whoever is at fault when TrustGap decides a dispute: 10% of the item price, between \u20A61,000 and \u20A63,000. Shown on the deal before anyone pays.</dd>
+<dt>Deal limit</dt><dd>Sellers can create links up to \u20A61,000,000. For more, they contact support; the admin checks the deal and raises that seller\u2019s limit.</dd>
+<dt>Delivery fee</dt><dd>TrustGap\u2019s price for booking, tracking and handling the delivery. If asked, it covers TrustGap arranging and following the delivery for them, so they don\u2019t deal with the courier.</dd>
 <dt>Test mode</dt><dd>A demonstration setup where no real money moves. A yellow bar shows at the bottom of every page.</dd>
 </dl>`
     }
@@ -4710,7 +4821,7 @@ var index_default = {
       res = out instanceof Response ? out : json(out ?? { ok: true });
     } catch (err) {
       if (err instanceof UserError) {
-        res = json({ error: err.message }, err.status);
+        res = json({ error: err.message, ...err.code ? { code: err.code } : {} }, err.status);
       } else {
         const ref = Math.random().toString(36).slice(2, 8).toUpperCase();
         console.error(`[error ${ref}]`, err);

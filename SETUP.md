@@ -200,10 +200,15 @@ Flutterwave confirmed this model: TrustGap is the **primary merchant** (not an e
 Buyer payments settle into TrustGap's Flutterwave wallet the next working day (T+1), and TrustGap
 pays sellers with the **Transfers API** once delivery is confirmed. The app already works this way:
 
-- **Pricing** covers Flutterwave's costs: "TrustGap fee" (1.5%, maximum ₦3,000) plus "Payment processing"
+- **Pricing** covers Flutterwave's costs: "TrustGap fee" (1.5% up to ₦200,000, then 1%, maximum ₦15,000:
+  `FEE_PERCENT`, `FEE_TIER_NAIRA`, `FEE_PERCENT_ABOVE`, `FEE_CAP_NAIRA`) plus "Payment processing"
   (Flutterwave's 2% on collections, which Flutterwave caps at ₦2,000 per payment, and the ₦53.75 + VAT
-  payout fee, passed on at cost). The two fees together never exceed ₦5,058 per deal. Change
-  `FEE_CAP_NAIRA`, `PROCESSING_PERCENT`, `PROCESSING_CAP_NAIRA` or `PAYOUT_FEE_NAIRA` (Text variables in
+  payout fee, passed on at cost). **If you typed `FEE_CAP_NAIRA = 3000` or `MAX_DEAL_NAIRA = 300000` into
+  Cloudflare earlier, delete them** (or set 15000 and 1000000): typed values win over the new defaults,
+  and Admin → Orders warns you while they're there. Other revenue settings, all optional:
+  `DELIVERY_MARGIN_PERCENT` (15) and `DELIVERY_MARGIN_CAP_NAIRA` (2000) for TrustGap's delivery price on
+  Fez; `DISPUTE_FEE_NAIRA` (3000, `0` = off), `DISPUTE_FEE_PERCENT` (10) and `DISPUTE_FEE_MIN_NAIRA`
+  (1000); `MAX_DEAL_NAIRA` (1000000). Change `FEE_CAP_NAIRA`, `PROCESSING_PERCENT`, `PROCESSING_CAP_NAIRA` or `PAYOUT_FEE_NAIRA` (Text variables in
   Cloudflare) if you change your cap or your merchant agreement differs; `0` means no cap.
   `MIN_PRICE_DELIVERY_MULTIPLE` (default 2): the item price must be at least that many times the delivery
   fee, so a refused correct item's two delivery trips are always covered by what the buyer paid (`0` = off).

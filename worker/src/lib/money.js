@@ -15,10 +15,27 @@ export function formatNaira(kobo) {
   });
 }
 
-// TrustGap's own fee: a percentage of the item price, with a minimum and a cap (maxKobo 0 = no cap).
+// TrustGap's own fee: `percent` of the item price up to `tierKobo`, `percentAbove` on the rest, with a
+// minimum and a cap (maxKobo 0 = no cap; tierKobo 0 = one rate for the whole price).
 export function platformFee(itemPriceKobo, fee) {
-  const pf = Math.max(fee.minKobo, Math.round((itemPriceKobo * fee.percent) / 100));
+  const tier = fee.tierKobo || Infinity;
+  const above = Math.max(0, itemPriceKobo - tier);
+  const raw = ((itemPriceKobo - above) * fee.percent + above * (fee.percentAbove ?? fee.percent)) / 100;
+  const pf = Math.max(fee.minKobo, Math.round(raw));
   return fee.maxKobo ? Math.min(fee.maxKobo, pf) : pf;
+}
+
+// What TrustGap charges for delivery: the courier's price plus the handling margin, in whole naira.
+export function deliveryPrice(courierKobo, margin) {
+  if (!margin?.percent) return courierKobo;
+  const m = Math.round((courierKobo * margin.percent) / 100);
+  return Math.ceil((courierKobo + (margin.capKobo ? Math.min(m, margin.capKobo) : m)) / 100) * 100;
+}
+
+// The dispute fee for an item: a percentage of its price, between a minimum and a maximum.
+export function disputeFee(itemPriceKobo, d) {
+  if (!d?.maxKobo) return 0;
+  return Math.min(d.maxKobo, Math.max(d.minKobo, Math.round((itemPriceKobo * d.percent) / 100 / 100) * 100));
 }
 
 const ceilNaira = (kobo) => Math.ceil(kobo / 100) * 100;

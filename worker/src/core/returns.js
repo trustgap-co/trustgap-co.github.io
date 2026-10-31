@@ -1,7 +1,7 @@
 import { first, run, insert, update } from '../lib/db.js';
 import { randomDigits, encrypt, decrypt, safeEqual, signLink } from '../lib/crypto.js';
 import { UserError, iso, addHours, str, getSeller, getDeal, getOrder, logEvent, fmtDate, trackUrl, transition } from './common.js';
-import { settleAfterReturn, checkedEvidence, evidencePhotoStmt } from './orders.js';
+import { settleAfterReturn, checkedEvidence, evidencePhotoStmt, fakePaymentRealCourier, FAKE_PAYMENT_REAL_COURIER } from './orders.js';
 import { parsePhotos } from '../lib/photos.js';
 
 // Returns to the seller: delivery in reverse. The seller gets a 4-digit return PIN (SMS and their
@@ -95,6 +95,7 @@ export async function bookPickupReturn(ctx, order, { parcelWithBuyer = false, by
   if (!order.delivered_at && !parcelWithBuyer) throw new UserError('The item never reached the buyer, so there is nothing to collect.');
   const deal = await getDeal(ctx, order.deal_id);
   const seller = await getSeller(ctx, order.seller_id);
+  if (fakePaymentRealCourier(ctx)) throw new UserError(FAKE_PAYMENT_REAL_COURIER);
   const { pin, enc } = await newPin(ctx);
   const deadline = addHours(ctx.now(), ctx.config.returnPickupDays * 24);
   const id = await insert(ctx.env, 'returns', {

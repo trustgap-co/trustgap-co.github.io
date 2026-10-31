@@ -3,7 +3,7 @@
 // Each section is plain HTML: headings, paragraphs, lists and tables only.
 
 export const MANUAL = {
-  updated: '2026-10-29',  // decide-a-dispute tasks added
+  updated: '2026-10-31',  // dispute fee, deal limit, delivery as a TrustGap service
   sections: [
     {
       id: 'start',
@@ -185,6 +185,14 @@ export const MANUAL = {
 </table>
 <p><strong>Returned item isn’t what was delivered</strong> (opened by the seller): compare the seller’s photos of what came back with the buyer’s photos and the listing. If the buyer swapped or damaged it, refuse or reduce the refund; the seller may be paid even though they have the item, because it isn’t the item they sent. If the seller’s claim doesn’t hold up, refund the buyer as originally decided.</p>
 <p>The presets only fill in the amounts; you can adjust the deductions or the seller charge. The system refuses amounts that add up to more than the buyer paid. <strong>When the item goes back to the seller</strong> (refused at the door, or any refund after delivery), the seller can’t also be paid: they get the item back instead. So on a door refusal there is no “pay the seller” option: if the item was correct, use <em>Buyer refused a correct item</em>.</p>
+<h3>Who is at fault, and the dispute fee</h3>
+<p>Every decision says who is at fault. Each deal shows its dispute fee (10% of the item price, between ₦1,000 and ₦3,000; older deals have none). The presets choose a fault for you; check it.</p>
+<ul>
+<li><strong>The buyer</strong>: the fee comes out of their refund. If they get nothing back, it isn’t charged.</li>
+<li><strong>The seller</strong>: the fee comes out of their payout, or is added to what they owe (they can’t create links until it’s paid).</li>
+<li><strong>The courier</strong> (lost or damaged it in transit) or <strong>no one / both</strong>: no fee. Use “no one” too when the buyer and seller agreed a solution between themselves.</li>
+</ul>
+<p>Enter the refund, payout and charge <em>before</em> the fee; the system applies it. The decision SMS tells both sides who was at fault and the fee.</p>
 <h3>The decision note</h3>
 <p>Both sides get it by SMS, so write it plainly: what the evidence showed and why these amounts. Example: “The buyer’s photos show a torn sole on the left shoe, and the seller’s packing note doesn’t mention damage. Full refund; the seller pays both delivery trips.” Never write anything rude, personal or a guess.</p>
 <h3>After you decide</h3>
@@ -261,6 +269,9 @@ export const MANUAL = {
 <dt>Packing note</dt><dd>The seller’s description of what they packed, written when booking pickup.</dd>
 <dt>Settlement</dt><dd>Flutterwave moving the buyer’s payment into our account, the next working day.</dd>
 <dt>Seller charge / debt</dt><dd>An amount a seller owes after losing a dispute. Paid on the dashboard or taken from the next payout.</dd>
+<dt>Dispute fee</dt><dd>Paid only by whoever is at fault when TrustGap decides a dispute: 10% of the item price, between ₦1,000 and ₦3,000. Shown on the deal before anyone pays.</dd>
+<dt>Deal limit</dt><dd>Sellers can create links up to ₦1,000,000. For more, they contact support; the admin checks the deal and raises that seller’s limit.</dd>
+<dt>Delivery fee</dt><dd>TrustGap’s price for booking, tracking and handling the delivery. If asked, it covers TrustGap arranging and following the delivery for them, so they don’t deal with the courier.</dd>
 <dt>Test mode</dt><dd>A demonstration setup where no real money moves. A yellow bar shows at the bottom of every page.</dd>
 </dl>`,
     },

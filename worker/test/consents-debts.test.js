@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { boot, onboardSeller, createDeal, completePayment, DEAL, BUYER } from './helpers.js';
+import { TOS_VERSION } from '../src/lib/terms.js';
 
 describe('confirmations before a deal', () => {
   test('the seller must confirm the item’s condition; the exact wording is stored with the link', async () => {
@@ -46,7 +47,7 @@ describe('confirmations before a deal', () => {
     assert.equal((await t.post('/api/auth/signup', { ...form, terms_accepted: 'yes' })).status, 200);
     const s = await t.one('SELECT terms_accepted_at, terms_version FROM sellers');
     assert.ok(s.terms_accepted_at);
-    assert.equal(s.terms_version, '2026-10-29');
+    assert.equal(s.terms_version, TOS_VERSION);
   });
 
   test('buyers must accept the Terms of Service in step 1 before paying', async () => {
@@ -61,7 +62,7 @@ describe('confirmations before a deal', () => {
     assert.equal((await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id: ok.checkout_id, expected_total: total })).status, 200);
     const o = await t.one('SELECT terms_json, buyer_terms_accepted_at FROM orders');
     const tos = JSON.parse(o.terms_json).terms_of_service;
-    assert.equal(tos.version, '2026-10-29');
+    assert.equal(tos.version, TOS_VERSION);
     assert.ok(tos.documents.includes('legal/terms.html'));
     assert.equal(o.buyer_terms_accepted_at, tos.at);
   });

@@ -34,7 +34,9 @@ export function parseFezExpiry(value) {
 }
 
 export function createFezLogistics(ctx) {
-  const { env } = ctx;
+  // Values pasted into the Cloudflare dashboard often carry a stray space or line break.
+  const clean = (v) => String(v ?? '').trim();
+  const env = { ...ctx.env, FEZ_USER_ID: clean(ctx.env.FEZ_USER_ID), FEZ_PASSWORD: clean(ctx.env.FEZ_PASSWORD), FEZ_SECRET_KEY: clean(ctx.env.FEZ_SECRET_KEY), FEZ_API_BASE: clean(ctx.env.FEZ_API_BASE) };
   if (!env.FEZ_USER_ID || !env.FEZ_PASSWORD) {
     throw new Error('FEZ_USER_ID and FEZ_PASSWORD are required when LOGISTICS_PROVIDER=fez');
   }
@@ -56,7 +58,9 @@ export function createFezLogistics(ctx) {
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || String(data.status).toLowerCase() === 'error') {
-      throw Object.assign(new Error(`Fez: ${data.description || data.message || res.status}`), { status: res.status });
+      const sandbox = base.includes('sandbox') ? 'sandbox' : 'live';
+      const hint = path === '/user/authenticate' ? ` (checked against Fez ${sandbox} at ${base}; ${sandbox === 'sandbox' ? 'sandbox logins are separate from your normal Fez account' : 'use your live Fez API user ID and password'})` : '';
+      throw Object.assign(new Error(`Fez: ${data.description || data.message || res.status}${hint}`), { status: res.status });
     }
     return data;
   }
@@ -86,6 +90,8 @@ export function createFezLogistics(ctx) {
 
   return {
     name: 'fez',
+    // Live Fez books real pickups that Fez bills for; the sandbox doesn't.
+    live: !base.includes('sandbox'),
 
     // POST /order/cost: the amount charged is cost + VAT ("totalCost").
     async quote({ pickupState, dropoffState, weightKg }) {

@@ -234,7 +234,7 @@ export async function teamOrderView(ctx, staff, orderId) {
     decide: decideTask && {
       task_id: decideTask.id,
       dispute_id: disputes.find((x) => x.status === 'open')?.id,
-      amount: o.amount, seller_payout: o.seller_payout, delivery_fee: o.delivery_fee, delivered: Boolean(o.delivered_at),
+      amount: o.amount, seller_payout: o.seller_payout, delivery_fee: o.delivery_fee, dispute_fee: d.dispute_fee || 0, delivered: Boolean(o.delivered_at),
       item_with_seller: await (async () => { const r = await activeReturn(ctx, o.id); return Boolean(r && !r.problem_at); })(),
       return_problem: (await activeReturn(ctx, o.id))?.problem_note || null,
       condition_pledge: d.condition_pledge, buyer_ack_at: o.buyer_ack_at,

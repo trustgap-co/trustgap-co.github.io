@@ -32,6 +32,10 @@ import {
 
 // ---------------------------------------------------------------- buyer checkout
 
+// Simulated payments with live Fez would send a real rider (billed by Fez) for an order nobody paid for.
+export const fakePaymentRealCourier = (ctx) => ctx.payments.name === 'mock' && Boolean(ctx.logistics.live);
+export const FAKE_PAYMENT_REAL_COURIER = 'Payments are simulated (test mode) but Fez is live, so booking would send a real rider for an unpaid order. Use Fez sandbox for testing, or switch to real payments.';
+
 export async function startCheckout(ctx, deal, promoInput, { acknowledged = false, termsAccepted = false } = {}) {
   deal = await refreshDeal(ctx, deal);
   if (deal.status !== 'open') throw new UserError('This link is no longer available.', 410);
@@ -276,6 +280,7 @@ export async function bookPickup(ctx, seller, orderId, packingNote) {
   if (note.length < 5) {
     throw new UserError('Add a short packing note (serial number, colour, what is in the box). It is your evidence if there is a dispute.');
   }
+  if (fakePaymentRealCourier(ctx)) throw new UserError(FAKE_PAYMENT_REAL_COURIER);
   const deal = await getDeal(ctx, order.deal_id);
   // Claim the order first so a double-click can't book two couriers.
   const won = await transition(ctx, order.id, ['paid'], {
@@ -292,11 +297,16 @@ export async function bookPickup(ctx, seller, orderId, packingNote) {
     await update(ctx.env, 'orders', order.id, { status: 'paid', delivery_status: 'not_booked', dispatched_at: null });
     throw new UserError(`Could not book the courier: ${err.message}`);
   }
+  // Delivery is TrustGap's service: what the courier costs, and TrustGap's margin on top, kept apart.
+  const courierCost = Math.min(deal.courier_cost ?? order.delivery_fee, order.delivery_fee);
+  const margin = order.delivery_fee - courierCost;
+  const ledgerInsert = (kind, amount, to) => stmt(ctx.env, 'INSERT INTO ledger (order_id, kind, amount, counterparty, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    order.id, kind, amount, to, 'pending', iso(ctx.now()));
   await ctx.env.DB.batch([
     stmt(ctx.env, "UPDATE orders SET delivery_status = 'booked', delivery_ref = ?, rider_url = ?, courier = ? WHERE id = ?",
       booking.deliveryRef, booking.riderUrl || null, ctx.logistics.name, order.id),
-    stmt(ctx.env, 'INSERT INTO ledger (order_id, kind, amount, counterparty, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      order.id, 'delivery_cost', order.delivery_fee, ctx.logistics.name, 'pending', iso(ctx.now())),
+    ledgerInsert('delivery_cost', courierCost, ctx.logistics.name),
+    ...(margin > 0 ? [ledgerInsert('delivery_margin', margin, 'trustgap')] : []),
   ]);
   await logEvent(ctx, order.id, 'seller', 'pickup_booked', { delivery_ref: booking.deliveryRef, packing_note: note });
   await ctx.notify.send({
@@ -379,7 +389,7 @@ export async function markDelivered(ctx, order, actor, eventType) {
     ['shipping'],
     { status: 'delivered', delivery_status: 'delivered', delivered_at: iso(now), inspection_ends_at: iso(ends) },
     (h) => [
-      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'delivery_cost'", order.id),
+      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind IN ('delivery_cost', 'delivery_margin')", order.id),
       h.event(actor, eventType),
     ],
   );
@@ -485,7 +495,9 @@ export async function openDispute(ctx, order, { by, category, description, photo
   ]);
   if (!won) throw new UserError('This order changed while you were reporting. Refresh and try again.', 409);
   const seller = await getSeller(ctx, order.seller_id);
-  const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.`;
+  const dFee = (await getDeal(ctx, order.deal_id)).dispute_fee;
+  const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.${
+    dFee ? ` If TrustGap has to decide, whoever is at fault pays a dispute fee of ${formatNaira(dFee)}.` : ''}`;
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: order.buyer_phone, sms });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: seller.phone, sms });
   if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
@@ -560,7 +572,9 @@ export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {
     throw new UserError(`Refund plus payout cannot exceed the ${formatNaira(order.amount)} collected.`);
   }
   const note = requireLength(input.note, 'Decision note', 10, 2000);
-  const decision = { buyerRefund, sellerPayout, sellerCharge, note, by };
+  const fault = str(input.fault || 'none');
+  if (!FAULTS[fault]) throw new UserError('Choose who is at fault.');
+  const decision = { buyerRefund, sellerPayout, sellerCharge, note, by, fault, ...applyDisputeFee((await getDeal(ctx, order.deal_id)).dispute_fee, fault, { buyerRefund, sellerPayout, sellerCharge }) };
 
   let ret = await activeReturn(ctx, order.id);
   const withBuyer = Boolean(order.delivered_at) || dispute.parcel_location === 'buyer';
@@ -568,7 +582,7 @@ export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {
   // sale didn't happen: the seller gets the item, never money as well.
   // Exception: the seller accepted the return but reported it isn't what was delivered (swapped,
   // damaged), so they may be owed money for it.
-  if (sellerPayout > 0 && ((ret && !ret.problem_at) || (buyerRefund > 0 && withBuyer && !ret))) {
+  if (sellerPayout > 0 && ((ret && !ret.problem_at) || (buyerRefund > 0 && withBuyer && !ret))) { // before the fee, as staff entered them
     throw new UserError(ret
       ? 'The item is back with the seller (or on its way), so the seller can’t also be paid. Refund the buyer, with or without the delivery deductions.'
       : 'A refund means the item goes back to the seller, so the seller can’t also be paid. Choose a refund or a payout, not both.');
@@ -577,11 +591,11 @@ export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {
   if (isOpenReturn(ret) && buyerRefund > 0) {
     const res = await run(
       ctx.env,
-      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, decided_by = ? WHERE id = ? AND status = 'open'",
-      note, buyerRefund, sellerPayout, sellerCharge, by, dispute.id,
+      "UPDATE disputes SET status = 'awaiting_return', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, decided_by = ?, fault = ?, dispute_fee = ?, dispute_fee_taken = ? WHERE id = ? AND status = 'open'",
+      note, decision.buyerRefund, decision.sellerPayout, decision.sellerCharge, by, fault, decision.disputeFee, decision.feeTaken, dispute.id,
     );
     if (res.meta.changes !== 1) throw new UserError('This dispute was already decided.');
-    await logEvent(ctx, order.id, by, 'dispute_decided_after_return', { buyerRefund, sellerPayout, sellerCharge, note });
+    await logEvent(ctx, order.id, by, 'dispute_decided_after_return', { buyerRefund: decision.buyerRefund, sellerPayout: decision.sellerPayout, sellerCharge: decision.sellerCharge, fault, disputeFee: decision.disputeFee, note });
     const seller = await getSeller(ctx, order.seller_id);
     const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
     await ctx.notify.send({ orderId: order.id, event: 'dispute_decided', phone: order.buyer_phone, email: order.buyer_email, sms });
@@ -598,18 +612,37 @@ export async function settleAfterReturn(ctx, order) {
   if (!dispute) return false;
   await settleDispute(ctx, order, dispute, {
     buyerRefund: dispute.buyer_refund, sellerPayout: dispute.seller_payout, sellerCharge: dispute.seller_charge, note: dispute.resolution_note, by: dispute.decided_by || 'admin',
+    fault: dispute.fault || 'none', disputeFee: dispute.dispute_fee || 0, feeTaken: dispute.dispute_fee_taken || 0,
   });
   return true;
 }
 
-const decisionSummary = ({ buyerRefund, sellerPayout, sellerCharge, note }) =>
+// Who TrustGap found at fault. The buyer or seller at fault pays the deal's dispute fee; the courier
+// or no one at fault means no fee.
+export const FAULTS = { buyer: 'The buyer', seller: 'The seller', courier: 'The courier', none: 'No one (or both)' };
+
+// Applies the dispute fee to amounts entered before it. The buyer's fee comes out of their refund; the
+// seller's out of their payout, and anything not covered is added to what they owe TrustGap. If the
+// buyer at fault gets nothing back, there is nothing to take it from, so it isn't charged.
+// `disputeFee` is the fee charged; `feeTaken` the part kept from the money held for this order.
+export function applyDisputeFee(fee, fault, { buyerRefund, sellerPayout, sellerCharge }) {
+  if (!fee || !['buyer', 'seller'].includes(fault)) return { disputeFee: 0, feeTaken: 0 };
+  if (fault === 'buyer') {
+    const taken = Math.min(fee, buyerRefund);
+    return { buyerRefund: buyerRefund - taken, disputeFee: taken, feeTaken: taken };
+  }
+  const taken = Math.min(fee, sellerPayout);
+  return { sellerPayout: sellerPayout - taken, sellerCharge: sellerCharge + fee - taken, disputeFee: fee, feeTaken: taken };
+}
+
+const decisionSummary = ({ buyerRefund, sellerPayout, sellerCharge, note, fault, disputeFee: dFee }) =>
   `Refund to buyer: ${formatNaira(buyerRefund)}. Paid to seller: ${formatNaira(sellerPayout)}.${
     sellerCharge > 0 ? ` Charged to seller: ${formatNaira(sellerCharge)}.` : ''
-  } Reason: ${note}`;
+  }${dFee ? ` At fault: the ${fault}, who pays the ${formatNaira(dFee)} dispute fee (included above).` : ''} Reason: ${note}`;
 
-async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note, by = 'admin' }) {
+async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, sellerCharge, note, by = 'admin', fault = 'none', disputeFee: dFee = 0, feeTaken = 0 }) {
   const now = iso(ctx.now());
-  const retained = order.amount - buyerRefund - sellerPayout;
+  const retained = order.amount - buyerRefund - sellerPayout - feeTaken;
   const settles = iso(settlesAt(ctx, order.paid_at));
 
   const won = await transition(
@@ -619,22 +652,25 @@ async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, s
     { status: sellerPayout > 0 ? 'completed' : 'refunded', closed_at: now },
     (h) => [
       h.sql(
-        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ?, decided_by = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
-        note, buyerRefund, sellerPayout, sellerCharge, now, by, dispute.id,
+        "UPDATE disputes SET status = 'resolved', resolution_note = ?, buyer_refund = ?, seller_payout = ?, seller_charge = ?, resolved_at = ?, decided_by = ?, fault = ?, dispute_fee = ?, dispute_fee_taken = ? WHERE id = ? AND status IN ('open', 'awaiting_return')",
+        note, buyerRefund, sellerPayout, sellerCharge, now, by, fault, dFee, feeTaken, dispute.id,
       ),
       h.sql('UPDATE sellers SET amount_owed = amount_owed + ? WHERE id = ?', sellerCharge, order.seller_id),
-      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind = 'delivery_cost'", order.id),
+      h.sql("UPDATE ledger SET status = 'success' WHERE order_id = ? AND kind IN ('delivery_cost', 'delivery_margin')", order.id),
       ...(buyerRefund > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'buyer_refund', buyerRefund, 'buyer', 'pending', settles))] : []),
       ...(sellerPayout > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'seller_payout', sellerPayout, 'seller', 'pending', settles))] : []),
       ...(retained > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'platform_retained', retained, 'trustgap', 'success'))] : []),
-      h.event(by, 'dispute_resolved', { buyerRefund, sellerPayout, sellerCharge, note }),
+      // The dispute fee: kept from the held money now, or added to the seller's debt (status 'owed').
+      ...(feeTaken > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'dispute_fee', feeTaken, fault, 'success'))] : []),
+      ...(dFee > feeTaken ? [h.insert('ledger', ledgerRow(ctx, order.id, 'dispute_fee', dFee - feeTaken, fault, 'owed'))] : []),
+      h.event(by, 'dispute_resolved', { buyerRefund, sellerPayout, sellerCharge, fault, disputeFee: dFee, note }),
     ],
   );
   if (!won) throw new UserError('This order was already decided.');
   await sendPendingTransfers(ctx, order.id);
 
   const seller = await getSeller(ctx, order.seller_id);
-  const summary = decisionSummary({ buyerRefund, sellerPayout, sellerCharge, note });
+  const summary = decisionSummary({ buyerRefund, sellerPayout, sellerCharge, note, fault, disputeFee: dFee });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_resolved', phone: order.buyer_phone, email: order.buyer_email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_resolved', phone: seller.phone, email: seller.email, sms: `TrustGap decision on ${order.ref}. ${summary}` });
 }

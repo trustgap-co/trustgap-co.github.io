@@ -1,4 +1,5 @@
-import { first, all, update } from '../lib/db.js';
+import { first, all, update, insert } from '../lib/db.js';
+import { nairaToKobo, formatNaira } from '../lib/money.js';
 import { UserError, notFound } from '../lib/http.js';
 import { verifyLink } from '../lib/crypto.js';
 import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso, str } from '../core/common.js';
@@ -218,7 +219,7 @@ export function adminRoutes(r) {
     sellers: await Promise.all((await all(
       ctx.env,
       `SELECT s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at, s.payout_verified_at, s.payout_bank_name,
-              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.created_at,
+              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.deal_limit, s.created_at,
               (SELECT COALESCE(SUM(l.amount), 0) FROM ledger l JOIN orders o ON o.id = l.order_id
                 WHERE o.seller_id = s.id AND l.kind = 'seller_payout' AND l.status = 'held') AS held
        FROM sellers s WHERE ${dateRange(url, 's.created_at').where} ORDER BY ${dateRange(url, 's.created_at').order} LIMIT 500`,
@@ -230,6 +231,15 @@ export function adminRoutes(r) {
     const id = Number(params.id);
     if (body.action === 'suspend') return { ok: true, ...(await suspendSeller(ctx, id, { reason: body.reason })) };
     if (body.action === 'unsuspend') return { ok: true, ...(await unsuspendSeller(ctx, id, { reason: body.reason })) };
+    // A higher deal limit for one seller (a high-value deal arranged through support). Empty resets it.
+    if (body.action === 'limit') {
+      if (!(await getSeller(ctx, id))) throw notFound('Seller not found.');
+      const limit = body.limit === '' || body.limit == null ? null : nairaToKobo(body.limit);
+      if (limit !== null && (!limit || limit <= ctx.config.maxDealKobo)) throw new UserError(`Enter an amount above the normal limit of ${formatNaira(ctx.config.maxDealKobo)}, or leave it empty to go back to it.`);
+      await update(ctx.env, 'sellers', id, { deal_limit: limit });
+      await insert(ctx.env, 'seller_actions', { seller_id: id, action: 'limit', reason: limit ? `Deals up to ${formatNaira(limit)}${body.reason ? ` · ${String(body.reason).slice(0, 300)}` : ''}` : 'Back to the normal limit', actor: 'admin', created_at: iso(ctx.now()) });
+      return { ok: true };
+    }
     const fields = {
       verify: { identity_verified_at: iso(ctx.now()), id_type: 'manual' },
       settled: { amount_owed: 0 },

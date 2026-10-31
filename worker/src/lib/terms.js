@@ -5,7 +5,7 @@ export const TERMS_VERSION = '2026-10-pilot-1';
 
 // The version of the Terms of Service people tick to accept. Change it whenever the legal pages change,
 // so every acceptance records which wording was agreed to.
-export const TOS_VERSION = '2026-10-29';
+export const TOS_VERSION = '2026-10-31';
 export const TOS_DOCUMENTS = {
   seller: ['legal/terms.html', 'legal/seller-terms.html', 'legal/privacy.html'],
   buyer: ['legal/terms.html', 'legal/disputes.html', 'legal/privacy.html'],
@@ -21,6 +21,7 @@ export const RULES = (deal) => [
   'Wrong, fake, damaged or not-as-described item: the item goes back to the seller and you get a full refund.',
   'If you refuse a correct item, the cost of delivery and return may be deducted from your refund. Every deduction is shown to you in writing.',
   'Disputes are decided by TrustGap staff using evidence from both sides and the courier. You can appeal once by replying to the decision.',
+  ...(deal.dispute_fee ? [`If TrustGap decides a dispute, whoever is found at fault (buyer or seller) pays a dispute fee of ${formatNaira(deal.dispute_fee)}. No fee is charged when the courier is at fault or no one is.`] : []),
 ];
 
 // The exact deal and rules the buyer sees and accepts. Stored with the order, hashed, never changed.
@@ -40,6 +41,7 @@ export async function snapshotTerms(deal, seller, photoHashes = [], promo = null
       item_price: deal.item_price,
       delivery_fee: deal.delivery_fee,
       delivery_payer: deal.delivery_payer,
+      dispute_fee: deal.dispute_fee || 0,
       platform_fee: deal.platform_fee,
       processing_fee: deal.processing_fee,
       fee_payer: deal.fee_payer,
@@ -58,7 +60,7 @@ export async function snapshotTerms(deal, seller, photoHashes = [], promo = null
     inspection_hours: deal.inspection_hours,
     rules: RULES(deal),
     // The change-of-mind notice the buyer accepted in a pop-up before continuing (exact wording).
-    buyer_acknowledgement: acknowledgedAt && { text: fillConsent('buyer', deal.delivery_fee), at: acknowledgedAt },
+    buyer_acknowledgement: acknowledgedAt && { text: fillConsent('buyer', deal.delivery_fee, deal.dispute_fee), at: acknowledgedAt },
     // The buyer ticked "I agree to the TrustGap Terms of Service" in step 1.
     terms_of_service: tosAcceptedAt && { version: TOS_VERSION, documents: TOS_DOCUMENTS.buyer, at: tosAcceptedAt },
   };
@@ -71,15 +73,19 @@ export async function snapshotTerms(deal, seller, photoHashes = [], promo = null
 export const CONSENTS = {
   seller: {
     title: 'Is the item in good condition, exactly as agreed with the buyer?',
-    body: 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}).',
+    body: 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}), plus the dispute fee ({dispute}).',
     confirm: 'The item is in good condition as agreed',
   },
   buyer: {
     title: 'Before you pay: changing your mind has a cost',
-    body: 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}). If the item is wrong, damaged, fake or not as described, you get a full refund.',
+    body: 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If the item is wrong, damaged, fake or not as described, you get a full refund.',
     confirm: 'I understand. Continue',
   },
 };
 
-export const fillConsent = (who, deliveryFeeKobo) =>
-  `${CONSENTS[who].title} ${CONSENTS[who].body.replace('{fee}', formatNaira(2 * deliveryFeeKobo))}`;
+// {fee} is twice the delivery fee; {dispute} the deal's dispute fee (the clause is dropped when there is none).
+export const fillConsentBody = (body, deliveryFeeKobo, disputeFeeKobo = 0) =>
+  (disputeFeeKobo ? body.replace('{dispute}', formatNaira(disputeFeeKobo)) : body.replace(/, plus the dispute fee \(\{dispute\}\)( if TrustGap has to decide it)?/, ''))
+    .replace('{fee}', formatNaira(2 * deliveryFeeKobo));
+export const fillConsent = (who, deliveryFeeKobo, disputeFeeKobo = 0) =>
+  `${CONSENTS[who].title} ${fillConsentBody(CONSENTS[who].body, deliveryFeeKobo, disputeFeeKobo)}`;

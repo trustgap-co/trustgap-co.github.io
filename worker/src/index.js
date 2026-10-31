@@ -44,7 +44,7 @@ export default {
       res = out instanceof Response ? out : json(out ?? { ok: true });
     } catch (err) {
       if (err instanceof UserError) {
-        res = json({ error: err.message }, err.status);
+        res = json({ error: err.message, ...(err.code ? { code: err.code } : {}) }, err.status);
       } else {
         // A short reference to find the full error in Cloudflare → the Worker → Logs. In test mode the
         // cause is also shown on the page, so setup problems are easy to spot.

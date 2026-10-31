@@ -23,15 +23,22 @@ IDENTITY_PROVIDER = "mock"        # "monnify" once MONNIFY_API_KEY / MONNIFY_SEC
 LOGISTICS_PROVIDER = "manual"      # "fez" once FEZ_USER_ID / FEZ_PASSWORD are set
 FEZ_API_BASE = "https://apisandbox.fezdelivery.co/v1"
 REQUIRE_SELLER_ID = "true"
-FEE_PERCENT = "1.5"               # TrustGap fee
+FEE_PERCENT = "1.5"               # TrustGap fee on the price up to FEE_TIER_NAIRA
+FEE_TIER_NAIRA = "200000"
+FEE_PERCENT_ABOVE = "1"           # on the part of the price above FEE_TIER_NAIRA
 FEE_MIN_NAIRA = "100"
 MIN_PRICE_DELIVERY_MULTIPLE = "2"  # item price must be at least this × delivery fee (0 = off)
-FEE_CAP_NAIRA = "3000"            # TrustGap fee never more than this per deal (0 = no cap)
+FEE_CAP_NAIRA = "15000"           # TrustGap fee never more than this per deal (0 = no cap)
 PROCESSING_CAP_NAIRA = "2000"     # Flutterwave's cap on its percentage per payment (0 = no cap)
 PROCESSING_PERCENT = "2"          # Flutterwave on local NGN collections
 PAYOUT_FEE_NAIRA = "57.79"        # Flutterwave transfer fee ₦53.75 + 7.5% VAT
 SETTLEMENT_HOURS = "24"           # Flutterwave settles T+1; payouts wait for it
-MAX_DEAL_NAIRA = "300000"
+MAX_DEAL_NAIRA = "1000000"        # above this, sellers contact support (admin can raise it per seller)
+DELIVERY_MARGIN_PERCENT = "15"    # TrustGap delivery = courier cost + this (Fez only)
+DELIVERY_MARGIN_CAP_NAIRA = "2000"
+DISPUTE_FEE_NAIRA = "3000"        # paid by whoever is at fault; 0 = off
+DISPUTE_FEE_PERCENT = "10"        # of the item price, between the minimum and DISPUTE_FEE_NAIRA
+DISPUTE_FEE_MIN_NAIRA = "1000"
 INSPECTION_HOURS = "24"
 PROMO_CODE = "EARLYGAP"           # early-access code: no TrustGap fee on one deal ("" switches it off)
 PROMO_ENDS = "2027-01-31"         # last day the code works (Lagos time)

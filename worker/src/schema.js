@@ -67,5 +67,9 @@ export const MIGRATIONS = [
   {
     "name": "0017_seller_suspension.sql",
     "sql": "-- Suspension: why and by whom, and a history of every suspend/unsuspend. While a seller is suspended\n-- their payouts wait in the ledger with status 'held' and are sent when they're unsuspended.\nALTER TABLE sellers ADD COLUMN suspend_reason TEXT;\nALTER TABLE sellers ADD COLUMN suspended_by TEXT;\nCREATE TABLE IF NOT EXISTS seller_actions (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  action TEXT NOT NULL,\n  reason TEXT,\n  actor TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS seller_actions_seller ON seller_actions(seller_id);\n"
+  },
+  {
+    "name": "0018_fees_and_limits.sql",
+    "sql": "-- Revenue: delivery as TrustGap's own service (courier cost kept apart from the price charged),\n-- a dispute fee paid by whoever is at fault, and a per-seller deal limit the admin can raise.\nALTER TABLE deals ADD COLUMN courier_cost INTEGER;\nALTER TABLE deals ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\nALTER TABLE sellers ADD COLUMN deal_limit INTEGER;\nALTER TABLE disputes ADD COLUMN fault TEXT;\nALTER TABLE disputes ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\n-- The part of the fee kept from the held money (the rest, if any, was added to the seller's debt).\nALTER TABLE disputes ADD COLUMN dispute_fee_taken INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];
