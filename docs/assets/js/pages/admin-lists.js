@@ -20,13 +20,14 @@ const pages = {
     return html`<h1>Sellers</h1><p class="muted small">Grouped by the day they joined.</p>${dateFilters()}<div class="list">${byDay(sellers, (s) => html`<div class="row">
       <div><strong>${s.business_name}</strong> (${s.full_name})<br><small class="muted">${s.phone} · ${s.email} ·
         payout ${s.payout_verified_at ? '✓' : '✗'} · ID ${s.identity_verified_at ? `✓ ${s.id_type}${s.id_last4 ? ' ••' + s.id_last4 : ''}` : '✗'}
-        ${s.amount_owed ? ` · owes ${money(s.amount_owed)}` : ''} · joined ${date(s.created_at)}</small>
+        ${s.amount_owed ? ` · owes ${money(s.amount_owed)}` : ''}${s.deal_limit ? ` · deals up to ${money(s.deal_limit)}` : ''} · joined ${date(s.created_at)}</small>
         ${s.suspended_at ? html`<br><span class="badge badge-warn">Suspended</span> <small>${date(s.suspended_at)} by ${s.suspended_by || 'admin'}: ${s.suspend_reason || 'no reason recorded'}${s.held ? html` · <strong>${money(s.held)} in payouts held</strong>` : ''}</small>` : ''}
         ${s.history?.length ? html`<details class="small"><summary>History (${s.history.length})</summary><ul>${s.history.map((h) => html`<li>${date(h.created_at)}: ${h.action} by ${h.actor}${h.reason ? ` · ${h.reason}` : ''}</li>`)}</ul></details>` : ''}</div>
       <div class="right actions">
         ${s.identity_verified_at ? '' : btn(s, 'verify', 'Mark ID verified')}
         ${s.suspended_at ? btn(s, 'unsuspend', 'Unsuspend', 'btn-secondary') : btn(s, 'suspend', 'Suspend', 'btn-danger')}
         ${s.amount_owed ? btn(s, 'settled', 'Debt paid', 'btn-secondary') : ''}
+        ${btn(s, 'limit', s.deal_limit ? 'Change deal limit' : 'Raise deal limit', 'btn-secondary')}
       </div></div>`)}</div>`;
   },
   async messages() {
@@ -52,7 +53,8 @@ const pages = {
         <div class="right">${money(l.amount)}<br><span class="badge badge-${l.status === 'success' ? 'ok' : ['failed', 'held', 'needs_attention'].includes(l.status) ? 'warn' : 'muted'}">${l.status}</span></div></div>`,
       { summary: (day) => {
         const sum = (kinds) => day.filter((l) => kinds.includes(l.kind)).reduce((n, l) => n + l.amount, 0);
-        return `in ${money(sum(['collected']))} · out ${money(sum(['seller_payout', 'buyer_refund']))} · TrustGap fees ${money(sum(['platform_fee']))}`;
+        const earned = day.filter((l) => ['platform_fee', 'delivery_margin', 'dispute_fee'].includes(l.kind) && l.status === 'success').reduce((n, l) => n + l.amount, 0);
+        return `in ${money(sum(['collected']))} · out ${money(sum(['seller_payout', 'buyer_refund']))} · TrustGap earned ${money(earned)} (fees, delivery margin, dispute fees)`;
       } })}</div>`;
   },
 };
@@ -73,13 +75,19 @@ pages[list]()
           reason = prompt('Why are you suspending this seller? This is sent to them by SMS.\n\nWhile suspended: no new links, their open links stop taking payments, and payouts are held until you unsuspend.');
           if (!reason) return;
         }
+        let limit;
+        if (action === 'limit') {
+          limit = prompt('Highest item price this seller can put on a link, in naira (e.g. 2500000). Leave empty to go back to the normal limit.\n\nRaise it only for a high-value deal you have checked with the seller.', '');
+          if (limit === null) return;
+          reason = limit ? prompt('Note for the history (optional), e.g. what the deal is:', '') || '' : '';
+        }
         if (action === 'unsuspend') {
           reason = prompt('Unsuspend this seller? Held payouts will be sent. Add a note for the history (optional):', '');
           if (reason === null) return;
         }
         try {
-          const r = await api(`/api/admin/sellers/${b.dataset.seller}`, { method: 'POST', body: { action, reason }, as: 'admin' });
-          flash.set(action === 'unsuspend' ? `Seller unsuspended${r.released ? `; ${r.released} held payout(s) released` : ''}.` : action === 'suspend' ? 'Seller suspended and told by SMS.' : 'Seller updated.');
+          const r = await api(`/api/admin/sellers/${b.dataset.seller}`, { method: 'POST', body: { action, reason, limit: limit?.replace(/[,\s₦]/g, '') }, as: 'admin' });
+          flash.set(action === 'unsuspend' ? `Seller unsuspended${r.released ? `; ${r.released} held payout(s) released` : ''}.` : action === 'suspend' ? 'Seller suspended and told by SMS.' : action === 'limit' ? 'Deal limit updated.' : 'Seller updated.');
         } catch (err) {
           alert(err.message);
         }

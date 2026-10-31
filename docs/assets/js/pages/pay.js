@@ -1,7 +1,7 @@
 // The link the seller sends. Step 1: confirm the whole deal, including the delivery address the
 // seller entered (read-only) and the exact total. Step 2: contact details and refund account, pay.
 import { SITE } from '../site-info.js';
-import { api, html, show, onSubmit, shell, money, date, feeLabel, link, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, feeLabel, fillConsentBody, link, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
 
 const config = await shell('buyer');
 const token = params.get('d') || '';
@@ -40,13 +40,13 @@ function breakdown(d, promo) {
     : p.platform_fee ? money(p.platform_fee) : paidBySeller;
   return html`<table class="breakdown">
     <tr><td>Item price${d.quantity > 1 ? ` (×${d.quantity})` : ''}</td><td>${money(p.item)}</td></tr>
-    <tr><td>Delivery ${d.ships_from} → ${d.delivery.state}${half(d.delivery_payer)}</td><td>${p.delivery ? money(p.delivery) : paidBySeller}</td></tr>
+    <tr><td>Delivery ${d.ships_from} → ${d.delivery.state}${half(d.delivery_payer)} <small class="muted">(booked, tracked and handled by TrustGap)</small></td><td>${p.delivery ? money(p.delivery) : paidBySeller}</td></tr>
     <tr><td>TrustGap fee (${feeLabel(config.fee, p.platform_fee_full)})${half(d.fee_payer)}</td><td>${feeCell}</td></tr>
     <tr><td>Payment processing${half(d.fee_payer)} <small class="muted">(Flutterwave’s charges, passed on at cost)</small></td>
       <td>${p.processing_fee ? money(p.processing_fee) : paidBySeller}</td></tr>
     ${promo ? html`<tr class="discount"><td>Early-access code ${promo.code} <small class="muted">(TrustGap fee removed)</small></td><td>−${money(promo.discount)}</td></tr>` : ''}
     <tr class="total"><td>You pay</td><td>${money(promo ? promo.total : p.total)}</td></tr>
-  </table>`;
+  </table>${d.dispute_fee ? html`<p class="small muted">Not part of what you pay now: if TrustGap has to decide a dispute on this order, whoever is found at fault (buyer or seller) pays a ${money(d.dispute_fee)} dispute fee.</p>` : ''}`;
 }
 
 const shieldIcon = raw('<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>');
@@ -118,8 +118,8 @@ function review(d, rules, promo = null) {
     const c = config.consents?.buyer;
     const acknowledged = await confirmModal({
       title: c?.title || 'Before you pay: changing your mind has a cost',
-      body: (c?.body || 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}). If the item is wrong, damaged, fake or not as described, you get a full refund.')
-        .replace('{fee}', money(2 * d.price.delivery_full)),
+      body: fillConsentBody(c?.body || 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If the item is wrong, damaged, fake or not as described, you get a full refund.',
+        d.price.delivery_full, d.dispute_fee),
       confirm: c?.confirm || 'I understand. Continue',
     });
     track('buyer_penalty_notice', { acknowledged });

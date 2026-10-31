@@ -1,5 +1,5 @@
 import { shrinkPhoto, fingerprint } from '../photos.js';
-import { api, html, show, onSubmit, shell, money, feeLabel, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, feeLabel, feeSummary, fillConsentBody, fillSiteInfo, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
 
 const config = await shell('seller');
 const MAX_PHOTOS = 4;
@@ -70,10 +70,10 @@ try {
           <select name="delivery_days">${[1, 2, 3, 5, 7].map((n) => html`<option value="${n}" ${n === Number(v.delivery_days) ? 'selected' : ''}>${n} day${n > 1 ? 's' : ''}</option>`)}</select></label>
       </fieldset>
       <fieldset><legend>Who pays what (as agreed)</legend>
-        <p class="label">Delivery fee</p>
+        <p class="label">Delivery fee <small>TrustGap books, tracks and handles the courier for you</small></p>
         <div class="choices">${radio('delivery_payer', 'buyer', 'Buyer pays')}${radio('delivery_payer', 'seller', 'I pay')}${radio('delivery_payer', 'split', 'Split 50/50')}</div>
-        <p class="label">TrustGap fee (${fee.percent}%${fee.maxKobo ? `, max ${money(fee.maxKobo)}` : ''}) + payment processing</p>
-        <p class="muted small">Payment processing passes Flutterwave’s charges on at cost (about ${config.processing.percent}%${config.processing.capKobo ? `, max ${money(config.processing.capKobo)},` : ''} plus a small payout fee), so together it comes to roughly ${(fee.percent + config.processing.percent + 0.4).toFixed(1)}% of the price. Both lines are shown to the buyer separately.</p>
+        <p class="label">TrustGap fee (${feeSummary(fee)}) + payment processing</p>
+        <p class="muted small">Payment processing passes Flutterwave’s charges on at cost (about ${config.processing.percent}%${config.processing.capKobo ? `, max ${money(config.processing.capKobo)},` : ''} plus a small payout fee). Both lines are shown to the buyer separately.</p>
         <div class="choices">${radio('fee_payer', 'buyer', 'Buyer pays')}${radio('fee_payer', 'seller', 'I pay')}${radio('fee_payer', 'split', 'Split 50/50')}</div>
         <label>Early-access code <small>optional. Removes the TrustGap fee from this link (once per seller)</small>
           <input name="promo_code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. EARLYGAP" value="${v.promo_code || ''}" class="code-input"></label>
@@ -129,6 +129,7 @@ try {
   let started = false;
   let promoTracked = false;
   let lastDeliveryFee = null; // from the live preview, for the pop-up's penalty amount
+  let lastDisputeFee = 0;
   let last = '';
   async function preview() {
     const d = formData(form);
@@ -138,8 +139,9 @@ try {
     last = key;
     show('#preview', html`<p class="muted small">Calculating…</p>`);
     try {
-      const { price: p, delivery_state, promo } = await api('/api/seller/quote', { method: 'POST', body: d, as: 'seller' });
+      const { price: p, delivery_state, promo, dispute_fee: disputeFee } = await api('/api/seller/quote', { method: 'POST', body: d, as: 'seller' });
       lastDeliveryFee = p.deliveryFee;
+      lastDisputeFee = disputeFee || 0;
       if (key !== last) return;
       show('#preview', html`<table class="breakdown">
         <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
@@ -149,10 +151,16 @@ try {
         <tr><td>Payment processing (${payerLabel[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
         <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
         <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
-      </table>${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`);
+      </table>${disputeFee ? html`<p class="small muted">Dispute fee: ${money(disputeFee)}, paid only by whoever TrustGap finds at fault if a dispute has to be decided. Settle problems with the buyer first and nobody pays it.</p>` : ''}${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`);
       if (promo && !promoTracked) { promoTracked = true; track('promo_applied', { side: 'seller', discount: promo.saving / 100 }); }
     } catch (err) {
-      if (key === last) show('#preview', html`<div class="error">${err.message}</div>`);
+      if (key === last) {
+        show('#preview', err.code === 'needs_support'
+          ? html`<div class="callout info"><strong>High-value deal: let’s set it up together.</strong><p class="small">${err.message}</p>
+              <p class="small">TrustGap support: <span data-site="supportPhone"></span> · <span data-site="supportEmail"></span></p></div>`
+          : html`<div class="error">${err.message}</div>`);
+        fillSiteInfo();
+      }
       last = '';
     }
   }
@@ -169,10 +177,9 @@ try {
     if (photos.length) data.photos = photos;
     // The seller confirms the item's condition, with the cost of a false description in front of them.
     const c = config.consents?.seller;
-    const fee = lastDeliveryFee != null ? money(2 * lastDeliveryFee) : 'shown in the price box';
     const confirmed = await confirmModal({
       title: c?.title || 'Is the item in good condition, exactly as agreed with the buyer?',
-      body: (c?.body || 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}).').replace('{fee}', fee),
+      body: fillConsentBody(c?.body || 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}), plus the dispute fee ({dispute}).', lastDeliveryFee, lastDisputeFee),
       confirm: c?.confirm || 'The item is in good condition as agreed',
     });
     track('seller_condition_confirm', { confirmed });

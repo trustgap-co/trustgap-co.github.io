@@ -1,10 +1,10 @@
 // Public pages with a fee calculator (fees.html, sellers.html). The maths is a copy of
 // worker/src/lib/money.js `quote()` so the estimate matches what a real deal link charges.
 // Fee settings come from the live API; the defaults below are used if it can't be reached.
-import { shell, html, show, money, track, naira, $ } from '../core.js';
+import { shell, html, show, money, track, naira, platformFee, feeLabel, $ } from '../core.js';
 
 const config = await shell('public');
-const fee = config.fee || { percent: 1.5, minKobo: 10000, maxKobo: 300000 };
+const fee = config.fee || { percent: 1.5, tierKobo: 20000000, percentAbove: 1, minKobo: 10000, maxKobo: 1500000 };
 const processing = config.processing || { percent: 2, payoutFeeKobo: 5779, capKobo: 200000 };
 const minMultiple = config.min_price_delivery_multiple ?? 2;
 
@@ -14,8 +14,7 @@ const buyerPart = (payer, amount) => (payer === 'buyer' ? amount : payer === 'sp
 function quote({ itemPrice, deliveryFee, deliveryPayer, feePayer }) {
   const buyerShare = feePayer === 'buyer' ? 1 : feePayer === 'split' ? 0.5 : 0;
   const buyerDelivery = buyerPart(deliveryPayer, deliveryFee);
-  const raw = Math.max(fee.minKobo, Math.round((itemPrice * fee.percent) / 100));
-  const pf = fee.maxKobo ? Math.min(fee.maxKobo, raw) : raw;
+  const pf = platformFee(itemPrice, fee);
   const r = processing.percent / 100;
   const allowance = buyerShare === 0.5 ? 200 : 0;
   const grossed = (r * (itemPrice + buyerDelivery + buyerShare * pf + allowance) + processing.payoutFeeKobo) / (1 - r * buyerShare);
@@ -53,7 +52,7 @@ function render() {
     <p class="eyebrow" style="margin:0 0 8px">Estimate</p>
     <div class="row2"><span>Item price</span><span>${money(q.itemPrice)}</span></div>
     <div class="row2"><span>Delivery <small class="muted">(${who(f.deliveryPayer)})</small></span><span>${money(q.deliveryFee)}</span></div>
-    <div class="row2"><span>TrustGap fee ${fee.percent}%${fee.maxKobo && q.pf >= fee.maxKobo ? ` (capped at ${money(fee.maxKobo)})` : ''} <small class="muted">(${who(f.feePayer)})</small></span><span>${money(q.pf)}</span></div>
+    <div class="row2"><span>TrustGap fee ${feeLabel(fee, q.pf)} <small class="muted">(${who(f.feePayer)})</small></span><span>${money(q.pf)}</span></div>
     <div class="row2"><span>Payment processing <small class="muted">(${who(f.feePayer)})</small></span><span>${money(q.pr)}</span></div>
     <div class="row2 tot"><span>Buyer pays</span><span>${money(q.buyerTotal)}</span></div>
     <div class="row2 tot"><span>Seller receives</span><span>${money(q.sellerPayout)}</span></div>

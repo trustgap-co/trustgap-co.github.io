@@ -85,7 +85,7 @@ export const auth = {
 
 // ---------------------------------------------------------------- API
 export class ApiError extends Error {
-  constructor(message, status) { super(message); this.status = status; }
+  constructor(message, status, code) { super(message); this.status = status; this.code = code; }
 }
 
 // The last data each page loaded, per address, so live updates can tell when something changed.
@@ -111,7 +111,7 @@ export async function api(path, { method = 'GET', body, as, peek = false } = {})
     if (as === 'team') { session.del('tg_team'); location.href = link('team/index.html'); }
     throw new ApiError('Please log in.', 401);
   }
-  if (!res.ok) throw new ApiError((data.error || 'Something went wrong.') + (data.detail ? ` Details: ${data.detail}` : ''), res.status);
+  if (!res.ok) throw new ApiError((data.error || 'Something went wrong.') + (data.detail ? ` Details: ${data.detail}` : ''), res.status, data.code);
   if (method === 'GET' && !peek) seen.set(path, comparable(data));
   return data;
 }
@@ -183,11 +183,37 @@ export const getConfig = () => (configPromise ||= (() => {
 })());
 export const getBanks = () => api('/api/banks').then((d) => d.banks);
 
+// ---------------------------------------------------------------- dispute decisions
+// "Who is at fault" on the decision forms (admin and team). Amounts are entered before the dispute fee;
+// the Worker applies it to the side at fault.
+export const faultField = (disputeFee) => html`<label>Who is at fault? <small>${disputeFee
+    ? html`The dispute fee for this deal is <strong>${money(disputeFee)}</strong>. Buyer at fault: it comes out of their refund (not charged if they get nothing back). Seller at fault: out of their payout, or added to what they owe. Enter the amounts below before the fee.`
+    : 'No dispute fee on this deal (made before the fee started).'}</small>
+  <select name="fault" required><option value="">Choose</option><option value="buyer">The buyer</option><option value="seller">The seller</option>
+    <option value="courier">The courier (lost or damaged it): no fee</option><option value="none">No one, or both: no fee</option></select></label>`;
+export const FAULT_LABELS = { buyer: 'the buyer', seller: 'the seller', courier: 'the courier', none: 'no one' };
+
 // ---------------------------------------------------------------- formatting
 export const money = (kobo) =>
   '₦' + (kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: kobo % 100 ? 2 : 0, maximumFractionDigits: 2 });
-// The TrustGap fee's label: "1.5%", or "1.5%, capped at ₦3,000" when the deal's whole fee is at the cap.
-export const feeLabel = (fee, fullKobo) => `${fee.percent}%${fee.maxKobo && fullKobo >= fee.maxKobo ? `, capped at ${money(fee.maxKobo)}` : ''}`;
+// The TrustGap fee, the same calculation as the Worker (lib/money.js): `percent` up to `tierKobo`,
+// `percentAbove` on the rest, between the minimum and the cap.
+export function platformFee(itemPrice, fee) {
+  const tier = fee.tierKobo || Infinity;
+  const above = Math.max(0, itemPrice - tier);
+  const pf = Math.max(fee.minKobo, Math.round(((itemPrice - above) * fee.percent + above * (fee.percentAbove ?? fee.percent)) / 100));
+  return fee.maxKobo ? Math.min(fee.maxKobo, pf) : pf;
+}
+const tiered = (fee) => fee.tierKobo && fee.percentAbove != null && fee.percentAbove !== fee.percent;
+// How the fee works in one line: "1.5% up to ₦200,000, then 1% (max ₦15,000)".
+export const feeSummary = (fee) => `${fee.percent}%${tiered(fee) ? ` up to ${money(fee.tierKobo)}, then ${fee.percentAbove}%` : ''}${fee.maxKobo ? ` (max ${money(fee.maxKobo)})` : ''}`;
+// The TrustGap fee's label on one deal: "1.5%", "1.5% / 1% above ₦200,000", plus ", capped at …" at the cap.
+export const feeLabel = (fee, fullKobo) => `${fee.percent}%${tiered(fee) && fullKobo > platformFee(fee.tierKobo, fee) ? ` / ${fee.percentAbove}% above ${money(fee.tierKobo)}` : ''}${fee.maxKobo && fullKobo >= fee.maxKobo ? `, capped at ${money(fee.maxKobo)}` : ''}`;
+// The pop-up wording from /api/config: {fee} is twice the delivery fee, {dispute} the dispute fee (that
+// clause is dropped when the deal has none). Same as the Worker's fillConsentBody.
+export const fillConsentBody = (body, deliveryKobo, disputeKobo) =>
+  (disputeKobo ? body.replace('{dispute}', money(disputeKobo)) : body.replace(/, plus the dispute fee \(\{dispute\}\)( if TrustGap has to decide it)?/, ''))
+    .replace('{fee}', deliveryKobo != null ? money(2 * deliveryKobo) : 'shown in the price box');
 export const date = (d) =>
   d ? new Date(d).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 
@@ -422,7 +448,7 @@ const PUBLIC_NAV = [
 const isPlaceholder = (v) => /^\[.*\]$/.test(String(v));
 
 // Fills <span data-site="supportEmail"></span> etc. from site-info.js; unfilled values are highlighted.
-function fillSiteInfo() {
+export function fillSiteInfo() {
   for (const el of $$('[data-site]')) {
     const value = SITE[el.dataset.site];
     if (value === undefined) continue;

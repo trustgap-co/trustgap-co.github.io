@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos, caseAccounts , keepFresh } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos, caseAccounts, keepFresh, faultField, FAULT_LABELS } from '../core.js';
 
 await shell('admin');
 const id = encodeURIComponent(params.get('id'));
@@ -9,11 +9,11 @@ async function render() {
   const open = disputes.find((x) => x.status === 'open');
   const presets = open
     ? [
-        ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: o.amount, seller_payout: 0, seller_charge: o.delivery_fee * 2 }],
-        ['Buyer refused a correct item: refund minus both delivery trips', { buyer_refund: Math.max(0, o.amount - o.delivery_fee * 2), seller_payout: 0, seller_charge: 0 }],
+        ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: o.amount, seller_payout: 0, seller_charge: o.delivery_fee * 2, fault: 'seller' }],
+        ['Buyer refused a correct item: refund minus both delivery trips', { buyer_refund: Math.max(0, o.amount - o.delivery_fee * 2), seller_payout: 0, seller_charge: 0, fault: 'buyer' }],
         // Once the item is back with the seller (or on its way), the seller can't also be paid.
         // (unless the seller reported the returned item isn't what was delivered: then they may be owed money).
-        ...(ret && !ret.problem ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: o.seller_payout, seller_charge: 0 }]]),
+        ...(ret && !ret.problem ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: o.seller_payout, seller_charge: 0, fault: 'buyer' }]]),
       ]
     : [];
 
@@ -58,7 +58,7 @@ async function render() {
     ${x.status === 'superseded'
       ? html`<p class="small muted">Set aside: the seller reported the returned item isn’t what was delivered (see the newer dispute below).${x.resolution_note ? html` Earlier decision: ${x.resolution_note} (refund ${money(x.buyer_refund)}).` : ''}</p>`
       : x.status === 'resolved' || x.status === 'awaiting_return'
-      ? html`<p><strong>Decision${x.decided_by?.startsWith('team:') ? ` by ${x.decided_by.slice(5)} (team)` : ''}${x.status === 'awaiting_return' ? ' (money waits for the return)' : ''}:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}</p>`
+      ? html`<p><strong>Decision${x.decided_by?.startsWith('team:') ? ` by ${x.decided_by.slice(5)} (team)` : ''}${x.status === 'awaiting_return' ? ' (money waits for the return)' : ''}:</strong> ${x.resolution_note}<br>Buyer refund ${money(x.buyer_refund)} · seller payout ${money(x.seller_payout)} · seller charge ${money(x.seller_charge)}${x.fault ? ` · at fault: ${FAULT_LABELS[x.fault] || x.fault}` : ''}${x.dispute_fee ? ` · dispute fee ${money(x.dispute_fee)} (included)` : ''}</p>`
       : html`<form class="form" id="resolve" data-id="${x.id}">
           <p class="small">Collected ${money(o.amount)}. Whatever isn’t refunded or paid out is kept to cover delivery and fees.
             Check evidence from both sides and the rider before deciding. Presets only fill in the form.</p>
@@ -68,6 +68,7 @@ async function render() {
             <label>Pay seller (₦) <input name="seller_payout" inputmode="decimal" value="0"></label>
             <label>Charge seller (₦) <small>added to what they owe</small><input name="seller_charge" inputmode="decimal" value="0"></label>
           </div>
+          ${faultField(d.dispute_fee)}
           <label>Decision note <small>sent to both parties; explain the evidence and the amounts</small><textarea name="note" required rows="3"></textarea></label>
           ${ret?.open
             ? html`<p class="callout info small">The item is on its way back to the seller (${ret.label}). Any refund waits until the seller has it, and the seller can’t also be paid.</p>`
@@ -120,10 +121,11 @@ async function render() {
       if (!b) return;
       const v = presets[Number(b.dataset.preset)][1];
       for (const k of ['buyer_refund', 'seller_payout', 'seller_charge']) form.elements[k].value = naira(v[k]);
+      form.elements.fault.value = v.fault;
     });
     onSubmit(form, async (data) => {
       const waits = (o.delivered_at || ret?.open) && Number(data.buyer_refund) > 0;
-      if (!confirm(`Refund buyer ₦${data.buyer_refund}, pay seller ₦${data.seller_payout}, charge seller ₦${data.seller_charge}? ${waits ? 'Money moves once the seller has the item back.' : 'Money moves immediately.'}`)) return;
+      if (!confirm(`Refund buyer ₦${data.buyer_refund}, pay seller ₦${data.seller_payout}, charge seller ₦${data.seller_charge}, at fault: ${FAULT_LABELS[data.fault]}${d.dispute_fee && ['buyer', 'seller'].includes(data.fault) ? ` (the ${money(d.dispute_fee)} dispute fee is then applied)` : ''}? ${waits ? 'Money moves once the seller has the item back.' : 'Money moves immediately.'}`)) return;
       const r = await api(`/api/admin/disputes/${form.dataset.id}/resolve`, { method: 'POST', body: data, as: 'admin' });
       flash.set(r.waiting_for_return ? 'Decision recorded. The refund is sent when the seller has the item back.' : 'Decision recorded and transfers sent.');
       location.reload();

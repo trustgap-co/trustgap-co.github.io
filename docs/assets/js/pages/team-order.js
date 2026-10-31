@@ -1,5 +1,5 @@
 // Team: one order, read only (only orders one of your tasks is about). No bank details, no PINs.
-import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, evidencePhotos, caseAccounts, fail, keepFresh, $ } from '../core.js';
+import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, evidencePhotos, caseAccounts, fail, keepFresh, faultField, $ } from '../core.js';
 
 const naira = (kobo) => String(kobo / 100);
 
@@ -36,9 +36,9 @@ async function render() {
 
 function presets(d) {
   return [
-    ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: d.amount, seller_payout: 0, seller_charge: d.delivery_fee * 2 }],
-    ['Buyer refused a correct item / changed mind: refund minus both delivery trips', { buyer_refund: Math.max(0, d.amount - d.delivery_fee * 2), seller_payout: 0, seller_charge: 0 }],
-    ...(d.item_with_seller ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: d.seller_payout, seller_charge: 0 }]]),
+    ['Seller at fault: full refund, charge seller both delivery trips', { buyer_refund: d.amount, seller_payout: 0, seller_charge: d.delivery_fee * 2, fault: 'seller' }],
+    ['Buyer refused a correct item / changed mind: refund minus both delivery trips', { buyer_refund: Math.max(0, d.amount - d.delivery_fee * 2), seller_payout: 0, seller_charge: 0, fault: 'buyer' }],
+    ...(d.item_with_seller ? [] : [['Claim not supported: pay seller as normal', { buyer_refund: 0, seller_payout: d.seller_payout, seller_charge: 0, fault: 'buyer' }]]),
   ];
 }
 
@@ -60,6 +60,7 @@ const decideForm = (d) => html`<section class="card card-warn" id="decide">
       <label>Pay seller (₦) <input name="seller_payout" inputmode="decimal" value="0"></label>
       <label>Charge seller (₦) <small>added to what they owe</small><input name="seller_charge" inputmode="decimal" value="0"></label>
     </div>
+    ${faultField(d.dispute_fee)}
     <label>Decision note <small>sent to both sides: what the evidence showed and why these amounts</small><textarea name="note" required rows="3"></textarea></label>
     <button class="btn">Decide</button>
   </form>
@@ -72,10 +73,11 @@ function wireDecision(d) {
     if (!b) return;
     const v = presets(d)[Number(b.dataset.preset)][1];
     for (const k of ['buyer_refund', 'seller_payout', 'seller_charge']) form.elements[k].value = naira(v[k]);
+    form.elements.fault.value = v.fault;
   });
   onSubmit(form, async (data) => {
     const waits = d.delivered && Number(data.buyer_refund) > 0;
-    if (!confirm(`Refund buyer ₦${data.buyer_refund}, pay seller ₦${data.seller_payout}, charge seller ₦${data.seller_charge}? ${waits ? 'Money moves once the seller has the item back.' : 'Money moves immediately.'} This can’t be undone.`)) return;
+    if (!confirm(`Refund buyer ₦${data.buyer_refund}, pay seller ₦${data.seller_payout}, charge seller ₦${data.seller_charge}, at fault: ${data.fault}${d.dispute_fee && ['buyer', 'seller'].includes(data.fault) ? ` (the ${money(d.dispute_fee)} dispute fee is then applied)` : ''}? ${waits ? 'Money moves once the seller has the item back.' : 'Money moves immediately.'} This can’t be undone.`)) return;
     const r = await api(`/api/team/disputes/${d.dispute_id}/resolve`, { method: 'POST', body: data, as: 'team' });
     flash.set(r.waiting_for_return ? 'Decision recorded. The refund is sent once the seller has the item back. Your task is marked done.' : 'Decision recorded and money sent. Your task is marked done.');
     location.href = link('team/index.html');

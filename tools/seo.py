@@ -79,7 +79,7 @@ SERVICE = {
                     'seller is paid only after delivery with the buyer’s PIN and an inspection window. Published dispute, '
                     'return and refund rules.'),
     'offers': {'@type': 'Offer', 'priceCurrency': 'NGN', 'description':
-               'TrustGap fee: 1.5% of the item price (minimum ₦100, maximum ₦3,000). Payment processing is passed on at cost (capped at ₦2,000 plus the payout fee). Buyer and seller choose who pays.'},
+               'TrustGap fee: 1.5% of the item price up to ₦200,000, then 1% (minimum ₦100, maximum ₦15,000). Payment processing is passed on at cost (capped at ₦2,000 plus the payout fee). Buyer and seller choose who pays.'},
 }
 
 
