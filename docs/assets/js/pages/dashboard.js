@@ -27,7 +27,7 @@ try {
       <div class="stat"><span>${money(stats.held)}</span>held for you</div>
       <div class="stat"><span>${stats.completed}</span>completed</div>
     </div>
-    ${setup.length || s.amount_owed > 0 || s.suspended ? '' : html`<p><a class="btn" href="${link('seller/new.html')}">+ Create a payment link</a></p>`}
+    ${setup.length || s.amount_owed > 0 || s.suspended ? '' : html`<p class="actions"><a class="btn" href="${link('seller/new.html')}">+ Create a payment link</a><a class="btn btn-secondary" href="${link('seller/price.html')}">Price calculator</a></p>`}
     <h2>Orders</h2>
     ${orders.length
       ? html`<div class="list">${orders.map((o) => html`<a class="row" href="${link(`seller/order.html?id=${o.id}`)}">

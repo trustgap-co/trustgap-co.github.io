@@ -109,6 +109,9 @@ shown to admin on the order page and copied to Google Sheets.
    Delivered → Inspection → Released) with what happens next; every SMS ends with the next step; the
    PIN box has a doorstep checklist; a problem report gets a case reference (e.g. TG-7K2P9Q-C12) and an
    update promised within 24 hours. The team manual has the support standard.
+16. **Price calculator for sellers** (`seller/price.html`): the exact price of a deal from both addresses
+   and who pays what, using the same quote as link creation, a ready message to send the buyer, and
+   "Create a payment link with these details", which opens the new-link form already filled in.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

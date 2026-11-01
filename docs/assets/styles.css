@@ -293,7 +293,12 @@ body.site main { max-width: none; padding: 0; }
 .status-strip span.done { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .status-strip span.now { background: var(--navy); color: var(--white); border-color: transparent; }
 .journey { margin: 14px 0 6px; }
-.journey .status-strip { margin: 0 0 10px; }
+.journey .status-strip { margin: 0 0 8px; }
+.journey .status-strip button { font: inherit; font-size: .72rem; padding: 4px 8px; border-radius: 999px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); cursor: pointer; }
+.journey .status-strip button.done { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.journey .status-strip button.now { background: var(--navy); color: var(--white); border-color: transparent; }
+.journey .status-strip button.picked, .journey .status-strip button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.step-info { margin: 0 0 10px; font-size: .9rem; line-height: 1.5; min-height: 1.5em; }
 .next-step { margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); font-size: .95rem; line-height: 1.5; }
 .handover-check { margin: 6px auto 0; padding-left: 0; list-style: none; font-size: .92rem; text-align: left; display: inline-block; }
 .handover-check li { padding: 3px 0; }
@@ -652,3 +657,6 @@ body.is-live .when-prelaunch { display: none !important; }
 .seller-record p { margin: 0; }
 .record-stats { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .9rem; color: var(--muted); }
 .record-stats strong { color: var(--text); }
+
+/* Seller price calculator: the message to send the buyer */
+#for-buyer { width: 100%; font: inherit; font-size: .95rem; line-height: 1.5; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); resize: vertical; }

@@ -183,6 +183,29 @@ export const getConfig = () => (configPromise ||= (() => {
 })());
 export const getBanks = () => api('/api/banks').then((d) => d.banks);
 
+// ---------------------------------------------------------------- seller price quotes
+// The breakdown from POST /api/seller/quote, shown on the price calculator and the new-link form, so
+// the price a seller quotes a buyer is exactly what the link will charge. `d` is the form's answers.
+const PAYER_LABEL = { buyer: 'paid by buyer', seller: 'paid by you', split: 'split 50/50' };
+export function sellerQuoteBox({ price: p, delivery_state: state, promo, dispute_fee: disputeFee }, d, fee) {
+  return html`<table class="breakdown">
+    <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
+    <tr><td>Delivery to ${state} (${PAYER_LABEL[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
+    <tr><td>TrustGap fee ${feeLabel(fee, promo ? promo.saving : p.platformFee)} ${promo ? '(early-access code)' : `(${PAYER_LABEL[d.fee_payer]})`}</td>
+      <td>${promo ? html`<s class="muted">${money(promo.saving)}</s> ${money(0)}` : money(p.platformFee)}</td></tr>
+    <tr><td>Payment processing (${PAYER_LABEL[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
+    <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
+    <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
+  </table>${disputeFee ? html`<p class="small muted">Dispute fee: ${money(disputeFee)}, paid only by whoever TrustGap finds at fault if a dispute has to be decided. Settle problems with the buyer first and nobody pays it.</p>` : ''}${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`;
+}
+// A quote that can't be priced: the high-value route to support, or the reason (e.g. price too low).
+export function sellerQuoteError(err) {
+  return err.code === 'needs_support'
+    ? html`<div class="callout info"><strong>High-value deal: let’s set it up together.</strong><p class="small">${err.message}</p>
+        <p class="small">TrustGap support: <span data-site="supportPhone"></span> · <span data-site="supportEmail"></span></p></div>`
+    : html`<div class="error">${err.message}</div>`;
+}
+
 // ---------------------------------------------------------------- the order journey
 // Agreed → Payment secured → Preparing → Picked up → On the way → Delivered → Inspection → Released,
 // with one plain sentence on what happens next and what (if anything) the reader should do.
@@ -220,11 +243,72 @@ function nextStep(o, as, dispute) {
     default: return '';
   }
 }
+// What each step means, for the person looking: shown when they tap a step (or hover on a computer).
+const STEP_MEANING = {
+  buyer: [
+    'You reviewed the item, photos, price, delivery address and rules, and accepted them. Nothing is paid at this point.',
+    'Your money is held by TrustGap, not the seller. It goes to the seller only after delivery and your inspection, or back to you under the deal rules.',
+    'The seller is packing your item and booking the courier. If they don’t hand it over by the ship-by date, you get a full refund.',
+    'The courier has collected your item from the seller.',
+    'A rider is bringing it to you. Keep your phone on, and inspect the item before you share your delivery PIN.',
+    'You checked the item and gave the rider your PIN. That confirms the handover.',
+    'Your time to check everything properly{hours}. Confirm if all is well, or report a problem before it ends. Nobody is paid while you inspect.',
+    'The seller has been paid and the deal is complete.',
+  ],
+  seller: [
+    'You created the link with the item, price and delivery details, and the buyer accepted them.',
+    'The buyer has paid. The money is held safely by TrustGap for you, so you can send the item with confidence.',
+    'Your turn: pack the item, write the packing note (your evidence) and book pickup before the ship-by date.',
+    'The courier has the parcel. Your part of the delivery is done.',
+    'A rider is delivering it. If the buyer refuses a correct item, it comes back to you and the delivery costs come out of their refund.',
+    'The buyer checked the item and confirmed with their PIN.',
+    'The buyer is checking the item{hours}. If they confirm, or the time ends with no problem reported, you are paid.',
+    'Your payout has been released to your bank account.',
+  ],
+};
 export function orderJourney(o, { as = 'buyer', dispute = null } = {}) {
   const at = journeyStep(o);
   const paused = ['disputed', 'refunded', 'duplicate_refunded'].includes(o.status);
-  return html`<div class="journey"><div class="status-strip" aria-label="Order progress">${JOURNEY.map((label, i) => html`<span class="${i < at ? 'done' : i === at && !paused ? 'now' : ''}"${i === at && !paused ? raw(' aria-current="step"') : ''}>${label}</span>`)}</div>
+  const hours = o.inspection_hours ? ` (${o.inspection_hours} hours after delivery)` : '';
+  const meaning = STEP_MEANING[as === 'seller' ? 'seller' : 'buyer'].map((m) => m.replace('{hours}', hours));
+  const state = (i) => (i < at ? 'Done' : i === at && !paused ? 'Happening now' : paused && i === at ? 'Paused' : 'Still to come');
+  return html`<div class="journey"><div class="status-strip" role="list" aria-label="Order progress. Tap a step to see what it means.">${JOURNEY.map((label, i) => html`<button type="button" role="listitem" class="${i < at ? 'done' : i === at && !paused ? 'now' : ''}" data-step-info="${`${label} (${state(i)}): ${meaning[i]}`}"${i === at && !paused ? raw(' aria-current="step"') : ''}>${label}</button>`)}</div>
+    <p class="step-info" aria-live="polite"><span class="muted">Tap any step to see what it means for you.</span></p>
     ${nextStep(o, as, dispute) ? html`<p class="next-step"><strong>${paused && dispute ? 'Paused for review.' : 'What happens next:'}</strong> ${nextStep(o, as, dispute)}</p>` : ''}</div>`;
+}
+
+// One listener for every journey on the page (pages redraw it every 30 seconds): a tap shows a step's
+// meaning under the steps and keeps it; hovering with a mouse previews it.
+const HINT = 'Tap any step to see what it means for you.';
+function showStep(button, pinned) {
+  const box = button.closest('.journey')?.querySelector('.step-info');
+  if (!box) return;
+  const [head, ...rest] = button.dataset.stepInfo.split(': ');
+  box.innerHTML = '';
+  const strong = document.createElement('strong');
+  strong.textContent = head + ': ';
+  box.append(strong, rest.join(': '));
+  if (pinned) {
+    button.closest('.status-strip').querySelectorAll('[data-step-info]').forEach((b) => b.classList.toggle('picked', b === button));
+    box.dataset.pinned = '1';
+  }
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest?.('.journey [data-step-info]');
+    if (b) showStep(b, true);
+  });
+  document.addEventListener('mouseover', (e) => {
+    const b = e.target.closest?.('.journey [data-step-info]');
+    // A mouse previews steps until one is clicked; after that the clicked step stays shown.
+    if (b && matchMedia('(hover: hover)').matches && !b.closest('.journey').querySelector('.step-info').dataset.pinned) showStep(b, false);
+  });
+  document.addEventListener('mouseout', (e) => {
+    const strip = e.target.closest?.('.journey .status-strip');
+    if (!strip || strip.contains(e.relatedTarget)) return;
+    const box = strip.parentElement.querySelector('.step-info');
+    if (box && !box.dataset.pinned) box.innerHTML = `<span class="muted">${HINT}</span>`;
+  });
 }
 
 // ---------------------------------------------------------------- dispute decisions
@@ -552,7 +636,7 @@ export async function shell(area) {
   const configReady = getConfig();
   const here = location.pathname.split('/').pop() || 'index.html';
   const nav = {
-    seller: html`<nav class="nav"><a href="${link('seller/dashboard.html')}">Dashboard</a><a href="${link('seller/new.html')}">New link</a>
+    seller: html`<nav class="nav"><a href="${link('seller/dashboard.html')}">Dashboard</a><a href="${link('seller/new.html')}">New link</a><a href="${link('seller/price.html')}">Price calculator</a>
       <a href="${link('seller/settings.html')}">Settings</a><button class="linklike" id="logout">Log out</button></nav>`,
     admin: auth.admin()
       ? html`<nav class="nav"><a href="${link('admin/orders.html')}">Orders</a><a href="${link('admin/disputes.html')}">Disputes</a>

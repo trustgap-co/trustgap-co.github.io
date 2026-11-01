@@ -1,5 +1,5 @@
 import { shrinkPhoto, fingerprint } from '../photos.js';
-import { api, html, show, onSubmit, shell, money, feeLabel, feeSummary, fillConsentBody, fillSiteInfo, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, feeLabel, feeSummary, fillConsentBody, fillSiteInfo, sellerQuoteBox, sellerQuoteError, session, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
 
 const config = await shell('seller');
 const MAX_PHOTOS = 4;
@@ -15,6 +15,10 @@ try {
     throw Object.assign(new Error('suspended'), { shown: true });
   }
   let v = { quantity: 1, weight_kg: 1, delivery_days: 2, expires_hours: 24, pickup_address: seller.pickup_address, pickup_state: seller.pickup_state };
+  // Coming from the price calculator: start from what the seller already entered there.
+  if (params.get('from') === 'calculator') {
+    try { v = { ...v, ...JSON.parse(session.get('tg_calculator') || '{}') }; } catch { /* nothing saved */ }
+  }
   if (params.get('revise')) {
     const { deal } = await api(`/api/seller/deals/${encodeURIComponent(params.get('revise'))}`, { as: 'seller' });
     v = { ...deal, item_price: deal.price.itemPrice / 100, replaces: deal.status === 'open' ? deal.id : '' };
@@ -124,7 +128,6 @@ try {
 
   // Live price: the same calculation the link will use, so the seller knows exactly what they get.
   const form = $('#deal');
-  const payerLabel = { buyer: 'paid by buyer', seller: 'paid by you', split: 'split 50/50' };
   let timer;
   let started = false;
   let promoTracked = false;
@@ -143,22 +146,11 @@ try {
       lastDeliveryFee = p.deliveryFee;
       lastDisputeFee = disputeFee || 0;
       if (key !== last) return;
-      show('#preview', html`<table class="breakdown">
-        <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
-        <tr><td>Delivery to ${delivery_state} (${payerLabel[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
-        <tr><td>TrustGap fee ${feeLabel(fee, promo ? promo.saving : p.platformFee)} ${promo ? '(early-access code)' : `(${payerLabel[d.fee_payer]})`}</td>
-          <td>${promo ? html`<s class="muted">${money(promo.saving)}</s> ${money(0)}` : money(p.platformFee)}</td></tr>
-        <tr><td>Payment processing (${payerLabel[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
-        <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
-        <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
-      </table>${disputeFee ? html`<p class="small muted">Dispute fee: ${money(disputeFee)}, paid only by whoever TrustGap finds at fault if a dispute has to be decided. Settle problems with the buyer first and nobody pays it.</p>` : ''}${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`);
+      show('#preview', sellerQuoteBox({ price: p, delivery_state, promo, dispute_fee: disputeFee }, d, fee));
       if (promo && !promoTracked) { promoTracked = true; track('promo_applied', { side: 'seller', discount: promo.saving / 100 }); }
     } catch (err) {
       if (key === last) {
-        show('#preview', err.code === 'needs_support'
-          ? html`<div class="callout info"><strong>High-value deal: let’s set it up together.</strong><p class="small">${err.message}</p>
-              <p class="small">TrustGap support: <span data-site="supportPhone"></span> · <span data-site="supportEmail"></span></p></div>`
-          : html`<div class="error">${err.message}</div>`);
+        show('#preview', sellerQuoteError(err));
         fillSiteInfo();
       }
       last = '';
