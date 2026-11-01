@@ -3542,7 +3542,8 @@ function sellerRoutes(r) {
         delivered_at: o.delivered_at,
         inspection_ends_at: o.inspection_ends_at,
         paid_at: o.paid_at,
-        dispatched: Boolean(o.dispatched_at)
+        dispatched: Boolean(o.dispatched_at),
+        inspection_hours: d.inspection_hours
       },
       dispute,
       // Includes the return PIN while the item is on its way back, to give the rider at hand-back.
