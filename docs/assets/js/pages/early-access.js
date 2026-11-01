@@ -67,7 +67,7 @@ function form() {
     btn.textContent = 'Sending…';
     try {
       const result = await sendLead({
-        form: 'early_access', submission_id: newId(), ...campaignSource(), role: d.role, name: d.name.trim(),
+        form: 'early_access', submission_id: newId(), ...campaignSource(), joined_via: 'early-access page', role: d.role, name: d.name.trim(),
         business_name: d.business_name || '', category: d.category || '', phone: phone || '', email: d.email?.trim() || '',
         channel: d.channel, state: d.state, age_range: d.age_range, under_18: 'no', early_access: 'yes', consent: 'yes',
         promo_code: SITE.earlyAccessCode,

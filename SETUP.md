@@ -409,14 +409,14 @@ straight from the visitor's browser to **one Make.com webhook**. The Worker isn'
 
 1. **Google Sheet:** create a sheet called e.g. `TrustGap leads` with two tabs, **Survey** and
    **Early access**. Put these headings in row 1 (any order; Make maps them by name):
-   - **Survey:** `submitted_at_lagos, source, medium, campaign, role, b_frequency, b_channels,
+   - **Survey:** `submitted_at_lagos, mode, source, medium, campaign, ad, term, click_from, landing_page, referrer, role, b_frequency, b_channels,
      b_channels_other, b_scammed, b_what_happened, b_what_happened_other, b_hesitation, b_payment,
      b_payment_other, b_protection, b_likely, b_trust, b_trust_other, s_category, s_category_other,
      s_channels, s_channels_other, s_orders, s_payment, s_payment_other, s_problem, s_problem_other,
      s_lost_money, s_would_use, s_would_use_other, s_stop, s_stop_other, s_fee, state, age_range,
      under_18, safer_change, early_access, name, business_name, phone, email, channel, seller_pilot,
-     research_contact, promo_code, seconds_taken, device, survey_version, submission_id`
-   - **Early access:** `submitted_at_lagos, source, medium, campaign, role, name, business_name,
+     research_contact, lead_id, promo_code, seconds_taken, device, survey_version, submission_id`
+   - **Early access:** `submitted_at_lagos, joined_via, mode, source, medium, campaign, ad, term, click_from, landing_page, referrer, role, name, business_name,
      category, phone, email, channel, state, age_range, consent, promo_code, device, submission_id`
 2. **Make:** create a new scenario. Add **Webhooks → Custom webhook**, create a webhook (e.g.
    "TrustGap leads") and copy its URL (it starts with `https://hook.` and ends in `.make.com/…`).
@@ -446,6 +446,25 @@ What's sent, and what isn't:
 - `source` comes from the link people arrived on: add `?source=instagram`, `?source=whatsapp`,
   `?source=tiktok` etc. to every link you post (or utm_source / utm_medium / utm_campaign). It's
   remembered from the first page they land on.
+- **Ad mode and organic mode.** The survey switches by itself from the link people arrive on:
+  - **Ad mode** (any link with `utm_medium=paid`, `paid_social`, `cpc`, `ppc`, `ads` or `display`, a Meta/Google/
+    TikTok click ID, or `?mode=ad`): the first screen is "Get no TrustGap fee on your first deal" with
+    first name, WhatsApp number and an 18+/contact tick box. That row goes straight to the **Early access**
+    tab (`joined_via = survey (ad)`), so you have the lead even if they stop. They then answer the survey
+    (no contact questions at the end; the Survey row has their name, number and `lead_id`, the matching
+    Early access row's `submission_id`) or tap "Skip the survey, just give me my code".
+  - **Organic mode** (everything else, or `?mode=organic`): as before, contact is optional at the end,
+    with "Yes, send me my code" chosen by default and "No, submit anonymously" one tap away.
+  - **Build every ad link like this** (one `utm_content` per ad, so you can compare ads):
+    `https://trustgap-co.github.io/survey.html?utm_source=facebook&utm_medium=paid_social&utm_campaign=launch_nov&utm_content=video_scam_story`
+    Use `utm_source=instagram` / `tiktok` / `google` as needed. In Meta Ads Manager you can put the part
+    after `?` in **URL parameters** instead.
+  - Every row records `mode` (ad or organic), `source`, `medium`, `campaign`, `ad` (utm_content), `term`,
+    `click_from` (meta, google, tiktok… when the ad network added its click ID), `landing_page` and
+    `referrer`. In the sheet, filter by `campaign` and `ad` and divide your ad spend by the number of
+    rows to get the cost per lead for each ad.
+  - GA4/Meta: `early_access_signup` (Meta **Lead**) fires as soon as an ad visitor signs up;
+    `survey_ad_view`, `survey_ad_continue` and `survey_ad_skip` show where people drop off.
 - `submission_id` is unique per response: if a slow connection ever sends one twice, delete the
   duplicate row.
 - If the phone is offline, the response waits on the phone and is sent when it's back online.

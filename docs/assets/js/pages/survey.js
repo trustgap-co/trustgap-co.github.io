@@ -4,13 +4,17 @@
 // and never from under-18s unless site-info.js → allowUnder18Contact is true.
 import { shell, html, show, raw, track, link, $ } from '../core.js';
 import { SITE } from '../site-info.js';
-import { scrollToForm, STATES, AGE_RANGES, campaignSource, canCollectContact, isUnder18, normalisePhone, validEmail, sendLead, store, newId, shareSurvey, webhookReady } from '../leads.js';
+import { scrollToForm, STATES, AGE_RANGES, campaignSource, surveyMode, canCollectContact, isUnder18, normalisePhone, validEmail, sendLead, store, newId, shareSurvey, webhookReady } from '../leads.js';
 
 shell('public');
 
 const VERSION = 'v1-2026-11';
 const DRAFT = 'tg_survey_draft';
 const DONE = 'tg_survey_done';
+// Ad mode (visitors from paid ads): name and WhatsApp number first, saved straight to the early-access
+// list, then the survey or "just join the list". Organic mode: contact optional at the end.
+const LEAD = 'tg_survey_lead';
+let lead = store.get(LEAD); // { id, name, phone } once an ad visitor has signed up on this phone
 const OTHER = 'Other';
 
 const ROLES = { buyer: 'I buy online', seller: 'I sell online', both: 'I do both', curious: 'I am only interested in learning more' };
@@ -89,6 +93,7 @@ function frame(inner, { back = true } = {}) {
 
 // ---------------------------------------------------------------- screens
 function intro() {
+  if (surveyMode() === 'ad' && !lead) return adIntro();
   const prior = store.get(DRAFT);
   frame(html`
     <p class="eyebrow">2-minute survey</p>
@@ -107,6 +112,72 @@ function intro() {
     go(0);
   });
   $('#sv-restart')?.addEventListener('click', () => { store.del(DRAFT); answers = {}; go(0); });
+}
+
+// Ad mode, first screen: the reward up front, and the two details that put them on the list.
+function adIntro() {
+  frame(html`
+    <p class="eyebrow">Early access</p>
+    <h1 tabindex="-1">Get no TrustGap fee on your first deal</h1>
+    <p>TrustGap holds your payment safely until your item is delivered and checked. Join the early-access list${SITE.launched ? '' : ` before we launch on ${SITE.launchDate}`} and your first deal is free of the TrustGap fee, worth up to ₦15,000.</p>
+    <form id="sv-lead" class="form sv-contact" novalidate>
+      <label>First name or nickname <input name="name" maxlength="60" autocomplete="given-name" required></label>
+      <label>WhatsApp number <input name="phone" inputmode="tel" autocomplete="tel" placeholder="0803 123 4567" required></label>
+      <label class="choice"><input type="checkbox" name="consent" value="yes"> I’m 18 or over, and TrustGap may contact me on WhatsApp about its launch and this offer. Reply STOP any time.</label>
+      <input name="website" class="visually-hidden" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <p class="sv-err" id="sv-err" role="alert"></p>
+      <button class="btn btn-lg btn-block">Get my reward</button>
+    </form>
+    <p class="muted small">No NIN, bank or card details, ever. <a href="${link('legal/privacy.html')}">Privacy Policy</a> · <button type="button" class="linklike" id="sv-minor">I’m under 18</button></p>`, { back: false });
+  // The offer and the form are the first thing an ad visitor sees on a phone, not the survey heading.
+  document.querySelector('.page-hero')?.setAttribute('hidden', '');
+  track('survey_ad_view', {});
+  $('#sv-minor').addEventListener('click', () => { track('survey_ad_under_18'); go(0); });
+  $('#sv-lead').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const err = $('#sv-err');
+    const phone = normalisePhone(f.phone);
+    if (!f.name.trim()) return (err.textContent = 'Tell us your first name or a nickname.');
+    if (!phone) return (err.textContent = 'Enter your WhatsApp number, like 0803 123 4567. We send your reward there.');
+    if (f.consent !== 'yes') return (err.textContent = 'Tick the box to confirm you’re 18 or over and agree to be contacted.');
+    const btn = e.target.querySelector('button.btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    const id = newId();
+    try {
+      if (!f.website) {
+        await sendLead({ form: 'early_access', submission_id: id, ...campaignSource(), joined_via: 'survey (ad)', role: '', name: f.name.trim(),
+          business_name: '', category: '', phone, email: '', channel: 'WhatsApp', state: '', age_range: '18 or over (confirmed)', under_18: 'no',
+          early_access: 'yes', consent: 'yes', promo_code: SITE.earlyAccessCode });
+      }
+      lead = { id, name: f.name.trim(), phone };
+      store.set(LEAD, lead);
+      track('early_access_signup', { via: 'survey_ad' });
+      afterSignup();
+    } catch (e2) {
+      err.textContent = e2.message;
+      btn.disabled = false;
+      btn.textContent = 'Try again';
+    }
+  });
+}
+
+// Ad mode, after signing up: the survey (most useful to us) or straight to the reward.
+function afterSignup() {
+  frame(html`<div class="sv-done">
+    <div class="sv-tick" aria-hidden="true">✓</div>
+    <h1 tabindex="-1">You’re on the list, ${lead.name}.</h1>
+    <p>One more thing, if you have 2 minutes: tell us how you buy and sell online. Your answers decide what we build first. Your reward code is on the last screen.</p>
+    <button class="btn btn-lg btn-block" id="sv-go">Answer the 2-minute survey</button>
+    <button type="button" class="btn btn-lg btn-block btn-secondary" id="sv-skip">Skip the survey, just give me my code</button>
+  </div>`, { back: false });
+  $('#sv-go').addEventListener('click', () => { track('survey_ad_continue'); go(0); });
+  $('#sv-skip').addEventListener('click', () => {
+    track('survey_ad_skip');
+    store.set(DONE, { id: lead.id, at: Date.now(), early: true, skipped: true });
+    thanks(true, false);
+  });
 }
 
 function roleScreen() {
@@ -183,6 +254,24 @@ function questionScreen(q, n) {
 function contactScreen() {
   const allowed = canCollectContact(answers.age_range);
   const seller = sellerRole(answers);
+  if (lead && allowed) {
+    // Ad mode: they're already on the list, so no contact questions.
+    frame(html`<h2 tabindex="-1">Last step, ${lead.name}</h2>
+      <p>Send your answers and your reward code appears straight away.</p>
+      <form id="sv-extra" class="form sv-contact">
+        ${seller ? html`<label class="choice"><input type="checkbox" name="seller_pilot" value="yes"> I’d like to test TrustGap with my business before launch</label>` : ''}
+        <label class="choice"><input type="checkbox" name="research_contact" value="yes"> You may also contact me with a few follow-up questions about this research</label>
+      </form>
+      <p class="sv-err" id="sv-err" role="alert"></p>
+      <button class="btn btn-lg btn-block" id="sv-submit">Send my answers and get my code</button>`);
+    $('#sv-submit').addEventListener('click', () => {
+      const f = Object.fromEntries(new FormData($('#sv-extra')));
+      submit({ early_access: 'yes', name: lead.name, business_name: '', phone: lead.phone, email: '', channel: 'WhatsApp',
+        seller_pilot: f.seller_pilot || 'no', research_contact: f.research_contact || 'no', lead_id: lead.id });
+    });
+    return;
+  }
+  answers.wants_contact ??= 'yes'; // organic: "send me my code" is the default; anonymous stays one tap away
   if (!allowed) {
     frame(html`<h2 tabindex="-1">Almost done</h2>
       <p>Thank you! Because you’re under 18, we won’t ask for your contact details. Your answers will be sent anonymously.</p>
@@ -194,7 +283,7 @@ function contactScreen() {
   frame(html`<h2 tabindex="-1">Would you like early access to TrustGap?</h2>
     <p>Be first to try safer deals when we launch on ${SITE.launchDate}. Early-access members pay <strong>no TrustGap fee on their first deal</strong>.</p>
     <div class="sv-options sv-two">
-      <button type="button" class="sv-opt ${answers.wants_contact === 'yes' ? 'on' : ''}" data-contact="yes">Yes, contact me</button>
+      <button type="button" class="sv-opt ${answers.wants_contact === 'yes' ? 'on' : ''}" data-contact="yes">Yes, send me my code</button>
       <button type="button" class="sv-opt ${answers.wants_contact === 'no' ? 'on' : ''}" data-contact="no">No, submit anonymously <small>(no early-access code)</small></button>
     </div>
     <form id="sv-contact" class="form sv-contact" ${answers.wants_contact === 'yes' ? '' : raw('hidden')} novalidate>
@@ -218,7 +307,7 @@ function contactScreen() {
   }
   $('#sv-submit').addEventListener('click', () => {
     const err = $('#sv-err');
-    if (!answers.wants_contact) { err.textContent = 'Choose “Yes, contact me” or “No, submit anonymously”.'; return; }
+    if (!answers.wants_contact) { err.textContent = 'Choose “Yes, send me my code” or “No, submit anonymously”.'; return; }
     if (answers.wants_contact === 'no') return submit({ early_access: 'no' });
     const f = Object.fromEntries(new FormData($('#sv-contact')));
     const phone = f.phone ? normalisePhone(f.phone) : '';
@@ -246,8 +335,8 @@ async function submit(contact) {
     const result = await sendLead({ ...out, ...contact });
     store.del(DRAFT);
     store.set(DONE, { id: out.submission_id, at: Date.now(), early: contact.early_access === 'yes' });
-    track('survey_complete', { role: answers.role, early_access: contact.early_access, source: out.source, under_18: out.under_18 });
-    if (contact.early_access === 'yes') track('early_access_signup', { role: answers.role, via: 'survey' });
+    track('survey_complete', { role: answers.role, early_access: contact.early_access, source: out.source, mode: out.mode, under_18: out.under_18 });
+    if (contact.early_access === 'yes' && !contact.lead_id) track('early_access_signup', { role: answers.role, via: 'survey' });
     thanks(contact.early_access === 'yes', result === 'queued');
   } catch (e) {
     $('#sv-err').textContent = e.message;
@@ -270,7 +359,7 @@ function thanks(early, queued) {
     <a class="linklike sv-again" href="${link('survey.html')}" id="sv-again">Fill it in again for someone else on this phone</a>
   </div>`, { back: false });
   $('#sv-share').addEventListener('click', () => { track('share', { method: 'survey_share', content_type: 'survey' }); shareSurvey('share'); });
-  $('#sv-again').addEventListener('click', () => store.del(DONE));
+  $('#sv-again').addEventListener('click', () => { store.del(DONE); store.del(LEAD); });
 }
 
 // ---------------------------------------------------------------- navigation

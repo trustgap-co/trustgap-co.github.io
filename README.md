@@ -112,6 +112,10 @@ shown to admin on the order page and copied to Google Sheets.
 16. **Price calculator for sellers** (`seller/price.html`): the exact price of a deal from both addresses
    and who pays what, using the same quote as link creation, a ready message to send the buyer, and
    "Create a payment link with these details", which opens the new-link form already filled in.
+17. **Survey ad mode**: visitors from paid ads (utm_medium=paid… or an ad click ID) give their first name and
+   WhatsApp number first (saved to the early-access list at once), then answer the survey or skip to
+   their code; organic visitors keep optional contact, now with "Yes, send me my code" pre-selected.
+   Every survey and early-access row records the mode, campaign, ad and click source (SETUP.md §10).
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
