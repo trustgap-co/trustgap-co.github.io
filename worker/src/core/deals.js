@@ -222,6 +222,20 @@ export const dealPhotos = async (ctx, deal) => photoUrls(ctx, deal, await photoR
 /** Fingerprints of the deal's photos, saved in the terms the buyer accepts. */
 export const dealPhotoHashes = async (ctx, deal) => (await photoRows(ctx, deal)).map((p) => p.sha256);
 
+// The seller's record on TrustGap, shown to buyers before they pay: facts only, counted from orders.
+// "Decided against" counts disputes TrustGap found the seller at fault for.
+export async function sellerHistoryFor(ctx, seller) {
+  const n = (sql) => first(ctx.env, sql, seller.id).then((r) => r.n);
+  return {
+    joined_at: seller.created_at,
+    links_created: await n('SELECT COUNT(*) n FROM deals WHERE seller_id = ?'),
+    paid_orders: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND paid_at IS NOT NULL AND status != 'duplicate_refunded'"),
+    completed: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'completed'"),
+    disputes: await n('SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ?'),
+    decided_against: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ? AND d.fault = 'seller'"),
+  };
+}
+
 // What the buyer may see: the whole deal, including the delivery address the seller entered (so
 // they can check it), but never the seller's pickup address or contact details.
 export async function publicDealView(ctx, deal) {
@@ -231,7 +245,7 @@ export async function publicDealView(ctx, deal) {
     token: deal.token,
     // A suspended seller's open links show as paused (no payments) rather than open.
     status: deal.status === 'open' && seller.suspended_at ? 'paused' : deal.status,
-    seller: { business_name: seller.business_name, identity_verified: Boolean(seller.identity_verified_at) },
+    seller: { business_name: seller.business_name, identity_verified: Boolean(seller.identity_verified_at), history: await sellerHistoryFor(ctx, seller) },
     item_title: deal.item_title,
     item_description: deal.item_description,
     item_condition: deal.item_condition,

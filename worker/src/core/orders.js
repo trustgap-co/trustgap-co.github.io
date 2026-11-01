@@ -28,6 +28,8 @@ import {
   settlesAt,
   transition,
   fmtDate,
+  caseRef,
+  caseUpdateBy,
 } from './common.js';
 
 // ---------------------------------------------------------------- buyer checkout
@@ -226,7 +228,7 @@ export async function confirmPayment(ctx, txRef, actor = 'system') {
     event: 'payment_received_seller',
     phone: seller.phone,
     email: seller.email,
-    sms: `TrustGap: ${formatNaira(order.amount)} for "${deal.item_title}" is secured (order ${order.ref}). Pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}.`,
+    sms: `TrustGap: payment confirmed. ${order.buyer_name} paid ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) and it is secured. Next: pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}. You are paid after delivery and inspection.`,
     emailSubject: `Payment secured: order ${order.ref}`,
   });
   await ctx.notify.send({
@@ -234,7 +236,7 @@ export async function confirmPayment(ctx, txRef, actor = 'system') {
     event: 'payment_received_buyer',
     phone: order.buyer_phone,
     email: order.buyer_email,
-    sms: `TrustGap: payment received for "${deal.item_title}" (order ${order.ref}). Your money is held until delivery. Your delivery PIN is ${pin}. Give it to the rider ONLY after checking the item. Track: ${trackUrl(ctx, order)}`,
+    sms: `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`,
   });
   return getOrder(ctx, order.id);
@@ -313,7 +315,7 @@ export async function bookPickup(ctx, seller, orderId, packingNote) {
     orderId: order.id,
     event: 'pickup_booked',
     phone: order.buyer_phone,
-    sms: `TrustGap: the seller has packed "${deal.item_title}" and pickup is booked (order ${order.ref}). Track: ${trackUrl(ctx, order)}`,
+    sms: `TrustGap: the seller is preparing "${deal.item_title}" and a courier pickup is booked (order ${order.ref}). Nothing to do yet; we’ll text you when it’s on the way. Track: ${trackUrl(ctx, order)}`,
   });
   return booking;
 }
@@ -353,16 +355,23 @@ export async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   if (status === 'refused') {
     await openDispute(ctx, await getOrder(ctx, order.id), { by: actor, category: 'refused_at_door', description: reason });
     await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: actor });
-  } else if (status === 'out_for_delivery' || status === 'attempt_failed') {
-    await ctx.notify.send({
-      orderId: order.id,
-      event: 'delivery_' + status,
-      phone: order.buyer_phone,
-      sms:
-        status === 'out_for_delivery'
-          ? `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.`
-          : `TrustGap: the rider could not deliver order ${order.ref} (${reason}). They will try again.`,
-    });
+  } else {
+    await deliveryNotice(ctx, order, status, reason);
+  }
+}
+
+// Texts for each delivery step, each with what to do next. Picked up: both sides; on the way and a
+// failed attempt: the buyer.
+async function deliveryNotice(ctx, order, stage, reason = '') {
+  const seller = await getSeller(ctx, order.seller_id);
+  const send = (to, sms) => ctx.notify.send({ orderId: order.id, event: `delivery_${stage}${to === 'seller' ? '_seller' : ''}`, phone: to === 'seller' ? seller.phone : order.buyer_phone, sms });
+  if (stage === 'picked_up') {
+    await send('buyer', `TrustGap: your item for order ${order.ref} has been picked up from the seller. Keep your phone on; we’ll text you when it’s out for delivery.`);
+    await send('seller', `TrustGap: the courier has collected order ${order.ref}. Your part is nearly done; we’ll tell you when it’s delivered.`);
+  } else if (stage === 'out_for_delivery') {
+    await send('buyer', `TrustGap: order ${order.ref} is on its way to you today. When it arrives, inspect it before giving the rider your PIN. If it isn’t right, keep your PIN and report it.`);
+  } else if (stage === 'attempt_failed') {
+    await send('buyer', `TrustGap: the rider couldn’t deliver order ${order.ref} (${reason}). They will try again; please keep your phone on.`);
   }
 }
 
@@ -399,13 +408,13 @@ export async function markDelivered(ctx, order, actor, eventType) {
     orderId: order.id,
     event: 'delivered_buyer',
     phone: order.buyer_phone,
-    sms: `TrustGap: order ${order.ref} delivered. If something is wrong, report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)}. Otherwise the seller is paid automatically.`,
+    sms: `TrustGap: order ${order.ref} was delivered and your inspection window has started. Check everything now. Happy? Confirm on your tracking page. A problem? Report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)}. If you do nothing, the seller is paid then.`,
   });
   await ctx.notify.send({
     orderId: order.id,
     event: 'delivered_seller',
     phone: seller.phone,
-    sms: `TrustGap: order ${order.ref} was delivered. Your payout is released when the buyer confirms or at ${fmtDate(ends)}, unless they report a problem.`,
+    sms: `TrustGap: order ${order.ref} was delivered. You have completed your part of the deal. Your payout is scheduled for when the buyer confirms, or at ${fmtDate(ends)} at the latest, unless they report a problem.`,
   });
   return true;
 }
@@ -429,14 +438,7 @@ export async function syncCourierStatus(ctx, order) {
     if (order.status === 'shipping') await markDelivered(ctx, order, 'courier', 'delivered_by_courier');
   } else if (STAGE_RANK[st.stage] && (STAGE_RANK[order.delivery_status] || 0) < STAGE_RANK[st.stage]) {
     await run(ctx.env, "UPDATE orders SET delivery_status = ? WHERE id = ? AND status = 'shipping'", st.stage, order.id);
-    if (st.stage === 'out_for_delivery') {
-      await ctx.notify.send({
-        orderId: order.id,
-        event: 'delivery_out_for_delivery',
-        phone: order.buyer_phone,
-        sms: `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.`,
-      });
-    }
+    await deliveryNotice(ctx, order, st.stage);
   } else if (st.stage === 'problem' && /reject|refus/i.test(st.raw || '') && order.status === 'shipping') {
     // Fez's rider recorded a refusal at the door: same as our rider's "Buyer refused item".
     await openDispute(ctx, order, { by: 'courier', category: 'refused_at_door', description: `Refused at the door (courier: ${st.raw}${st.reason ? `: ${st.reason}` : ''}).` });
@@ -496,10 +498,15 @@ export async function openDispute(ctx, order, { by, category, description, photo
   if (!won) throw new UserError('This order changed while you were reporting. Refresh and try again.', 409);
   const seller = await getSeller(ctx, order.seller_id);
   const dFee = (await getDeal(ctx, order.deal_id)).dispute_fee;
-  const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.${
+  const dispute = await first(ctx.env, 'SELECT * FROM disputes WHERE order_id = ? ORDER BY id DESC', order.id);
+  // Both sides hear the same facts: a case reference, that the money stays put, and when to expect news.
+  const common = `Case ${caseRef(order, dispute)} (${DISPUTE_CATEGORIES[category]}) is now under review and the money stays held. We’ll update you by ${fmtDate(caseUpdateBy(dispute))}.${
     dFee ? ` If TrustGap has to decide, whoever is at fault pays a dispute fee of ${formatNaira(dFee)}.` : ''}`;
-  await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: order.buyer_phone, sms });
-  await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: seller.phone, sms });
+  const sms = `TrustGap: a problem was reported on order ${order.ref}. ${common}`;
+  await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: order.buyer_phone,
+    sms: by === 'buyer' ? `TrustGap: we have received your report on order ${order.ref}. ${common} Keep the item and packaging safe; we may ask for more evidence.` : sms });
+  await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: seller.phone,
+    sms: `${sms} Add your side and any photos from your order page; we read both sides before deciding.` });
   if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
 }
 
@@ -708,7 +715,7 @@ export async function releaseToSeller(ctx, order, reason) {
     orderId: order.id,
     event: 'order_complete',
     phone: order.buyer_phone,
-    sms: `TrustGap: order ${order.ref} is complete. Thank you for buying safely.`,
+    sms: `TrustGap: order ${order.ref} is complete and the seller has been paid. Thank you for helping make Nigerian online shopping safer. Know a seller who should use TrustGap? Send them ${ctx.config.siteUrl}`,
   });
   return true;
 }

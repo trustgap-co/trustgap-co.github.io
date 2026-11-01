@@ -56,6 +56,12 @@ export const getOrder = (ctx, id) => first(ctx.env, 'SELECT * FROM orders WHERE 
 export const trackUrl = (ctx, order) => `${ctx.config.siteUrl}/track.html?t=${order.buyer_token}`;
 export const payUrl = (ctx, deal) => `${ctx.config.siteUrl}/pay.html?d=${deal.token}`;
 
+// A problem report's case reference (quoted in messages and to support), and when both sides can
+// expect TrustGap's next update: within CASE_UPDATE_HOURS of the report.
+export const CASE_UPDATE_HOURS = 24;
+export const caseRef = (order, dispute) => `${order.ref}-C${dispute.id}`;
+export const caseUpdateBy = (dispute) => new Date(new Date(dispute.created_at).getTime() + CASE_UPDATE_HOURS * 3_600_000);
+
 const detailText = (d) => (d == null ? null : typeof d === 'string' ? d : JSON.stringify(d));
 
 export const eventStmt = (ctx, orderId, actor, type, detail = null) =>

@@ -1,6 +1,6 @@
 import { first, all, update } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
-import { getSeller, payUrl, HELD_STATUSES, iso } from '../core/common.js';
+import { getSeller, payUrl, HELD_STATUSES, iso, caseRef, caseUpdateBy } from '../core/common.js';
 import { signup, requestLogin, verifyCode, authenticate, logout, sellerView, setPayoutAccount, verifyIdentity } from '../core/sellers.js';
 import { createDeal, previewDeal, cancelDeal, refreshDeal, priceBreakdown, dealPhotos } from '../core/deals.js';
 import { bookPickup, DELIVERY_LABELS } from '../core/orders.js';
@@ -124,7 +124,8 @@ export function sellerRoutes(r) {
     const o = await first(ctx.env, 'SELECT * FROM orders WHERE id = ? AND seller_id = ?', Number(params.id), seller.id);
     if (!o) throw notFound('Order not found.');
     const d = await first(ctx.env, 'SELECT * FROM deals WHERE id = ?', o.deal_id);
-    const dispute = await first(ctx.env, 'SELECT status, category, description, resolution_note, seller_payout FROM disputes WHERE order_id = ? ORDER BY id DESC', o.id);
+    const row = await first(ctx.env, 'SELECT id, status, category, description, resolution_note, seller_payout, created_at FROM disputes WHERE order_id = ? ORDER BY id DESC', o.id);
+    const dispute = row && { ...row, case_ref: caseRef(o, row), update_by: iso(caseUpdateBy(row)) };
     // The seller sees the buyer's name and area, never their refund account or full address.
     return {
       order: {
@@ -145,6 +146,8 @@ export function sellerRoutes(r) {
         ship_by: o.ship_by,
         delivered_at: o.delivered_at,
         inspection_ends_at: o.inspection_ends_at,
+        paid_at: o.paid_at,
+        dispatched: Boolean(o.dispatched_at),
       },
       dispute,
       // Includes the return PIN while the item is on its way back, to give the rider at hand-back.

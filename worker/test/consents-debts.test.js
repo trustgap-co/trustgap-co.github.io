@@ -14,7 +14,7 @@ describe('confirmations before a deal', () => {
     assert.ok(d.condition_confirmed_at);
     assert.match(d.condition_pledge, /twice the delivery fee \(₦6,450\)/, '2 × ₦3,225 Lagos delivery');
     const cfg = (await t.get('/api/config')).data;
-    assert.match(cfg.consents.seller.confirm, /good condition as agreed/);
+    assert.match(cfg.consents.seller.confirm, /item is as agreed/);
   });
 
   test('the buyer must accept the change-of-mind notice before paying; it is part of the accepted terms', async () => {
@@ -30,7 +30,7 @@ describe('confirmations before a deal', () => {
     assert.equal(pay.status, 200);
     const o = await t.one('SELECT terms_json, buyer_ack_at, buyer_marketing_opt_in_at FROM orders');
     const terms = JSON.parse(o.terms_json);
-    assert.match(terms.buyer_acknowledgement.text, /change your mind after paying.*₦6,450/);
+    assert.match(terms.buyer_acknowledgement.text, /change your mind.*₦6,450/);
     assert.equal(o.buyer_ack_at, terms.buyer_acknowledgement.at);
     assert.ok(o.buyer_marketing_opt_in_at, 'opted in to news and offers');
   });

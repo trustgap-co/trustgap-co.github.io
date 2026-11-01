@@ -3,7 +3,7 @@
 // Each section is plain HTML: headings, paragraphs, lists and tables only.
 
 export const MANUAL = {
-  updated: '2026-10-31',  // dispute fee, deal limit, delivery as a TrustGap service
+  updated: '2026-11-01',  // support standard, case references, order journey
   sections: [
     {
       id: 'start',
@@ -200,6 +200,26 @@ export const MANUAL = {
 <li>If the buyer is refunded and had the item, a courier is booked to collect it, and the refund is sent once the seller has it back (see Returns).</li>
 <li>Your task is marked done automatically, with the decision in its notes. The decision shows your name on the order.</li>
 <li>A decision can’t be undone. If you’re unsure, add a note to the task and ask the admin instead of deciding.</li>
+</ul>`,
+    },
+    {
+      id: 'standard',
+      title: 'Our support standard',
+      html: `
+<p>TrustGap’s promise: <strong>no surprises, no silence, no confusion about what happens next.</strong> Every customer should always know what is happening, what happens next, and who will help them.</p>
+<ul>
+<li><strong>Acknowledge every message within 15 minutes</strong> during working hours, even if the answer takes longer: “Thanks, I’m looking into this now.”</li>
+<li><strong>Give a reference every time.</strong> For a problem report it is the case reference on the order page (for example TG-7K2P9Q-C12); otherwise the order reference. Ask them to quote it.</li>
+<li><strong>Give a realistic time</strong> for the next update, and keep it. Case messages promise an update within 24 hours of a report.</li>
+<li><strong>Never leave anyone guessing.</strong> If there is no news by the time you promised, still write: “We are still working on this. Your case has not been forgotten. Our next update will be by [time].”</li>
+<li><strong>Never promise an outcome</strong> (“you’ll get a refund”). Promise clarity and the process: what happens next and when.</li>
+<li><strong>Escalate to the admin straight away</strong>: payments and payouts, delivery problems you can’t resolve with the courier, suspected fraud, threats, and anything legal.</li>
+</ul>
+<h3>Small touches that matter</h3>
+<ul>
+<li>A short welcome to each new seller: offer to help with their first link.</li>
+<li>For a first-time buyer on a big order, a message when it ships: “Your item is on its way; we’re watching it for you.”</li>
+<li>After a completed order, a thank-you and a quick “How did it go?”.</li>
 </ul>`,
     },
     {

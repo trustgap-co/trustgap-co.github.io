@@ -9,7 +9,7 @@ import { createContext } from '../context.js';
 import { authenticate } from '../core/sellers.js';
 import { isDebtRef, confirmDebtPayment } from '../core/debts.js';
 import { RULES } from '../lib/terms.js';
-import { CONDITIONS, EXPIRY_OPTIONS, BUYER_DISPUTE_CATEGORIES, getDeal, getSeller } from '../core/common.js';
+import { CONDITIONS, EXPIRY_OPTIONS, BUYER_DISPUTE_CATEGORIES, getDeal, getSeller, caseRef, caseUpdateBy, iso } from '../core/common.js';
 import { refreshDeal, publicDealView, dealPhotos } from '../core/deals.js';
 import {
   startCheckout,
@@ -192,8 +192,12 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         status: o.status,
         amount: o.amount,
         item_title: deal.item_title,
+        quantity: deal.quantity,
+        item_condition: deal.item_condition,
+        inspection_hours: deal.inspection_hours,
         photos: await dealPhotos(ctx, deal),
         seller_name: seller.business_name,
+        paid_at: o.paid_at,
         seller_phone: seller.phone,
         delivery_state: o.delivery_state,
         delivery_address: o.delivery_address,
@@ -231,6 +235,9 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         category: dispute.category,
         resolution_note: dispute.resolution_note,
         buyer_refund: dispute.buyer_refund,
+        created_at: dispute.created_at,
+        case_ref: caseRef(o, dispute),
+        update_by: iso(caseUpdateBy(dispute)),
       },
       events,
     };

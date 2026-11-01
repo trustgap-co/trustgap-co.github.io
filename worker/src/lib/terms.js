@@ -72,13 +72,13 @@ export async function snapshotTerms(deal, seller, photoHashes = [], promo = null
 // wording (from /api/config, with {fee} filled in), and the filled-in wording is what gets recorded.
 export const CONSENTS = {
   seller: {
-    title: 'Is the item in good condition, exactly as agreed with the buyer?',
-    body: 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}), plus the dispute fee ({dispute}).',
-    confirm: 'The item is in good condition as agreed',
+    title: 'One last check before you send the link',
+    body: 'Thank you for selling safely. Please make sure the item is in good condition, exactly as you agreed with the buyer. If the buyer reports a problem and TrustGap finds the item wasn’t as described, the buyer is refunded and you pay for the delivery there and back: twice the delivery fee ({fee}), plus the dispute fee ({dispute}). An honest, careful description protects you too.',
+    confirm: 'Yes, the item is as agreed',
   },
   buyer: {
-    title: 'Before you pay: changing your mind has a cost',
-    body: 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If the item is wrong, damaged, fake or not as described, you get a full refund.',
+    title: 'Before you pay: one important thing',
+    body: 'We want this deal to go well for you. If the item arrives wrong, damaged, fake or not as described, you get a full refund and we’ll help you through it. But once you pay, the seller sends the item, so if you change your mind, or refuse an item that matches this description, the delivery there and back is paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If you’re unsure about anything, ask the seller first. It’s completely fine to wait.',
     confirm: 'I understand. Continue',
   },
 };

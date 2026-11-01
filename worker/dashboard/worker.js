@@ -1254,13 +1254,13 @@ async function snapshotTerms(deal, seller, photoHashes = [], promo = null, ackno
 __name(snapshotTerms, "snapshotTerms");
 var CONSENTS = {
   seller: {
-    title: "Is the item in good condition, exactly as agreed with the buyer?",
-    body: "If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer\u2019s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}), plus the dispute fee ({dispute}).",
-    confirm: "The item is in good condition as agreed"
+    title: "One last check before you send the link",
+    body: "Thank you for selling safely. Please make sure the item is in good condition, exactly as you agreed with the buyer. If the buyer reports a problem and TrustGap finds the item wasn\u2019t as described, the buyer is refunded and you pay for the delivery there and back: twice the delivery fee ({fee}), plus the dispute fee ({dispute}). An honest, careful description protects you too.",
+    confirm: "Yes, the item is as agreed"
   },
   buyer: {
-    title: "Before you pay: changing your mind has a cost",
-    body: "Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If the item is wrong, damaged, fake or not as described, you get a full refund.",
+    title: "Before you pay: one important thing",
+    body: "We want this deal to go well for you. If the item arrives wrong, damaged, fake or not as described, you get a full refund and we\u2019ll help you through it. But once you pay, the seller sends the item, so if you change your mind, or refuse an item that matches this description, the delivery there and back is paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If you\u2019re unsure about anything, ask the seller first. It\u2019s completely fine to wait.",
     confirm: "I understand. Continue"
   }
 };
@@ -1328,6 +1328,9 @@ var getDeal = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM 
 var getOrder = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM orders WHERE id = ?", id), "getOrder");
 var trackUrl = /* @__PURE__ */ __name((ctx, order) => `${ctx.config.siteUrl}/track.html?t=${order.buyer_token}`, "trackUrl");
 var payUrl = /* @__PURE__ */ __name((ctx, deal) => `${ctx.config.siteUrl}/pay.html?d=${deal.token}`, "payUrl");
+var CASE_UPDATE_HOURS = 24;
+var caseRef = /* @__PURE__ */ __name((order, dispute) => `${order.ref}-C${dispute.id}`, "caseRef");
+var caseUpdateBy = /* @__PURE__ */ __name((dispute) => new Date(new Date(dispute.created_at).getTime() + CASE_UPDATE_HOURS * 36e5), "caseUpdateBy");
 var detailText = /* @__PURE__ */ __name((d) => d == null ? null : typeof d === "string" ? d : JSON.stringify(d), "detailText");
 var eventStmt = /* @__PURE__ */ __name((ctx, orderId, actor, type, detail = null) => insertStmt(ctx.env, "order_events", { order_id: orderId, actor, type, detail: detailText(detail), created_at: iso(ctx.now()) }), "eventStmt");
 var logEvent = /* @__PURE__ */ __name((ctx, ...args) => eventStmt(ctx, ...args).run(), "logEvent");
@@ -1962,6 +1965,18 @@ __name(priceBreakdown, "priceBreakdown");
 var photoRows = /* @__PURE__ */ __name((ctx, deal) => all(ctx.env, "SELECT position, sha256 FROM deal_photos WHERE deal_id = ? ORDER BY position", deal.id), "photoRows");
 var dealPhotos = /* @__PURE__ */ __name(async (ctx, deal) => photoUrls(ctx, deal, await photoRows(ctx, deal)), "dealPhotos");
 var dealPhotoHashes = /* @__PURE__ */ __name(async (ctx, deal) => (await photoRows(ctx, deal)).map((p) => p.sha256), "dealPhotoHashes");
+async function sellerHistoryFor(ctx, seller) {
+  const n = /* @__PURE__ */ __name((sql) => first(ctx.env, sql, seller.id).then((r) => r.n), "n");
+  return {
+    joined_at: seller.created_at,
+    links_created: await n("SELECT COUNT(*) n FROM deals WHERE seller_id = ?"),
+    paid_orders: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND paid_at IS NOT NULL AND status != 'duplicate_refunded'"),
+    completed: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'completed'"),
+    disputes: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ?"),
+    decided_against: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ? AND d.fault = 'seller'")
+  };
+}
+__name(sellerHistoryFor, "sellerHistoryFor");
 async function publicDealView(ctx, deal) {
   const seller = await getSeller(ctx, deal.seller_id);
   const q = priceBreakdown(deal);
@@ -1969,7 +1984,7 @@ async function publicDealView(ctx, deal) {
     token: deal.token,
     // A suspended seller's open links show as paused (no payments) rather than open.
     status: deal.status === "open" && seller.suspended_at ? "paused" : deal.status,
-    seller: { business_name: seller.business_name, identity_verified: Boolean(seller.identity_verified_at) },
+    seller: { business_name: seller.business_name, identity_verified: Boolean(seller.identity_verified_at), history: await sellerHistoryFor(ctx, seller) },
     item_title: deal.item_title,
     item_description: deal.item_description,
     item_condition: deal.item_condition,
@@ -2565,7 +2580,7 @@ async function confirmPayment(ctx, txRef, actor = "system") {
     event: "payment_received_seller",
     phone: seller.phone,
     email: seller.email,
-    sms: `TrustGap: ${formatNaira(order.amount)} for "${deal.item_title}" is secured (order ${order.ref}). Pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}.`,
+    sms: `TrustGap: payment confirmed. ${order.buyer_name} paid ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) and it is secured. Next: pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}. You are paid after delivery and inspection.`,
     emailSubject: `Payment secured: order ${order.ref}`
   });
   await ctx.notify.send({
@@ -2573,7 +2588,7 @@ async function confirmPayment(ctx, txRef, actor = "system") {
     event: "payment_received_buyer",
     phone: order.buyer_phone,
     email: order.buyer_email,
-    sms: `TrustGap: payment received for "${deal.item_title}" (order ${order.ref}). Your money is held until delivery. Your delivery PIN is ${pin}. Give it to the rider ONLY after checking the item. Track: ${trackUrl(ctx, order)}`,
+    sms: `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`
   });
   return getOrder(ctx, order.id);
@@ -2662,7 +2677,7 @@ async function bookPickup(ctx, seller, orderId, packingNote) {
     orderId: order.id,
     event: "pickup_booked",
     phone: order.buyer_phone,
-    sms: `TrustGap: the seller has packed "${deal.item_title}" and pickup is booked (order ${order.ref}). Track: ${trackUrl(ctx, order)}`
+    sms: `TrustGap: the seller is preparing "${deal.item_title}" and a courier pickup is booked (order ${order.ref}). Nothing to do yet; we\u2019ll text you when it\u2019s on the way. Track: ${trackUrl(ctx, order)}`
   });
   return booking;
 }
@@ -2701,16 +2716,24 @@ async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   if (status === "refused") {
     await openDispute(ctx, await getOrder(ctx, order.id), { by: actor, category: "refused_at_door", description: reason });
     await startDoorReturn(ctx, await getOrder(ctx, order.id), { by: actor });
-  } else if (status === "out_for_delivery" || status === "attempt_failed") {
-    await ctx.notify.send({
-      orderId: order.id,
-      event: "delivery_" + status,
-      phone: order.buyer_phone,
-      sms: status === "out_for_delivery" ? `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.` : `TrustGap: the rider could not deliver order ${order.ref} (${reason}). They will try again.`
-    });
+  } else {
+    await deliveryNotice(ctx, order, status, reason);
   }
 }
 __name(applyDeliveryUpdate, "applyDeliveryUpdate");
+async function deliveryNotice(ctx, order, stage, reason = "") {
+  const seller = await getSeller(ctx, order.seller_id);
+  const send = /* @__PURE__ */ __name((to, sms) => ctx.notify.send({ orderId: order.id, event: `delivery_${stage}${to === "seller" ? "_seller" : ""}`, phone: to === "seller" ? seller.phone : order.buyer_phone, sms }), "send");
+  if (stage === "picked_up") {
+    await send("buyer", `TrustGap: your item for order ${order.ref} has been picked up from the seller. Keep your phone on; we\u2019ll text you when it\u2019s out for delivery.`);
+    await send("seller", `TrustGap: the courier has collected order ${order.ref}. Your part is nearly done; we\u2019ll tell you when it\u2019s delivered.`);
+  } else if (stage === "out_for_delivery") {
+    await send("buyer", `TrustGap: order ${order.ref} is on its way to you today. When it arrives, inspect it before giving the rider your PIN. If it isn\u2019t right, keep your PIN and report it.`);
+  } else if (stage === "attempt_failed") {
+    await send("buyer", `TrustGap: the rider couldn\u2019t deliver order ${order.ref} (${reason}). They will try again; please keep your phone on.`);
+  }
+}
+__name(deliveryNotice, "deliveryNotice");
 async function verifyDeliveryPin(ctx, order, pin, actor) {
   if (order.status !== "shipping") throw new UserError("This order is not out for delivery.");
   if (order.pin_attempts >= ctx.config.pinMaxAttempts) throw new UserError("Too many wrong PINs. Contact TrustGap support to continue.");
@@ -2742,13 +2765,13 @@ async function markDelivered(ctx, order, actor, eventType) {
     orderId: order.id,
     event: "delivered_buyer",
     phone: order.buyer_phone,
-    sms: `TrustGap: order ${order.ref} delivered. If something is wrong, report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)}. Otherwise the seller is paid automatically.`
+    sms: `TrustGap: order ${order.ref} was delivered and your inspection window has started. Check everything now. Happy? Confirm on your tracking page. A problem? Report it before ${fmtDate(ends)}: ${trackUrl(ctx, order)}. If you do nothing, the seller is paid then.`
   });
   await ctx.notify.send({
     orderId: order.id,
     event: "delivered_seller",
     phone: seller.phone,
-    sms: `TrustGap: order ${order.ref} was delivered. Your payout is released when the buyer confirms or at ${fmtDate(ends)}, unless they report a problem.`
+    sms: `TrustGap: order ${order.ref} was delivered. You have completed your part of the deal. Your payout is scheduled for when the buyer confirms, or at ${fmtDate(ends)} at the latest, unless they report a problem.`
   });
   return true;
 }
@@ -2767,14 +2790,7 @@ async function syncCourierStatus(ctx, order) {
     if (order.status === "shipping") await markDelivered(ctx, order, "courier", "delivered_by_courier");
   } else if (STAGE_RANK[st.stage] && (STAGE_RANK[order.delivery_status] || 0) < STAGE_RANK[st.stage]) {
     await run(ctx.env, "UPDATE orders SET delivery_status = ? WHERE id = ? AND status = 'shipping'", st.stage, order.id);
-    if (st.stage === "out_for_delivery") {
-      await ctx.notify.send({
-        orderId: order.id,
-        event: "delivery_out_for_delivery",
-        phone: order.buyer_phone,
-        sms: `TrustGap: order ${order.ref} is out for delivery. Check the item before you give the rider your PIN.`
-      });
-    }
+    await deliveryNotice(ctx, order, st.stage);
   } else if (st.stage === "problem" && /reject|refus/i.test(st.raw || "") && order.status === "shipping") {
     await openDispute(ctx, order, { by: "courier", category: "refused_at_door", description: `Refused at the door (courier: ${st.raw}${st.reason ? `: ${st.reason}` : ""}).` });
     await run(ctx.env, "UPDATE orders SET delivery_status = 'refused' WHERE id = ?", order.id);
@@ -2823,9 +2839,21 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
   if (!won) throw new UserError("This order changed while you were reporting. Refresh and try again.", 409);
   const seller = await getSeller(ctx, order.seller_id);
   const dFee = (await getDeal(ctx, order.deal_id)).dispute_fee;
-  const sms = `TrustGap: a problem was reported on order ${order.ref} (${DISPUTE_CATEGORIES[category]}). The money stays held while we review. We may contact you for evidence.${dFee ? ` If TrustGap has to decide, whoever is at fault pays a dispute fee of ${formatNaira(dFee)}.` : ""}`;
-  await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: order.buyer_phone, sms });
-  await ctx.notify.send({ orderId: order.id, event: "dispute_opened", phone: seller.phone, sms });
+  const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? ORDER BY id DESC", order.id);
+  const common = `Case ${caseRef(order, dispute)} (${DISPUTE_CATEGORIES[category]}) is now under review and the money stays held. We\u2019ll update you by ${fmtDate(caseUpdateBy(dispute))}.${dFee ? ` If TrustGap has to decide, whoever is at fault pays a dispute fee of ${formatNaira(dFee)}.` : ""}`;
+  const sms = `TrustGap: a problem was reported on order ${order.ref}. ${common}`;
+  await ctx.notify.send({
+    orderId: order.id,
+    event: "dispute_opened",
+    phone: order.buyer_phone,
+    sms: by === "buyer" ? `TrustGap: we have received your report on order ${order.ref}. ${common} Keep the item and packaging safe; we may ask for more evidence.` : sms
+  });
+  await ctx.notify.send({
+    orderId: order.id,
+    event: "dispute_opened",
+    phone: seller.phone,
+    sms: `${sms} Add your side and any photos from your order page; we read both sides before deciding.`
+  });
   if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
 }
 __name(openDispute, "openDispute");
@@ -3032,7 +3060,7 @@ async function releaseToSeller(ctx, order, reason) {
     orderId: order.id,
     event: "order_complete",
     phone: order.buyer_phone,
-    sms: `TrustGap: order ${order.ref} is complete. Thank you for buying safely.`
+    sms: `TrustGap: order ${order.ref} is complete and the seller has been paid. Thank you for helping make Nigerian online shopping safer. Know a seller who should use TrustGap? Send them ${ctx.config.siteUrl}`
   });
   return true;
 }
@@ -3287,8 +3315,12 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         status: o.status,
         amount: o.amount,
         item_title: deal.item_title,
+        quantity: deal.quantity,
+        item_condition: deal.item_condition,
+        inspection_hours: deal.inspection_hours,
         photos: await dealPhotos(ctx, deal),
         seller_name: seller.business_name,
+        paid_at: o.paid_at,
         seller_phone: seller.phone,
         delivery_state: o.delivery_state,
         delivery_address: o.delivery_address,
@@ -3325,7 +3357,10 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         status: dispute.status,
         category: dispute.category,
         resolution_note: dispute.resolution_note,
-        buyer_refund: dispute.buyer_refund
+        buyer_refund: dispute.buyer_refund,
+        created_at: dispute.created_at,
+        case_ref: caseRef(o, dispute),
+        update_by: iso(caseUpdateBy(dispute))
       },
       events
     };
@@ -3485,7 +3520,8 @@ function sellerRoutes(r) {
     const o = await first(ctx.env, "SELECT * FROM orders WHERE id = ? AND seller_id = ?", Number(params.id), seller.id);
     if (!o) throw notFound("Order not found.");
     const d = await first(ctx.env, "SELECT * FROM deals WHERE id = ?", o.deal_id);
-    const dispute = await first(ctx.env, "SELECT status, category, description, resolution_note, seller_payout FROM disputes WHERE order_id = ? ORDER BY id DESC", o.id);
+    const row = await first(ctx.env, "SELECT id, status, category, description, resolution_note, seller_payout, created_at FROM disputes WHERE order_id = ? ORDER BY id DESC", o.id);
+    const dispute = row && { ...row, case_ref: caseRef(o, row), update_by: iso(caseUpdateBy(row)) };
     return {
       order: {
         id: o.id,
@@ -3504,7 +3540,9 @@ function sellerRoutes(r) {
         packing_note: o.packing_note,
         ship_by: o.ship_by,
         delivered_at: o.delivered_at,
-        inspection_ends_at: o.inspection_ends_at
+        inspection_ends_at: o.inspection_ends_at,
+        paid_at: o.paid_at,
+        dispatched: Boolean(o.dispatched_at)
       },
       dispute,
       // Includes the return PIN while the item is on its way back, to give the rider at hand-back.
@@ -4455,8 +4493,8 @@ __name(teamResolveDispute, "teamResolveDispute");
 
 // src/manual.js
 var MANUAL = {
-  updated: "2026-10-31",
-  // dispute fee, deal limit, delivery as a TrustGap service
+  updated: "2026-11-01",
+  // support standard, case references, order journey
   sections: [
     {
       id: "start",
@@ -4653,6 +4691,26 @@ var MANUAL = {
 <li>If the buyer is refunded and had the item, a courier is booked to collect it, and the refund is sent once the seller has it back (see Returns).</li>
 <li>Your task is marked done automatically, with the decision in its notes. The decision shows your name on the order.</li>
 <li>A decision can\u2019t be undone. If you\u2019re unsure, add a note to the task and ask the admin instead of deciding.</li>
+</ul>`
+    },
+    {
+      id: "standard",
+      title: "Our support standard",
+      html: `
+<p>TrustGap\u2019s promise: <strong>no surprises, no silence, no confusion about what happens next.</strong> Every customer should always know what is happening, what happens next, and who will help them.</p>
+<ul>
+<li><strong>Acknowledge every message within 15 minutes</strong> during working hours, even if the answer takes longer: \u201CThanks, I\u2019m looking into this now.\u201D</li>
+<li><strong>Give a reference every time.</strong> For a problem report it is the case reference on the order page (for example TG-7K2P9Q-C12); otherwise the order reference. Ask them to quote it.</li>
+<li><strong>Give a realistic time</strong> for the next update, and keep it. Case messages promise an update within 24 hours of a report.</li>
+<li><strong>Never leave anyone guessing.</strong> If there is no news by the time you promised, still write: \u201CWe are still working on this. Your case has not been forgotten. Our next update will be by [time].\u201D</li>
+<li><strong>Never promise an outcome</strong> (\u201Cyou\u2019ll get a refund\u201D). Promise clarity and the process: what happens next and when.</li>
+<li><strong>Escalate to the admin straight away</strong>: payments and payouts, delivery problems you can\u2019t resolve with the courier, suspected fraud, threats, and anything legal.</li>
+</ul>
+<h3>Small touches that matter</h3>
+<ul>
+<li>A short welcome to each new seller: offer to help with their first link.</li>
+<li>For a first-time buyer on a big order, a message when it ships: \u201CYour item is on its way; we\u2019re watching it for you.\u201D</li>
+<li>After a completed order, a thank-you and a quick \u201CHow did it go?\u201D.</li>
 </ul>`
     },
     {
