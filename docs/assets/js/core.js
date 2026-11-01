@@ -183,6 +183,50 @@ export const getConfig = () => (configPromise ||= (() => {
 })());
 export const getBanks = () => api('/api/banks').then((d) => d.banks);
 
+// ---------------------------------------------------------------- the order journey
+// Agreed → Payment secured → Preparing → Picked up → On the way → Delivered → Inspection → Released,
+// with one plain sentence on what happens next and what (if anything) the reader should do.
+const JOURNEY = ['Agreed', 'Payment secured', 'Preparing', 'Picked up', 'On the way', 'Delivered', 'Inspection', 'Released'];
+function journeyStep(o) {
+  if (['awaiting_payment', 'cancelled'].includes(o.status)) return 1;
+  if (o.status === 'completed') return JOURNEY.length;
+  if (o.status === 'delivered' || o.delivered_at) return 6;
+  if (o.status === 'paid') return 2;
+  return { picked_up: 3, out_for_delivery: 4, attempt_failed: 4, refused: 4, returned: 4 }[o.delivery_status] ?? 2;
+}
+function nextStep(o, as, dispute) {
+  const buyer = as === 'buyer';
+  if (dispute && ['open', 'awaiting_return'].includes(dispute.status)) {
+    return dispute.status === 'awaiting_return'
+      ? `A decision has been made. ${buyer ? 'Your refund is sent' : 'The money moves'} as soon as the item is back with the seller.`
+      : `Case ${dispute.case_ref} is under review and the money stays held. ${buyer ? (o.delivered_at ? 'Keep the item and packaging safe.' : '') : 'Add your side and any photos below.'} Next update by ${date(dispute.update_by)}.`;
+  }
+  const d = o.delivery_status;
+  switch (o.status) {
+    case 'awaiting_payment': case 'cancelled': return buyer ? 'Complete your payment to secure the deal.' : 'Waiting for the buyer to pay.';
+    case 'paid': return buyer
+      ? `Your payment is secured. The seller is preparing your item and must hand it to the courier by ${date(o.ship_by)}. Nothing to do yet.`
+      : `Payment confirmed. Pack the item and book pickup before ${date(o.ship_by)}.`;
+    case 'shipping':
+      if (d === 'out_for_delivery') return buyer ? 'On its way to you. When it arrives, inspect it before you share your PIN.' : 'The courier is delivering it. Nothing to do; we’ll tell you when it’s delivered.';
+      if (d === 'attempt_failed') return buyer ? 'The rider couldn’t deliver and will try again. Please keep your phone on.' : 'The rider couldn’t deliver and will try again.';
+      if (d === 'picked_up') return buyer ? 'Your item has left the seller. We’ll text you when it’s on the way.' : 'The courier has collected it. Your part is nearly done.';
+      return buyer ? 'The seller has packed your item and pickup is booked. We’ll text you when it’s on the way.' : 'Pickup is booked. Hand the parcel to the courier when they arrive.';
+    case 'delivered': return buyer
+      ? `Delivered. Inspect everything now: confirm below if all is well, or report a problem before ${date(o.inspection_ends_at)}.`
+      : `Delivered. You have completed your part of the deal. Your payout is scheduled for when the buyer confirms, or ${date(o.inspection_ends_at)} at the latest.`;
+    case 'completed': return buyer ? 'Complete. The seller has been paid. Thank you for buying safely.' : 'Complete. Your payout has been released to your bank account.';
+    case 'refunded': return buyer ? 'This order was refunded.' : 'This order was refunded to the buyer.';
+    default: return '';
+  }
+}
+export function orderJourney(o, { as = 'buyer', dispute = null } = {}) {
+  const at = journeyStep(o);
+  const paused = ['disputed', 'refunded', 'duplicate_refunded'].includes(o.status);
+  return html`<div class="journey"><div class="status-strip" aria-label="Order progress">${JOURNEY.map((label, i) => html`<span class="${i < at ? 'done' : i === at && !paused ? 'now' : ''}"${i === at && !paused ? raw(' aria-current="step"') : ''}>${label}</span>`)}</div>
+    ${nextStep(o, as, dispute) ? html`<p class="next-step"><strong>${paused && dispute ? 'Paused for review.' : 'What happens next:'}</strong> ${nextStep(o, as, dispute)}</p>` : ''}</div>`;
+}
+
 // ---------------------------------------------------------------- dispute decisions
 // "Who is at fault" on the decision forms (admin and team). Amounts are entered before the dispute fee;
 // the Worker applies it to the side at fault.

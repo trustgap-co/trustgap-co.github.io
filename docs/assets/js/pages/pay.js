@@ -42,11 +42,25 @@ function breakdown(d, promo) {
     <tr><td>Item price${d.quantity > 1 ? ` (×${d.quantity})` : ''}</td><td>${money(p.item)}</td></tr>
     <tr><td>Delivery ${d.ships_from} → ${d.delivery.state}${half(d.delivery_payer)} <small class="muted">(booked, tracked and handled by TrustGap)</small></td><td>${p.delivery ? money(p.delivery) : paidBySeller}</td></tr>
     <tr><td>TrustGap fee (${feeLabel(config.fee, p.platform_fee_full)})${half(d.fee_payer)}</td><td>${feeCell}</td></tr>
-    <tr><td>Payment processing${half(d.fee_payer)} <small class="muted">(Flutterwave’s charges, passed on at cost)</small></td>
+    <tr><td>Payment processing${half(d.fee_payer)} <small class="muted">(the payment provider’s charges, passed on at cost)</small></td>
       <td>${p.processing_fee ? money(p.processing_fee) : paidBySeller}</td></tr>
     ${promo ? html`<tr class="discount"><td>Early-access code ${promo.code} <small class="muted">(TrustGap fee removed)</small></td><td>−${money(promo.discount)}</td></tr>` : ''}
     <tr class="total"><td>You pay</td><td>${money(promo ? promo.total : p.total)}</td></tr>
   </table>${d.dispute_fee ? html`<p class="small muted">Not part of what you pay now: if TrustGap has to decide a dispute on this order, whoever is found at fault (buyer or seller) pays a ${money(d.dispute_fee)} dispute fee.</p>` : ''}`;
+}
+
+// The seller's record on TrustGap, from real orders: facts, not ratings.
+function sellerRecord(h) {
+  if (!h) return '';
+  const since = new Date(h.joined_at).toLocaleDateString('en-NG', { month: 'long', year: 'numeric', timeZone: 'Africa/Lagos' });
+  const n = (count, one, many) => `${count.toLocaleString('en-NG')} ${count === 1 ? one : many}`;
+  return html`<div class="seller-record"><p class="small"><strong>Seller’s record on TrustGap</strong> · since ${since}</p>
+    ${h.completed
+      ? html`<ul class="record-stats">
+          <li><strong>${h.completed.toLocaleString('en-NG')}</strong> completed ${h.completed === 1 ? 'order' : 'orders'}</li>
+          <li><strong>${h.links_created.toLocaleString('en-NG')}</strong> payment ${h.links_created === 1 ? 'link' : 'links'} created</li>
+          <li><strong>${h.decided_against}</strong> ${h.decided_against === 1 ? 'dispute' : 'disputes'} decided against them${h.disputes ? html` <span class="muted">(of ${n(h.disputes, 'dispute', 'disputes')})</span>` : ''}</li></ul>`
+      : html`<p class="small muted">New on TrustGap: ${n(h.links_created, 'payment link', 'payment links')} created, no completed orders yet. Your payment is protected the same way either way.</p>`}</div>`;
 }
 
 const shieldIcon = raw('<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>');
@@ -57,6 +71,8 @@ function review(d, rules, promo = null) {
   show('#app', html`${steps(1)}<section class="card">
     <p class="seller-line">Seller: <strong>${d.seller.business_name}</strong>
       ${d.seller.identity_verified ? html`<span class="badge badge-ok">✓ Identity verified</span>` : html`<span class="badge badge-muted">Identity not yet verified</span>`}</p>
+    ${sellerRecord(d.seller.history)}
+    <p class="lead-note">Before you pay, here is exactly what you are agreeing to. No hidden fees. No guesswork.</p>
     <h1>${d.item_title}</h1>
     ${d.photos?.length ? html`${gallery(d.photos, d.item_title)}
       <p class="muted small">Photos from the seller${d.photos.length > 1 ? ` (${d.photos.length}, swipe to see all)` : ''}. Tap to enlarge. At delivery, check the item matches them before giving your PIN.</p>` : ''}
@@ -117,8 +133,8 @@ function review(d, rules, promo = null) {
     // The buyer sees what changing their mind would cost before going on to pay.
     const c = config.consents?.buyer;
     const acknowledged = await confirmModal({
-      title: c?.title || 'Before you pay: changing your mind has a cost',
-      body: fillConsentBody(c?.body || 'Once you pay, the seller sends the item. If you change your mind after paying, or refuse or send back an item that matches this description when it reaches you, the delivery and the return are paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If the item is wrong, damaged, fake or not as described, you get a full refund.',
+      title: c?.title || 'Before you pay: one important thing',
+      body: fillConsentBody(c?.body || 'We want this deal to go well for you. If the item arrives wrong, damaged, fake or not as described, you get a full refund and we’ll help you through it. But once you pay, the seller sends the item, so if you change your mind, or refuse an item that matches this description, the delivery there and back is paid from your refund: twice the delivery fee ({fee}), plus the dispute fee ({dispute}) if TrustGap has to decide it. If you’re unsure about anything, ask the seller first. It’s completely fine to wait.',
         d.price.delivery_full, d.dispute_fee),
       confirm: c?.confirm || 'I understand. Continue',
     });

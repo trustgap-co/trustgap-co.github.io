@@ -103,6 +103,12 @@ shown to admin on the order page and copied to Google Sheets.
 14. **Records by date**: Orders, Disputes, Sellers, Messages and Ledger are grouped by day, with
    From/To filters, one-tap ranges (Today, Yesterday, Last 7 days, This month) and newest/oldest order;
    the ledger shows money in and out per day and totals for the chosen dates.
+15. **No surprises, no silence**: the deal page shows the seller's record (since when, links created,
+   completed orders, disputes decided against them) and "exactly what you are agreeing to"; buyer and
+   seller order pages show the journey (Agreed → Payment secured → Preparing → Picked up → On the way →
+   Delivered → Inspection → Released) with what happens next; every SMS ends with the next step; the
+   PIN box has a doorstep checklist; a problem report gets a case reference (e.g. TG-7K2P9Q-C12) and an
+   update promised within 24 hours. The team manual has the support standard.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

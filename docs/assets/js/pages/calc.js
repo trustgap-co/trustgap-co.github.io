@@ -58,7 +58,7 @@ function render() {
     <div class="row2 tot"><span>Seller receives</span><span>${money(q.sellerPayout)}</span></div>
     ${minMultiple && q.itemPrice < minMultiple * q.deliveryFee
       ? html`<p class="error" style="margin:10px 0 0">Too low for this delivery: the item price must be at least ${money(minMultiple * q.deliveryFee)} (${minMultiple === 2 ? 'twice' : `${minMultiple} times`} the delivery fee), so a return is always covered.</p>` : ''}
-    <p class="small muted" style="margin-bottom:0">Estimate only. Payment processing is Flutterwave’s ${processing.percent}%${processing.capKobo ? ` (capped at ${money(processing.capKobo)})` : ''} plus a payout fee of up to
+    <p class="small muted" style="margin-bottom:0">Estimate only. Payment processing is the payment provider’s ${processing.percent}%${processing.capKobo ? ` (capped at ${money(processing.capKobo)})` : ''} plus a payout fee of up to
       ${money(processing.payoutFeeKobo)}, passed on at cost. The deal link shows the exact amounts before anyone pays.</p>`);
 }
 // One analytics event per pause in typing, with the numbers tried (no personal data).

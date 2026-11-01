@@ -73,7 +73,7 @@ try {
         <p class="label">Delivery fee <small>TrustGap books, tracks and handles the courier for you</small></p>
         <div class="choices">${radio('delivery_payer', 'buyer', 'Buyer pays')}${radio('delivery_payer', 'seller', 'I pay')}${radio('delivery_payer', 'split', 'Split 50/50')}</div>
         <p class="label">TrustGap fee (${feeSummary(fee)}) + payment processing</p>
-        <p class="muted small">Payment processing passes Flutterwave’s charges on at cost (about ${config.processing.percent}%${config.processing.capKobo ? `, max ${money(config.processing.capKobo)},` : ''} plus a small payout fee). Both lines are shown to the buyer separately.</p>
+        <p class="muted small">Payment processing passes the payment provider’s charges on at cost (about ${config.processing.percent}%${config.processing.capKobo ? `, max ${money(config.processing.capKobo)},` : ''} plus a small payout fee). Both lines are shown to the buyer separately.</p>
         <div class="choices">${radio('fee_payer', 'buyer', 'Buyer pays')}${radio('fee_payer', 'seller', 'I pay')}${radio('fee_payer', 'split', 'Split 50/50')}</div>
         <label>Early-access code <small>optional. Removes the TrustGap fee from this link (once per seller)</small>
           <input name="promo_code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. EARLYGAP" value="${v.promo_code || ''}" class="code-input"></label>
@@ -178,9 +178,9 @@ try {
     // The seller confirms the item's condition, with the cost of a false description in front of them.
     const c = config.consents?.seller;
     const confirmed = await confirmModal({
-      title: c?.title || 'Is the item in good condition, exactly as agreed with the buyer?',
-      body: fillConsentBody(c?.body || 'If the buyer reports a problem and TrustGap finds the item was not in the condition you described, the buyer’s money is refunded and you pay for the delivery and the return of the item: twice the delivery fee ({fee}), plus the dispute fee ({dispute}).', lastDeliveryFee, lastDisputeFee),
-      confirm: c?.confirm || 'The item is in good condition as agreed',
+      title: c?.title || 'One last check before you send the link',
+      body: fillConsentBody(c?.body || 'Thank you for selling safely. Please make sure the item is in good condition, exactly as you agreed with the buyer. If the buyer reports a problem and TrustGap finds the item wasn’t as described, the buyer is refunded and you pay for the delivery there and back: twice the delivery fee ({fee}), plus the dispute fee ({dispute}). An honest, careful description protects you too.', lastDeliveryFee, lastDisputeFee),
+      confirm: c?.confirm || 'Yes, the item is as agreed',
     });
     track('seller_condition_confirm', { confirmed });
     if (!confirmed) return;

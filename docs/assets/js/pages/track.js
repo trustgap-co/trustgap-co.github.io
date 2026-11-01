@@ -1,6 +1,6 @@
 // The buyer's private tracking page: status, delivery PIN, confirm or report a problem.
 import { photoPicker } from '../photos.js';
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, orderJourney, $ } from '../core.js';
 
 await shell('buyer');
 const token = params.get('t') || '';
@@ -14,16 +14,24 @@ async function render() {
     <p><strong>${o.item_title}</strong> from ${o.seller_name} · ${money(o.amount)}</p>
     ${gallery(o.photos, o.item_title)}
     <p class="muted small">Delivering to ${o.delivery_address}, ${o.delivery_state}</p>
+    ${orderJourney(o, { as: 'buyer', dispute })}
     ${['awaiting_payment', 'cancelled'].includes(o.status)
       ? html`<div class="callout warn">Payment not completed.
           ${o.can_retry_payment ? html`<form id="retry"><button class="btn">Try payment again</button></form>` : html`<br>This link is no longer open. Ask the seller for a new one.`}</div>`
       : ''}
     ${o.pin
       ? html`<div class="pinbox"><p>Your delivery PIN</p><div class="pin">${o.pin}</div>
-          <p class="small">Check the item at the door. <strong>Only give this PIN to the rider if the item matches.</strong> If it doesn’t, refuse it and keep your PIN.</p></div>`
+          <p class="small"><strong>Please inspect the item before sharing your PIN.</strong> Sharing it confirms the handover; your ${o.inspection_hours ? `${o.inspection_hours}-hour ` : ''}inspection window still applies under the deal rules. If the item isn’t right, refuse it and keep your PIN.</p>
+          ${o.status === 'shipping' ? html`<p class="small" style="margin:10px 0 0"><strong>At the door, check:</strong></p>
+          <ul class="handover-check">
+            <li>Is this the correct item (${o.item_title})?</li>
+            <li>Is the quantity correct (${o.quantity || 1})?</li>
+            <li>Is it free of visible damage?</li>
+            <li>Does it match the agreed description${o.item_condition ? ` and condition: ${o.item_condition}` : ''}?</li>
+            <li>Are the accessories, box and anything promised included?</li>
+          </ul>` : ''}</div>`
       : ''}
-    ${o.status === 'paid' ? html`<p>Your money is held by TrustGap. The seller must hand the item to the courier before ${date(o.ship_by)}.</p>` : ''}
-    ${o.status === 'shipping' ? html`<p>Parcel status: <strong>${o.delivery_label}</strong></p>` : ''}
+    ${o.status === 'shipping' && o.courier_status ? html`<p class="small muted">Courier’s latest update: ${o.courier_status}</p>` : ''}
     <details class="rules"><summary>What you paid</summary><table class="breakdown">
       <tr><td>Item</td><td>${money(o.price.item)}</td></tr>
       ${o.price.delivery ? html`<tr><td>Delivery to ${o.delivery_state}</td><td>${money(o.price.delivery)}</td></tr>` : ''}
@@ -38,8 +46,11 @@ async function render() {
     ${o.status === 'completed' && !dispute ? html`<div class="callout ok">Complete. The seller has been paid.</div>` : ''}
     ${dispute
       ? html`<div class="callout ${dispute.status === 'open' ? 'warn' : 'info'}">
-          <strong>${dispute.status === 'open' ? 'Under review' : 'Decision'}:</strong>
-          ${dispute.status === 'open' ? 'TrustGap is reviewing this order. Your money stays held.' : dispute.resolution_note}
+          <strong>${dispute.status === 'open' ? `Case ${dispute.case_ref}: under review` : 'Decision'}</strong><br>
+          ${dispute.status === 'open'
+            ? html`We have received ${dispute.opened_by === 'buyer' ? 'your report' : 'a report on this order'} and your case is now under review. Your money stays held while we look into it. Please don’t mark the order complete while the review is open.
+              <br><span class="small">Our next update: by <strong>${date(dispute.update_by)}</strong>. Quote ${dispute.case_ref} if you contact support.</span>`
+            : dispute.resolution_note}
           ${dispute.status === 'resolved' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}` : ''}
           ${dispute.status === 'awaiting_return' ? html`<br>Refund to you: <strong>${money(dispute.buyer_refund || 0)}</strong> → ${o.refund_account}, sent as soon as the seller has the item back.` : ''}
           ${dispute.photos?.length ? html`<p class="small" style="margin:10px 0 0">Your photos:</p>${gallery(dispute.photos, 'Problem')}` : ''}
@@ -91,7 +102,14 @@ async function render() {
                   <input type="file" accept="image/*" capture="environment" id="ev-input" class="visually-hidden"></label></details>
               <p class="muted small" id="ev-note" aria-live="polite"></p>
             </div>
-            <p class="muted small">Keep the item, packaging and any unboxing video. TrustGap may contact you for more evidence. The money stays held until a decision.</p>
+            <div class="next-step small"><strong>What happens next</strong>
+              <ol style="margin:6px 0 0;padding-left:18px">
+                <li>You get a case reference straight away, and the seller is told.</li>
+                <li>Your money stays held. Nobody is paid while the review is open.</li>
+                <li>Both sides can add their account and photos. Keep the item, packaging and any unboxing video.</li>
+                <li>We update you within 24 hours, and explain the decision in writing.</li>
+              </ol>
+              <p class="small muted" style="margin:6px 0 0">A refund depends on the review and the deal rules; it isn’t automatic.</p></div>
             <button class="btn btn-danger">Report problem &amp; hold payment</button>
           </form></details>`
       : ''}
@@ -144,7 +162,7 @@ async function render() {
       const photos = evidence.list();
       if (needsPhoto.includes(data.category) && !photos.length) throw new Error('Add at least one photo showing the problem with the item.');
       await api(path + '/dispute', { method: 'POST', body: { ...data, photos } });
-      flash.set('Problem reported. Your money is held while TrustGap reviews it.');
+      flash.set('We have received your report. Your case is now under review and your money stays held.');
       trackThenGo('dispute_opened', { transaction_id: o.ref, dispute_category: data.category, photo_count: photos.length }, location.href);
     });
   }

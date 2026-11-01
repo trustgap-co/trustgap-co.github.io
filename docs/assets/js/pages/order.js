@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, trackThenGo, gallery, confirmModal, caseAccounts, keepFresh, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, trackThenGo, gallery, confirmModal, caseAccounts, keepFresh, orderJourney, $ } from '../core.js';
 import { photoPicker } from '../photos.js';
 
 const orderPath = `/api/seller/orders/${encodeURIComponent(params.get('id'))}`;
@@ -11,6 +11,7 @@ async function render() {
     <div class="spread"><h1>Order ${o.ref}</h1>${orderBadge(o.status)}</div>
     <p><strong>${o.item_title}</strong> · ${money(o.seller_payout)} to you after delivery</p>
     ${gallery(o.photos, o.item_title)}
+    ${orderJourney(o, { as: 'seller', dispute })}
     <p class="muted">Buyer: ${o.buyer_name} · Delivering to ${o.delivery_state}${o.delivery_payer !== 'buyer' ? html` · delivery ${money(o.delivery_fee)} (${o.delivery_payer === 'split' ? 'half' : 'all'} paid by you)` : ''}</p>
     ${o.status === 'paid'
       ? html`<div class="callout info"><strong>The buyer’s money is secured.</strong> Pack the item and book pickup before ${date(o.ship_by)}, or the buyer is refunded.
@@ -20,11 +21,12 @@ async function render() {
             <button class="btn">Item is packed, book pickup</button>
           </form></div>`
       : ''}
-    ${o.status === 'shipping' ? html`<p>Parcel status: <strong>${o.delivery_label}</strong>${o.courier_status ? html` <span class="muted">(courier: ${o.courier_status})</span>` : ''}</p>` : ''}
-    ${o.status === 'delivered' ? html`<p>Delivered ${date(o.delivered_at)}. You are paid when the buyer confirms, or automatically at ${date(o.inspection_ends_at)}.</p>` : ''}
+    ${o.status === 'shipping' ? html`${o.courier_status ? html`<p class="small muted">Courier’s latest update: ${o.courier_status}</p>` : ''}
+      <p class="small"><strong>At handover:</strong> the buyer’s PIN confirms they received the item. Please don’t pressure the buyer to share it before they have the item and have checked it.</p>` : ''}
     ${dispute
       ? html`<div class="callout ${dispute.status === 'open' ? 'warn' : 'info'}">
-          <strong>${dispute.status === 'open' ? 'Under review' : dispute.status === 'awaiting_return' ? 'Decided, waiting for the return' : 'Decided'}:</strong> ${dispute.description}
+          <strong>${dispute.status === 'open' ? `Case ${dispute.case_ref}: under review` : dispute.status === 'awaiting_return' ? 'Decided, waiting for the return' : 'Decided'}:</strong> ${dispute.description}
+          ${dispute.status === 'open' ? html`<br><span class="small">Nothing is paid out while the review is open. Add your side with photos (packing photos or video help most). Our next update: by <strong>${date(dispute.update_by)}</strong>.</span>` : ''}
           ${dispute.resolution_note ? html`<br><strong>Decision:</strong> ${dispute.resolution_note} (paid to you: ${money(dispute.seller_payout || 0)})` : ''}
           ${dispute.status === 'open' && !kase ? html`<br><small>Send photos, your packing video or chat screenshots to TrustGap support, quoting ${o.ref}.</small>` : ''}
         </div>`
