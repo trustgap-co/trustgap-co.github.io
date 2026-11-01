@@ -6,7 +6,7 @@ import { UserError } from '../lib/http.js';
 import { hit } from '../lib/limits.js';
 
 const FORMS = ['survey', 'early_access'];
-const MAX_FIELDS = 60;
+const MAX_FIELDS = 90; // the survey sends about 65 (answers, contact, source details)
 const MAX_VALUE = 2000;
 const MAX_TOTAL = 24_000;
 

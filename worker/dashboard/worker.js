@@ -3150,7 +3150,7 @@ __name(settleTransfer, "settleTransfer");
 
 // src/core/leads.js
 var FORMS = ["survey", "early_access"];
-var MAX_FIELDS = 60;
+var MAX_FIELDS = 90;
 var MAX_VALUE = 2e3;
 var MAX_TOTAL = 24e3;
 async function forwardLead(ctx, body) {
