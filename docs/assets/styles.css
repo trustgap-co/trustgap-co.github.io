@@ -660,3 +660,10 @@ body.is-live .when-prelaunch { display: none !important; }
 
 /* Seller price calculator: the message to send the buyer */
 #for-buyer { width: 100%; font: inherit; font-size: .95rem; line-height: 1.5; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); resize: vertical; }
+
+/* Survey: the reward, stated before anyone starts */
+.sv-reward { display: flex; gap: 12px; align-items: flex-start; margin: 4px 0 18px; padding: 14px 16px; border: 2px dashed var(--link); border-radius: 14px; background: var(--info-soft); }
+.sv-reward-icon { font-size: 1.6rem; line-height: 1; }
+.sv-reward strong { display: block; color: var(--text); margin-bottom: 4px; font-size: 1.02rem; }
+.sv-reward span { color: var(--muted); font-size: .92rem; line-height: 1.5; }
+.sv-opt small { display: block; font-weight: 400; font-size: .78rem; opacity: .8; }

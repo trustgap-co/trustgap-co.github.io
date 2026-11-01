@@ -93,6 +93,9 @@ function intro() {
   frame(html`
     <p class="eyebrow">2-minute survey</p>
     <h1 tabindex="-1">Have you ever been scammed, disappointed, or left unsure while shopping or selling online?</h1>
+    <div class="sv-reward"><span class="sv-reward-icon" aria-hidden="true">🎁</span>
+      <div><strong>Your reward: no TrustGap fee on your first deal</strong>
+      <span>Finish the survey and leave a WhatsApp number or email, and your early-access code appears on the spot. It removes the TrustGap fee from your first deal${SITE.launched ? '' : ` after we launch on ${SITE.launchDate}`}, worth up to ₦15,000 on a big deal. For anyone 18 or over.</span></div></div>
     <p>We’re researching how Nigerians buy and sell through WhatsApp, Instagram, websites and online marketplaces. Your answers will help us build a safer way to secure payment and deliver items.</p>
     <ul class="sv-facts"><li><strong>Time:</strong> about 2 minutes</li>
       <li><strong>Privacy:</strong> we will never ask for your NIN, bank password, card PIN, OTP or payment details. Your name and contact are optional.</li></ul>
@@ -192,7 +195,7 @@ function contactScreen() {
     <p>Be first to try safer deals when we launch on ${SITE.launchDate}. Early-access members pay <strong>no TrustGap fee on their first deal</strong>.</p>
     <div class="sv-options sv-two">
       <button type="button" class="sv-opt ${answers.wants_contact === 'yes' ? 'on' : ''}" data-contact="yes">Yes, contact me</button>
-      <button type="button" class="sv-opt ${answers.wants_contact === 'no' ? 'on' : ''}" data-contact="no">No, submit anonymously</button>
+      <button type="button" class="sv-opt ${answers.wants_contact === 'no' ? 'on' : ''}" data-contact="no">No, submit anonymously <small>(no early-access code)</small></button>
     </div>
     <form id="sv-contact" class="form sv-contact" ${answers.wants_contact === 'yes' ? '' : raw('hidden')} novalidate>
       <label>First name or nickname <input name="name" maxlength="60" autocomplete="given-name"></label>
