@@ -578,7 +578,8 @@ The site now makes it easy for them to understand TrustGap; mentions elsewhere m
 
 **Customer Relations Admin.** On Admin → Team, add the person with the role **Customer Relations
 Admin** and their phone number (required: login codes and dispute alerts go to it). Only one can be
-active. They log in at `team/index.html` with email + password, then a code texted to their phone,
+active. Already a team member? Use **Make Customer Relations Admin** on their row instead (same
+account and history). **Delete** appears only for accounts that have never had a task; otherwise use **Turn off**. They log in at `team/index.html` with email + password, then a code texted to their phone,
 and land on the admin pages with near-admin access (see the manual's "Customer Relations Admin"
 section). Add a **Text** variable `ADMIN_ALERT_PHONE` with your own number so you get an SMS for
 every new dispute and for every decision made by someone else. Optional: `TEAM_DISPUTE_CAP_NAIRA`

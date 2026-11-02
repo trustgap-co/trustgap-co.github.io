@@ -54,7 +54,9 @@ async function render() {
         <small class="muted">${s.email}${s.phone ? ` · ${s.phone}` : ''} · ${s.last_login_at ? `last login ${date(s.last_login_at)}` : 'never logged in'}${s.must_change_password ? ' · must set a new password' : ''}</small></div>
       <div class="right actions">${me.role !== 'admin' && (s.role === 'cr_admin' || s.id === me.id) ? html`<small class="muted">Managed by the admin</small>` : html`
         <button class="btn btn-small btn-secondary" data-reset="${s.id}" data-name="${s.name}">Reset password</button>
-        <button class="btn btn-small ${s.disabled ? '' : 'btn-danger'}" data-disable="${s.id}" data-on="${s.disabled ? 'false' : 'true'}">${s.disabled ? 'Turn back on' : 'Turn off'}</button>`}
+        <button class="btn btn-small ${s.disabled ? '' : 'btn-danger'}" data-disable="${s.id}" data-on="${s.disabled ? 'false' : 'true'}">${s.disabled ? 'Turn back on' : 'Turn off'}</button>
+        ${me.role === 'admin' && !s.disabled ? html`<button class="btn btn-small btn-secondary" data-role="${s.id}" data-name="${s.name}" data-phone="${s.phone || ''}" data-to="${s.role === 'cr_admin' ? 'customer_relations' : 'cr_admin'}">${s.role === 'cr_admin' ? 'Make customer relations member' : 'Make Customer Relations Admin'}</button>` : ''}
+        ${s.can_delete ? html`<button class="btn btn-small btn-danger" data-delete="${s.id}" data-name="${s.name}">Delete</button>` : ''}`}
       </div></div>`)}</div>` : html`<p class="muted">No team members yet.</p>`}
     <h3>Add a team member</h3>
     <form class="form" id="new-member">
@@ -102,6 +104,29 @@ async function render() {
       if (!password) return;
       await api(`/api/admin/team/${b.dataset.reset}`, { method: 'POST', body: { password }, as: 'admin' }).then(() => flash.set('Password reset. They have been signed out.'))
         .catch((e) => alert(e.message));
+      location.reload();
+    });
+  }
+  for (const b of $$('[data-role]')) {
+    b.addEventListener('click', async () => {
+      const toLead = b.dataset.to === 'cr_admin';
+      let phone = b.dataset.phone;
+      if (toLead) {
+        if (!confirm(`Make ${b.dataset.name} the Customer Relations Admin? They keep their account and history, get near-admin access, log in with a code texted to their phone, and get an SMS for every new dispute. They are signed out now.`)) return;
+        if (!phone) phone = prompt(`${b.dataset.name}’s phone number (login codes and dispute alerts go to it):`, '') || '';
+        if (!phone) return;
+      } else if (!confirm(`Make ${b.dataset.name} a customer relations member? They lose near-admin access and are signed out now.`)) return;
+      await api(`/api/admin/team/${b.dataset.role}`, { method: 'POST', body: { role: b.dataset.to, phone }, as: 'admin' })
+        .then(() => flash.set(toLead ? `${b.dataset.name} is now the Customer Relations Admin.` : 'Role changed.'))
+        .catch((e) => alert(e.message));
+      location.reload();
+    });
+  }
+  for (const b of $$('[data-delete]')) {
+    b.addEventListener('click', async () => {
+      if (!confirm(`Delete ${b.dataset.name}’s account? This can’t be undone. (Only possible for accounts that have never had a task.)`)) return;
+      await api(`/api/admin/team/${b.dataset.delete}/delete`, { method: 'POST', body: {}, as: 'admin' })
+        .then(() => flash.set('Account deleted.')).catch((e) => alert(e.message));
       location.reload();
     });
   }
