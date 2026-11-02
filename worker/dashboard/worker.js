@@ -144,6 +144,10 @@ function loadConfig(env) {
       maxUses: num(env.PROMO_MAX_USES, 1e3)
     },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
+    // Customer relations members may decide disputes only on orders up to this (the Customer Relations
+    // Admin and the admin decide any). Dispute alerts go to ADMIN_ALERT_PHONE and the CR Admin.
+    teamDisputeCapKobo: num(env.TEAM_DISPUTE_CAP_NAIRA, 2e5) * 100,
+    adminAlertPhone: String(env.ADMIN_ALERT_PHONE || "").trim(),
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,
     otp: { ttlMinutes: 10, maxAttempts: 5, maxPerWindow: 3, windowMinutes: 15 },
@@ -684,6 +688,9 @@ function createFezLogistics(ctx) {
     name: "fez",
     // Live Fez books real pickups that Fez bills for; the sandbox doesn't.
     live: !base.includes("sandbox"),
+    // Fez makes its own delivery code and texts it to the recipient at dispatch (read back as
+    // delivery_OTP); TrustGap's PIN isn't used.
+    givesCode: true,
     // POST /order/cost: the amount charged is cost + VAT ("totalCost").
     async quote({ pickupState, dropoffState, weightKg }) {
       const data = await call("POST", "/order/cost", { state: dropoffState, pickUpState: pickupState, weight: weightKg });
@@ -691,9 +698,9 @@ function createFezLogistics(ctx) {
       if (!Number.isFinite(total) || total <= 0) throw new Error(`Fez returned no delivery price for ${dropoffState}.`);
       return { feeKobo: Math.ceil(total) * 100 };
     },
-    // POST /order books the pickup. uniqueID is our order reference, and the buyer's delivery PIN
-    // goes in CustToken (Fez's "token sent to recipient for confirmation of receipt").
-    async book({ order, deal, seller, pin }) {
+    // POST /order books the pickup. uniqueID is our order reference. Fez generates the delivery code
+    // itself (CustToken is only for organisations that send their own), so none is sent.
+    async book({ order, deal, seller }) {
       const data = await call("POST", "/order", [
         {
           recipientAddress: order.delivery_address,
@@ -703,9 +710,8 @@ function createFezLogistics(ctx) {
           recipientEmail: order.buyer_email,
           uniqueID: order.ref,
           BatchID: order.ref,
-          CustToken: pin,
           itemDescription: `${deal.item_title} (x${deal.quantity})`.slice(0, 250),
-          additionalDetails: [order.delivery_landmark && `Landmark: ${order.delivery_landmark}`, order.packing_note && `Contents: ${order.packing_note}`, "Buyer gives a 4-digit PIN only after checking the item."].filter(Boolean).join(" | "),
+          additionalDetails: [order.delivery_landmark && `Landmark: ${order.delivery_landmark}`, order.packing_note && `Contents: ${order.packing_note}`, "TrustGap order: the buyer checks the item before giving the delivery code."].filter(Boolean).join(" | "),
           valueOfItem: String(Math.round(deal.item_price / 100)),
           weight: deal.weight_kg,
           pickUpState: deal.pickup_state,
@@ -722,9 +728,9 @@ function createFezLogistics(ctx) {
       return { deliveryRef: orderNo, riderUrl: null };
     },
     // A return is a new Fez order the other way round: collected from the buyer, delivered to the
-    // seller's pickup address. The seller's return PIN goes in CustToken, so Fez marks it delivered
-    // only when the seller gives the rider that PIN.
-    async bookReturn({ order, deal, seller, pin, ref }) {
+    // seller's pickup address. Fez texts the seller its own code for it, so Fez marks it delivered only
+    // when the seller gives the rider that code.
+    async bookReturn({ order, deal, seller, ref }) {
       const data = await call("POST", "/order", [
         {
           recipientAddress: deal.pickup_address,
@@ -734,9 +740,8 @@ function createFezLogistics(ctx) {
           recipientEmail: seller.email,
           uniqueID: ref,
           BatchID: ref,
-          CustToken: pin,
           itemDescription: `RETURN: ${deal.item_title} (x${deal.quantity})`.slice(0, 250),
-          additionalDetails: [`Return for order ${order.ref}`, order.delivery_landmark && `Pickup landmark: ${order.delivery_landmark}`, "Seller gives a 4-digit PIN only after checking the item."].filter(Boolean).join(" | "),
+          additionalDetails: [`Return for order ${order.ref}`, order.delivery_landmark && `Pickup landmark: ${order.delivery_landmark}`, "TrustGap return: the seller checks the item before giving the delivery code."].filter(Boolean).join(" | "),
           valueOfItem: String(Math.round(deal.item_price / 100)),
           weight: deal.weight_kg,
           pickUpState: order.delivery_state,
@@ -757,7 +762,12 @@ function createFezLogistics(ctx) {
       const data = await call("GET", `/orders/${encodeURIComponent(orderNo)}`);
       const details = Array.isArray(data.orderDetails) ? data.orderDetails[0] : data.orderDetails;
       if (!details) return null;
-      return { raw: details.orderStatus, stage: mapFezStatus(details.orderStatus), reason: details.returnReason || details.statusDescription || null };
+      return {
+        raw: details.orderStatus,
+        stage: mapFezStatus(details.orderStatus),
+        reason: details.returnReason || details.statusDescription || null,
+        code: details.delivery_OTP != null && String(details.delivery_OTP).trim() ? String(details.delivery_OTP).trim() : null
+      };
     },
     // Fez's status webhook: { orderNumber, status } with X-Timestamp and
     // X-Signature = SHA-256 HMAC (hex) of orderNo + status + timestamp, keyed with your secret key.
@@ -1029,6 +1039,14 @@ ALTER TABLE disputes ADD COLUMN decided_by TEXT;
   {
     "name": "0018_fees_and_limits.sql",
     "sql": "-- Revenue: delivery as TrustGap's own service (courier cost kept apart from the price charged),\n-- a dispute fee paid by whoever is at fault, and a per-seller deal limit the admin can raise.\nALTER TABLE deals ADD COLUMN courier_cost INTEGER;\nALTER TABLE deals ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\nALTER TABLE sellers ADD COLUMN deal_limit INTEGER;\nALTER TABLE disputes ADD COLUMN fault TEXT;\nALTER TABLE disputes ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\n-- The part of the fee kept from the held money (the rest, if any, was added to the seller's debt).\nALTER TABLE disputes ADD COLUMN dispute_fee_taken INTEGER NOT NULL DEFAULT 0;\n"
+  },
+  {
+    "name": "0019_courier_delivery_codes.sql",
+    "sql": "-- Fez makes its own delivery code (delivery_OTP) and texts it to the recipient at dispatch; the rider\n-- can't complete delivery without it. TrustGap reads it from Fez's API and keeps it encrypted, to show\n-- the buyer (delivery) or seller (return) on their private page. TrustGap's own PIN stays for your\n-- own riders.\nALTER TABLE orders ADD COLUMN courier_code_enc TEXT;\nALTER TABLE returns ADD COLUMN courier_code_enc TEXT;\n"
+  },
+  {
+    "name": "0020_customer_relations_admin.sql",
+    "sql": "-- The Customer Relations Admin: one team member with near-admin access (staff.role = 'cr_admin').\n-- At most one active at a time.\nCREATE UNIQUE INDEX IF NOT EXISTS staff_one_cr_admin ON staff(role) WHERE role = 'cr_admin' AND disabled_at IS NULL;\n"
   }
 ];
 
@@ -1441,9 +1459,7 @@ async function requestLogin(ctx, input) {
   return { phone, ...await sendCode(ctx, phone, seller.email) };
 }
 __name(requestLogin, "requestLogin");
-async function verifyCode(ctx, input) {
-  const phone = normalisePhone(input.phone);
-  const code = str(input.code);
+async function consumeCode(ctx, phone, code) {
   const { otp } = ctx.config;
   const row = await first(
     ctx.env,
@@ -1459,6 +1475,11 @@ async function verifyCode(ctx, input) {
   }
   const claimed = await run(ctx.env, "UPDATE otps SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL", iso(ctx.now()), row.id);
   if (claimed.meta.changes !== 1) throw new UserError("That code was already used. Request a new one.");
+}
+__name(consumeCode, "consumeCode");
+async function verifyCode(ctx, input) {
+  const phone = normalisePhone(input.phone);
+  await consumeCode(ctx, phone, str(input.code));
   const seller = await first(ctx.env, "SELECT * FROM sellers WHERE phone = ?", phone);
   if (!seller) throw new UserError("That code is wrong or has expired. Request a new one.");
   if (!seller.phone_verified_at) await update(ctx.env, "sellers", seller.id, { phone_verified_at: iso(ctx.now()) });
@@ -2080,6 +2101,35 @@ function describeFlags(flags, { lagos = lagosTime } = {}) {
 }
 __name(describeFlags, "describeFlags");
 
+// src/core/alerts.js
+async function crAdmin(ctx) {
+  return first(ctx.env, "SELECT * FROM staff WHERE role = 'cr_admin' AND disabled_at IS NULL");
+}
+__name(crAdmin, "crAdmin");
+var adminPhone = /* @__PURE__ */ __name((ctx) => ctx.config.adminAlertPhone ? normalisePhone(ctx.config.adminAlertPhone) : null, "adminPhone");
+var WHO = { buyer: "the buyer", seller: "the seller", rider: "the rider", courier: "the courier", admin: "staff" };
+async function alertNewDispute(ctx, orderId) {
+  const order = await getOrder(ctx, orderId);
+  const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE order_id = ? ORDER BY id DESC", orderId);
+  if (!order || !dispute) return;
+  const lead = await crAdmin(ctx);
+  const phones = [...new Set([adminPhone(ctx), lead?.phone].filter(Boolean))];
+  const sms = `TrustGap alert: new dispute ${caseRef(order, dispute)}, "${DISPUTE_CATEGORIES[dispute.category] || dispute.category}", ${formatNaira(order.amount)} order, opened by ${WHO[dispute.opened_by] || dispute.opened_by}. Open: ${ctx.config.siteUrl}/admin/order.html?id=${order.id}`;
+  for (const phone of phones) await ctx.notify.send({ orderId: order.id, event: "staff_alert_dispute", phone, sms });
+}
+__name(alertNewDispute, "alertNewDispute");
+async function alertDecision(ctx, order, dispute, { by, summary }) {
+  const phone = adminPhone(ctx);
+  if (!phone || by === "admin") return;
+  await ctx.notify.send({
+    orderId: order.id,
+    event: "staff_alert_decision",
+    phone,
+    sms: `TrustGap: ${String(by).replace(/^team:/, "")} decided case ${caseRef(order, dispute)}. ${summary}`.slice(0, 600)
+  });
+}
+__name(alertDecision, "alertDecision");
+
 // src/core/returns.js
 var RETURN_LABELS = {
   with_rider: "Rider is taking it back to the seller",
@@ -2112,8 +2162,10 @@ async function returnView(ctx, ret, { withPin = false } = {}) {
     deadline_at: ret.deadline_at,
     received_at: ret.received_at,
     received_by: ret.received_by,
-    // After a problem report the seller still needs the PIN: a Fez rider can only close the job with it.
-    ...withPin && (isOpenReturn(ret) || ret.problem_at) ? { pin: await revealReturnPin(ctx, ret) } : {}
+    // After a problem report the seller still needs the code: a Fez rider can only close the job with it.
+    // Fez returns: Fez's own code for the seller (read from Fez at dispatch), never TrustGap's PIN.
+    code_by_courier: courierGivesCode(ctx, ret.courier),
+    ...withPin && (isOpenReturn(ret) || ret.problem_at) ? courierGivesCode(ctx, ret.courier) ? { courier_code: await revealCourierCode(ctx, ret) } : { pin: await revealReturnPin(ctx, ret) } : {}
   };
 }
 __name(returnView, "returnView");
@@ -2143,7 +2195,7 @@ async function startDoorReturn(ctx, order, { received = false, by = "courier" } 
     await update(ctx.env, "orders", order.id, { delivery_status: "returned" });
   } else {
     const seller = await getSeller(ctx, order.seller_id);
-    await ctx.notify.send({ orderId: order.id, event: "return_pin", phone: seller.phone, email: seller.email, sms: `TrustGap: the buyer refused order ${order.ref} at the door and the rider is bringing it back. ${pinSms(order, pin)}` });
+    await ctx.notify.send({ orderId: order.id, event: "return_pin", phone: seller.phone, email: seller.email, sms: courierGivesCode(ctx, order.courier) ? `TrustGap: the buyer refused order ${order.ref} at the door and Fez Delivery is bringing it back to you. When it arrives, check it\u2019s your item, as you sent it, before you accept it. If it isn\u2019t, contact TrustGap.` : `TrustGap: the buyer refused order ${order.ref} at the door and the rider is bringing it back. ${pinSms(order, pin)}` });
   }
   return activeReturn(ctx, order.id);
 }
@@ -2190,7 +2242,7 @@ async function bookPickupReturn(ctx, order, { parcelWithBuyer = false, by = "adm
     email: order.buyer_email,
     sms: `TrustGap: a rider will collect "${deal.item_title}" from you to return it to the seller (order ${order.ref}). Please have it packed with everything that came with it by ${fmtDate(deadline)}. Your refund is sent once the seller receives it: ${trackUrl(ctx, order)}`
   });
-  await ctx.notify.send({ orderId: order.id, event: "return_pin", phone: seller.phone, email: seller.email, sms: `TrustGap: the item from order ${order.ref} is being returned to you. ${pinSms(order, pin)}` });
+  await ctx.notify.send({ orderId: order.id, event: "return_pin", phone: seller.phone, email: seller.email, sms: courierGivesCode(ctx, ctx.logistics.name) ? `TrustGap: the item from order ${order.ref} is being returned to you by Fez Delivery. Fez will text you a delivery code when the rider is on the way (it\u2019s also on your order page). Check the item first, then give the rider the code.` : `TrustGap: the item from order ${order.ref} is being returned to you. ${pinSms(order, pin)}` });
   return first(ctx.env, "SELECT * FROM returns WHERE id = ?", id);
 }
 __name(bookPickupReturn, "bookPickupReturn");
@@ -2244,6 +2296,7 @@ async function syncReturnStatus(ctx, ret) {
   if (!isOpenReturn(ret) || ret.kind !== "pickup" || !ret.delivery_ref || ret.courier !== ctx.logistics.name) return null;
   const st = await ctx.logistics.getStatus(ret.delivery_ref);
   if (!st) return null;
+  await saveCourierCode(ctx, "returns", ret, st.code);
   if (st.raw && st.raw !== ret.courier_status) {
     await update(ctx.env, "returns", ret.id, { courier_status: st.raw });
     await logEvent(ctx, ret.order_id, "courier", "return_courier_status", st.reason ? `${st.raw}: ${st.reason}` : st.raw);
@@ -2310,8 +2363,9 @@ async function reportReturnProblem(ctx, ret, input) {
     orderId: order.id,
     event: "return_problem",
     phone: seller.phone,
-    sms: `TrustGap: we've recorded the item for order ${order.ref} as back with you, with your report. You can now give the rider your return PIN so they can leave. TrustGap will review and decide.`
+    sms: `TrustGap: we've recorded the item for order ${order.ref} as back with you, with your report. You can now give the rider ${courierGivesCode(ctx, ret.courier) ? "the code" : "your return PIN"} so they can leave. TrustGap will review and decide.`
   });
+  await alertNewDispute(ctx, order.id);
 }
 __name(reportReturnProblem, "reportReturnProblem");
 
@@ -2588,7 +2642,7 @@ async function confirmPayment(ctx, txRef, actor = "system") {
     event: "payment_received_buyer",
     phone: order.buyer_phone,
     email: order.buyer_email,
-    sms: `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
+    sms: courierGivesCode(ctx) ? `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. When it\u2019s dispatched, Fez Delivery will text you a delivery code: inspect the item first, then give the rider the code. Track: ${trackUrl(ctx, order)}` : `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`
   });
   return getOrder(ctx, order.id);
@@ -2625,6 +2679,13 @@ async function revealPin(ctx, order) {
   return order.delivery_pin_enc ? decrypt(order.delivery_pin_enc, ctx.config.appSecret) : null;
 }
 __name(revealPin, "revealPin");
+var courierGivesCode = /* @__PURE__ */ __name((ctx, courier = null) => courier ? courier === "fez" : Boolean(ctx.logistics.givesCode), "courierGivesCode");
+var revealCourierCode = /* @__PURE__ */ __name((ctx, row) => row?.courier_code_enc ? decrypt(row.courier_code_enc, ctx.config.appSecret) : null, "revealCourierCode");
+async function saveCourierCode(ctx, table, row, code) {
+  if (!code || await revealCourierCode(ctx, row) === code) return;
+  await update(ctx.env, table, row.id, { courier_code_enc: await encrypt(code, ctx.config.appSecret) });
+}
+__name(saveCourierCode, "saveCourierCode");
 async function bookPickup(ctx, seller, orderId, packingNote) {
   const order = await first(ctx.env, "SELECT * FROM orders WHERE id = ? AND seller_id = ?", orderId, seller.id);
   if (!order) throw new UserError("Order not found.", 404);
@@ -2728,7 +2789,7 @@ async function deliveryNotice(ctx, order, stage, reason = "") {
     await send("buyer", `TrustGap: your item for order ${order.ref} has been picked up from the seller. Keep your phone on; we\u2019ll text you when it\u2019s out for delivery.`);
     await send("seller", `TrustGap: the courier has collected order ${order.ref}. Your part is nearly done; we\u2019ll tell you when it\u2019s delivered.`);
   } else if (stage === "out_for_delivery") {
-    await send("buyer", `TrustGap: order ${order.ref} is on its way to you today. When it arrives, inspect it before giving the rider your PIN. If it isn\u2019t right, keep your PIN and report it.`);
+    await send("buyer", courierGivesCode(ctx, order.courier) ? `TrustGap: order ${order.ref} is on its way to you today. Fez Delivery has texted you a delivery code (it\u2019s also on your TrustGap tracking page). Inspect the item first, then give the rider the code. If it isn\u2019t right, keep the code and report it: ${trackUrl(ctx, order)}` : `TrustGap: order ${order.ref} is on its way to you today. When it arrives, inspect it before giving the rider your PIN. If it isn\u2019t right, keep your PIN and report it.`);
   } else if (stage === "attempt_failed") {
     await send("buyer", `TrustGap: the rider couldn\u2019t deliver order ${order.ref} (${reason}). They will try again; please keep your phone on.`);
   }
@@ -2782,6 +2843,7 @@ async function syncCourierStatus(ctx, order) {
   const st = await ctx.logistics.getStatus(order.delivery_ref);
   if (!st) return null;
   const changed = Boolean(st.raw && st.raw !== order.courier_status);
+  await saveCourierCode(ctx, "orders", order, st.code);
   if (changed) {
     await update(ctx.env, "orders", order.id, { courier_status: st.raw });
     await logEvent(ctx, order.id, "courier", "courier_status", st.reason ? `${st.raw}: ${st.reason}` : st.raw);
@@ -2854,6 +2916,7 @@ async function openDispute(ctx, order, { by, category, description, photos: phot
     phone: seller.phone,
     sms: `${sms} Add your side and any photos from your order page; we read both sides before deciding.`
   });
+  await alertNewDispute(ctx, order.id);
   if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
 }
 __name(openDispute, "openDispute");
@@ -2955,9 +3018,11 @@ async function resolveDispute(ctx, disputeId, input, { by = "admin" } = {}) {
     const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
     await ctx.notify.send({ orderId: order.id, event: "dispute_decided", phone: order.buyer_phone, email: order.buyer_email, sms });
     await ctx.notify.send({ orderId: order.id, event: "dispute_decided", phone: seller.phone, email: seller.email, sms });
+    await alertDecision(ctx, order, dispute, { by, summary: decisionSummary(decision) });
     return { waiting_for_return: true };
   }
   await settleDispute(ctx, order, dispute, decision);
+  await alertDecision(ctx, order, dispute, { by, summary: decisionSummary(decision) });
   return { waiting_for_return: false };
 }
 __name(resolveDispute, "resolveDispute");
@@ -3327,7 +3392,10 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         courier_status: o.courier_status,
         delivery_status: o.delivery_status,
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
-        pin: ["paid", "shipping"].includes(o.status) ? await revealPin(ctx, o) : null,
+        // Your own riders: TrustGap's PIN. Fez: Fez texts its own code at dispatch; shown here once read.
+        code_by_courier: courierGivesCode(ctx, o.courier),
+        pin: ["paid", "shipping"].includes(o.status) && !courierGivesCode(ctx, o.courier) ? await revealPin(ctx, o) : null,
+        courier_code: o.status === "shipping" && courierGivesCode(ctx, o.courier) ? await revealCourierCode(ctx, o) : null,
         ship_by: o.ship_by,
         delivered_at: o.delivered_at,
         dispatched: Boolean(o.dispatched_at),
@@ -3532,6 +3600,7 @@ function sellerRoutes(r) {
         seller_payout: o.seller_payout,
         delivery_fee: o.delivery_fee,
         delivery_payer: d.delivery_payer,
+        courier: o.courier,
         courier_status: o.courier_status,
         buyer_name: o.buyer_name,
         delivery_state: o.delivery_state,
@@ -3594,6 +3663,25 @@ function sellerRoutes(r) {
   });
 }
 __name(sellerRoutes, "sellerRoutes");
+
+// src/core/access.js
+async function whoIs(ctx, request) {
+  const session2 = await authenticate(ctx, request);
+  if (!session2) return null;
+  if (session2.is_admin) return { role: "admin", name: "Admin", actor: "admin" };
+  if (!session2.staff_id) return null;
+  const s = await first(ctx.env, "SELECT * FROM staff WHERE id = ? AND disabled_at IS NULL", session2.staff_id);
+  if (!s || s.role !== "cr_admin" || s.must_change_password) return null;
+  return { role: "cr_admin", name: s.name, staff: s, actor: `team:${s.name}` };
+}
+__name(whoIs, "whoIs");
+async function requireAccess(ctx, request, { cr = false } = {}) {
+  const who = await whoIs(ctx, request);
+  if (!who) throw new UserError("Admin login required.", 401);
+  if (who.role !== "admin" && !cr) throw new UserError("Only the admin can do this.", 403);
+  return who;
+}
+__name(requireAccess, "requireAccess");
 
 // src/core/jobs.js
 async function runJobs(ctx) {
@@ -3941,11 +4029,6 @@ async function syncSheets(ctx) {
 __name(syncSheets, "syncSheets");
 
 // src/routes/admin.js
-async function requireAdmin(ctx, request) {
-  const session2 = await authenticate(ctx, request);
-  if (!session2?.is_admin) throw new UserError("Admin login required.", 401);
-}
-__name(requireAdmin, "requireAdmin");
 async function riderJob(ctx, token) {
   const data = await verifyLink(ctx.config.appSecret, token, ctx.now());
   const invalid = /* @__PURE__ */ __name(() => new UserError("This rider link is invalid or has expired.", 404), "invalid");
@@ -4035,10 +4118,8 @@ function riderRoutes(r) {
 __name(riderRoutes, "riderRoutes");
 function adminRoutes(r) {
   r.post("/api/admin/login", ({ ctx, body }) => adminLogin(ctx, body));
-  const admin = /* @__PURE__ */ __name((handler) => async (args) => {
-    await requireAdmin(args.ctx, args.request);
-    return handler(args);
-  }, "admin");
+  const admin = /* @__PURE__ */ __name((handler, opts = {}) => async (args) => handler({ ...args, who: await requireAccess(args.ctx, args.request, opts) }), "admin");
+  r.get("/api/admin/me", admin(async ({ who }) => ({ role: who.role, name: who.name }), { cr: true }));
   r.get("/api/admin/orders", admin(async ({ ctx, url }) => {
     const status = url.searchParams.get("status") || "";
     const range = dateRange(url, "o.created_at");
@@ -4053,16 +4134,18 @@ function adminRoutes(r) {
     );
     const counts = Object.fromEntries((await all(ctx.env, "SELECT status, COUNT(*) n FROM orders GROUP BY status")).map((x) => [x.status, x.n]));
     return { orders, counts };
-  }));
-  r.get("/api/admin/orders/:id", admin(async ({ ctx, params }) => {
+  }, { cr: true }));
+  r.get("/api/admin/orders/:id", admin(async ({ ctx, params, who }) => {
     const o = await getOrder(ctx, Number(params.id));
     if (!o) throw notFound("Order not found.");
     const d = await getDeal(ctx, o.deal_id);
     const s = await getSeller(ctx, o.seller_id);
-    const { refund_account_enc, delivery_pin_enc, last_transition, terms_json, ...order } = o;
+    const { refund_account_enc, delivery_pin_enc, courier_code_enc, last_transition, terms_json, ...order } = o;
     return {
       order: {
         ...order,
+        // Fez's delivery code, for staff helping a buyer who lost the SMS.
+        courier_code: await revealCourierCode(ctx, o),
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         track_url: trackUrl(ctx, o)
       },
@@ -4075,7 +4158,8 @@ function adminRoutes(r) {
         phone: s.phone,
         email: s.email,
         payout_bank_name: s.payout_bank_name,
-        payout_account_number: s.payout_account_number,
+        // The Customer Relations Admin sees only the last 4 digits.
+        payout_account_number: who.role === "admin" ? s.payout_account_number : s.payout_account_number && `\u2022\u2022\u2022\u2022${s.payout_account_number.slice(-4)}`,
         identity_verified: Boolean(s.identity_verified_at),
         amount_owed: s.amount_owed
       },
@@ -4102,8 +4186,8 @@ function adminRoutes(r) {
       events: await all(ctx.env, "SELECT * FROM order_events WHERE order_id = ? ORDER BY id", o.id),
       messages: await all(ctx.env, "SELECT * FROM outbox WHERE order_id = ? ORDER BY id", o.id)
     };
-  }));
-  r.post("/api/admin/disputes/:id/resolve", admin(async ({ ctx, params, body }) => ({ ok: true, ...await resolveDispute(ctx, Number(params.id), body) })));
+  }, { cr: true }));
+  r.post("/api/admin/disputes/:id/resolve", admin(async ({ ctx, params, body, who }) => ({ ok: true, ...await resolveDispute(ctx, Number(params.id), body, { by: who.actor }) }), { cr: true }));
   const adminReturn = /* @__PURE__ */ __name(async (ctx, id) => {
     const ret = await first(ctx.env, "SELECT * FROM returns WHERE id = ?", Number(id));
     if (!ret) throw notFound("Return not found.");
@@ -4112,22 +4196,22 @@ function adminRoutes(r) {
   r.post("/api/admin/returns/:id/received", admin(async ({ ctx, params }) => {
     if (!await receiveReturn(ctx, await adminReturn(ctx, params.id), "admin")) throw new UserError("This return is already closed.");
     return { ok: true };
-  }));
+  }, { cr: true }));
   r.post("/api/admin/orders/:id/book-return", admin(async ({ ctx, params }) => {
     const order = await getOrder(ctx, Number(params.id));
     if (!order) throw notFound("Order not found.");
     if (!["disputed", "shipping"].includes(order.status) || !order.dispatched_at) throw new UserError("A return can only be booked for a shipped order under review.");
     const ret = await bookPickupReturn(ctx, order, { parcelWithBuyer: true });
     return { ok: true, return_id: ret.id };
-  }));
+  }, { cr: true }));
   r.post("/api/admin/returns/:id/cancel", admin(async ({ ctx, params, body }) => {
     await cancelReturn(ctx, await adminReturn(ctx, params.id), body.note);
     return { ok: true };
-  }));
+  }, { cr: true }));
   r.post("/api/admin/returns/:id/sync-courier", admin(async ({ ctx, params }) => {
     const st = await syncReturnStatus(ctx, await adminReturn(ctx, params.id));
     return { status: st?.raw || "no update" };
-  }));
+  }, { cr: true }));
   r.get("/api/admin/disputes", admin(async ({ ctx, url }) => ({
     disputes: (await all(
       ctx.env,
@@ -4135,7 +4219,7 @@ function adminRoutes(r) {
        ORDER BY ${dateRange(url, "x.created_at").order} LIMIT 500`,
       ...dateRange(url, "x.created_at").args
     )).map((x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category }))
-  })));
+  }), { cr: true }));
   r.get("/api/admin/sellers", admin(async ({ ctx, url }) => ({
     sellers: await Promise.all((await all(
       ctx.env,
@@ -4146,10 +4230,11 @@ function adminRoutes(r) {
        FROM sellers s WHERE ${dateRange(url, "s.created_at").where} ORDER BY ${dateRange(url, "s.created_at").order} LIMIT 500`,
       ...dateRange(url, "s.created_at").args
     )).map(async (s) => ({ ...s, history: await sellerHistory(ctx, s.id) })))
-  })));
-  r.post("/api/admin/sellers/:id", admin(async ({ ctx, params, body }) => {
+  }), { cr: true }));
+  r.post("/api/admin/sellers/:id", admin(async ({ ctx, params, body, who }) => {
     const id = Number(params.id);
-    if (body.action === "suspend") return { ok: true, ...await suspendSeller(ctx, id, { reason: body.reason }) };
+    if (body.action === "suspend") return { ok: true, ...await suspendSeller(ctx, id, { reason: body.reason, by: who.role === "admin" ? "admin" : who.name }) };
+    if (who.role !== "admin") throw new UserError("Only the admin can do this. You can suspend a seller; the admin lifts it.", 403);
     if (body.action === "unsuspend") return { ok: true, ...await unsuspendSeller(ctx, id, { reason: body.reason }) };
     if (body.action === "limit") {
       if (!await getSeller(ctx, id)) throw notFound("Seller not found.");
@@ -4167,11 +4252,11 @@ function adminRoutes(r) {
     if (!await getSeller(ctx, id)) throw notFound("Seller not found.");
     await update(ctx.env, "sellers", id, fields);
     return { ok: true };
-  }));
+  }, { cr: true }));
   r.get("/api/admin/outbox", admin(async ({ ctx, url }) => {
     const range = dateRange(url, "m.created_at");
     return { messages: await all(ctx.env, `SELECT m.* FROM outbox m WHERE ${range.where} ORDER BY ${range.order} LIMIT 500`, ...range.args) };
-  }));
+  }, { cr: true }));
   r.get("/api/admin/ledger", admin(async ({ ctx, url }) => {
     const range = dateRange(url, "l.created_at");
     return {
@@ -4188,7 +4273,7 @@ function adminRoutes(r) {
     if (!o) throw notFound("Order not found.");
     const st = await syncCourierStatus(ctx, o);
     return { status: st ? st.raw : "No courier status (manual rider, or not booked yet)." };
-  }));
+  }, { cr: true }));
   r.post("/api/admin/courier/register-webhook", admin(async ({ ctx }) => {
     if (!ctx.logistics.registerWebhook) throw new UserError("Webhooks are only needed with LOGISTICS_PROVIDER=fez.");
     const url = `${ctx.config.apiUrl}/webhooks/fez`;
@@ -4210,7 +4295,7 @@ function adminRoutes(r) {
 __name(adminRoutes, "adminRoutes");
 
 // src/core/team.js
-var ROLES = { customer_relations: "Customer relations" };
+var ROLES = { customer_relations: "Customer relations", cr_admin: "Customer Relations Admin" };
 var TASK_STATUSES = { todo: "To do", in_progress: "In progress", done: "Done" };
 var PRIORITIES = { normal: "Normal", high: "High" };
 var TASK_KINDS = { general: "General", decide_dispute: "Decide a dispute" };
@@ -4235,14 +4320,22 @@ function newPassword(input, label = "Password") {
 }
 __name(newPassword, "newPassword");
 async function listStaff(ctx) {
-  return (await all(ctx.env, "SELECT * FROM staff ORDER BY disabled_at IS NOT NULL, name")).map(staffView);
+  const rows = await all(ctx.env, "SELECT s.*, (SELECT COUNT(*) FROM tasks t WHERE t.assigned_to = s.id) AS task_count FROM staff s ORDER BY s.disabled_at IS NOT NULL, s.name");
+  return rows.map((s) => ({ ...staffView(s), task_count: s.task_count, can_delete: s.task_count === 0 }));
 }
 __name(listStaff, "listStaff");
-async function createStaff(ctx, input) {
+async function createStaff(ctx, input, { by = "admin" } = {}) {
   const name = requireLength(input.name, "Name", 2, 100);
   const email = validEmail(input.email);
   const phone = str(input.phone) ? normalisePhone(input.phone) : null;
   const role = ROLES[input.role] ? input.role : "customer_relations";
+  if (role === "cr_admin") {
+    if (by !== "admin") throw new UserError("Only the admin can add the Customer Relations Admin.", 403);
+    if (!phone) throw new UserError("The Customer Relations Admin needs a phone number: login codes and dispute alerts go to it.");
+    if (await first(ctx.env, "SELECT id FROM staff WHERE role = 'cr_admin' AND disabled_at IS NULL")) {
+      throw new UserError("There is already a Customer Relations Admin. Turn their account off first.");
+    }
+  }
   const password = newPassword(input.password, "Temporary password");
   if (await first(ctx.env, "SELECT id FROM staff WHERE email = ?", email)) throw new UserError("A team member with this email already exists.");
   const id = await insert(ctx.env, "staff", {
@@ -4257,19 +4350,50 @@ async function createStaff(ctx, input) {
   return staffView(await first(ctx.env, "SELECT * FROM staff WHERE id = ?", id));
 }
 __name(createStaff, "createStaff");
-async function updateStaff(ctx, id, input) {
+async function updateStaff(ctx, id, input, { by = "admin", byStaffId = null } = {}) {
   const s = await first(ctx.env, "SELECT * FROM staff WHERE id = ?", Number(id));
   if (!s) throw new UserError("Team member not found.", 404);
+  if (by !== "admin" && (s.role === "cr_admin" || s.id === byStaffId)) throw new UserError("Only the admin can change this account.", 403);
+  if (input.disabled === false && s.role === "cr_admin" && await first(ctx.env, "SELECT id FROM staff WHERE role = 'cr_admin' AND disabled_at IS NULL AND id != ?", s.id)) {
+    throw new UserError("There is already an active Customer Relations Admin.");
+  }
   const fields = {};
+  if (input.role !== void 0 && input.role !== s.role) {
+    if (by !== "admin") throw new UserError("Only the admin can change a role.", 403);
+    if (!ROLES[input.role]) throw new UserError("Unknown role.");
+    const phone = input.phone !== void 0 ? normalisePhone(input.phone) : s.phone;
+    if (input.role === "cr_admin") {
+      if (!phone) throw new UserError("The Customer Relations Admin needs a phone number: login codes and dispute alerts go to it.");
+      if (await first(ctx.env, "SELECT id FROM staff WHERE role = 'cr_admin' AND disabled_at IS NULL AND id != ?", s.id)) {
+        throw new UserError("There is already a Customer Relations Admin. Turn their account off or change their role first.");
+      }
+    }
+    Object.assign(fields, { role: input.role, phone });
+  } else if (input.phone !== void 0) {
+    if (by !== "admin") throw new UserError("Only the admin can change a phone number.", 403);
+    fields.phone = str(input.phone) ? normalisePhone(input.phone) : null;
+  }
   if (input.password !== void 0) Object.assign(fields, { password_hash: await hashPassword(newPassword(input.password, "Temporary password")), must_change_password: 1 });
   if (input.disabled === true) fields.disabled_at = iso(ctx.now());
   if (input.disabled === false) fields.disabled_at = null;
   if (!Object.keys(fields).length) throw new UserError("Nothing to change.");
   await update(ctx.env, "staff", s.id, fields);
-  if (fields.password_hash || fields.disabled_at) await run(ctx.env, "DELETE FROM sessions WHERE staff_id = ?", s.id);
+  if (fields.password_hash || fields.disabled_at || fields.role) await run(ctx.env, "DELETE FROM sessions WHERE staff_id = ?", s.id);
   return staffView(await first(ctx.env, "SELECT * FROM staff WHERE id = ?", s.id));
 }
 __name(updateStaff, "updateStaff");
+async function deleteStaff(ctx, id, { by = "admin", byStaffId = null } = {}) {
+  const s = await first(ctx.env, "SELECT * FROM staff WHERE id = ?", Number(id));
+  if (!s) throw new UserError("Team member not found.", 404);
+  if (by !== "admin" && (s.role === "cr_admin" || s.id === byStaffId)) throw new UserError("Only the admin can delete this account.", 403);
+  if (await first(ctx.env, "SELECT id FROM tasks WHERE assigned_to = ?", s.id)) {
+    throw new UserError(`${s.name} has tasks on record, so the account can\u2019t be deleted. Turn it off instead.`);
+  }
+  await run(ctx.env, "DELETE FROM sessions WHERE staff_id = ?", s.id);
+  await run(ctx.env, "DELETE FROM staff WHERE id = ?", s.id);
+  return { deleted: true };
+}
+__name(deleteStaff, "deleteStaff");
 async function staffLogin(ctx, input) {
   const email = str(input.email).toLowerCase();
   const key = `team_fails:${email}`;
@@ -4281,6 +4405,10 @@ async function staffLogin(ctx, input) {
     fails.push(iso(ctx.now()));
     await run(ctx.env, "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, JSON.stringify(fails));
     throw new UserError("Wrong email or password.", 401);
+  }
+  if (s.role === "cr_admin") {
+    if (!str(input.code)) return { needs_code: true, phone_hint: s.phone ? `\u2022\u2022\u2022\u2022${s.phone.slice(-4)}` : "", ...await sendCode(ctx, s.phone, s.email) };
+    await consumeCode(ctx, s.phone, str(input.code));
   }
   await update(ctx.env, "staff", s.id, { last_login_at: iso(ctx.now()) });
   return { token: await createSession(ctx, { staffId: s.id }), staff: staffView(s) };
@@ -4334,7 +4462,7 @@ async function createTask(ctx, input) {
   const now = iso(ctx.now());
   const orderId = await orderIdFromRef(ctx, input.order_ref);
   const kind = TASK_KINDS[input.kind] ? input.kind : "general";
-  if (kind === "decide_dispute") await requireOpenDispute(ctx, orderId);
+  if (kind === "decide_dispute") await requireOpenDispute(ctx, orderId, assignee);
   const id = await insert(ctx.env, "tasks", {
     title,
     details,
@@ -4351,13 +4479,21 @@ async function createTask(ctx, input) {
   return (await taskRows(ctx, "t.id = ?", id))[0];
 }
 __name(createTask, "createTask");
-async function requireOpenDispute(ctx, orderId) {
+async function requireOpenDispute(ctx, orderId, assignee = null) {
   if (!orderId) throw new UserError('A "Decide a dispute" task needs the order reference.');
   if (!await first(ctx.env, "SELECT id FROM disputes WHERE order_id = ? AND status = 'open'", orderId)) {
     throw new UserError("That order has no open dispute to decide.");
   }
+  if (assignee && assignee.role !== "cr_admin") await withinTeamCap(ctx, orderId);
 }
 __name(requireOpenDispute, "requireOpenDispute");
+async function withinTeamCap(ctx, orderId) {
+  const o = await getOrder(ctx, orderId);
+  if (o.amount > ctx.config.teamDisputeCapKobo) {
+    throw new UserError(`This order is over \u20A6${(ctx.config.teamDisputeCapKobo / 100).toLocaleString("en-NG")}, so only the Customer Relations Admin or the admin can decide it.`, 403);
+  }
+}
+__name(withinTeamCap, "withinTeamCap");
 async function notifyAssignee(ctx, staff, sms) {
   if (!staff.phone && !staff.email) return;
   await ctx.notify.send({ event: "task_assigned", phone: staff.phone, email: staff.email, sms, emailSubject: "New TrustGap task" });
@@ -4373,8 +4509,9 @@ async function updateTask(ctx, id, input) {
   if (input.due_date !== void 0) fields.due_at = dueDate(input.due_date);
   if (input.order_ref !== void 0) fields.order_id = await orderIdFromRef(ctx, input.order_ref);
   if (input.kind !== void 0 && TASK_KINDS[input.kind]) fields.kind = input.kind;
-  if ((fields.kind || t.kind) === "decide_dispute" && (fields.kind || fields.order_id !== void 0)) {
-    await requireOpenDispute(ctx, fields.order_id !== void 0 ? fields.order_id : t.order_id);
+  if ((fields.kind || t.kind) === "decide_dispute" && (fields.kind || fields.order_id !== void 0 || input.assigned_to !== void 0)) {
+    const assignee = await first(ctx.env, "SELECT * FROM staff WHERE id = ?", input.assigned_to !== void 0 ? Number(input.assigned_to) : t.assigned_to);
+    await requireOpenDispute(ctx, fields.order_id !== void 0 ? fields.order_id : t.order_id, assignee);
   }
   if (input.status !== void 0) Object.assign(fields, statusFields(ctx, input.status));
   let newAssignee = null;
@@ -4476,6 +4613,7 @@ __name(teamOrderView, "teamOrderView");
 async function decisionTask(ctx, staff, orderId) {
   const task = await first(ctx.env, "SELECT * FROM tasks WHERE order_id = ? AND assigned_to = ? AND kind = 'decide_dispute' AND status != 'done' ORDER BY id DESC", orderId, staff.id);
   if (!task) return null;
+  if (staff.role !== "cr_admin" && (await getOrder(ctx, orderId)).amount > ctx.config.teamDisputeCapKobo) return null;
   return await first(ctx.env, "SELECT id FROM disputes WHERE order_id = ? AND status = 'open'", orderId) ? task : null;
 }
 __name(decisionTask, "decisionTask");
@@ -4483,6 +4621,7 @@ async function teamResolveDispute(ctx, staff, disputeId, input) {
   const dispute = await first(ctx.env, "SELECT * FROM disputes WHERE id = ?", Number(disputeId));
   const task = dispute && await decisionTask(ctx, staff, dispute.order_id);
   if (!task || dispute.status !== "open") throw new UserError("You can only decide a dispute the admin has asked you to decide, while it is open.", 403);
+  await withinTeamCap(ctx, dispute.order_id);
   const result = await resolveDispute(ctx, dispute.id, input, { by: `team:${staff.name}` });
   const d = await first(ctx.env, "SELECT * FROM disputes WHERE id = ?", dispute.id);
   const naira2 = /* @__PURE__ */ __name((k) => "\u20A6" + (k / 100).toLocaleString("en-NG"), "naira");
@@ -4494,8 +4633,8 @@ __name(teamResolveDispute, "teamResolveDispute");
 
 // src/manual.js
 var MANUAL = {
-  updated: "2026-11-01",
-  // support standard, case references, order journey
+  updated: "2026-11-02",
+  // Fez delivery codes, Customer Relations Admin
   sections: [
     {
       id: "start",
@@ -4695,6 +4834,19 @@ var MANUAL = {
 </ul>`
     },
     {
+      id: "cr-admin",
+      title: "Customer Relations Admin",
+      html: `
+<p>The Customer Relations Admin (one person at a time) runs customer relations day to day. They log in at the team portal with their email, password <strong>and a code texted to their phone</strong>, and work on the admin pages.</p>
+<ul>
+<li><strong>Can:</strong> see every order, dispute, case account, evidence photo, return, seller and message; decide any dispute, whatever the amount; book, close or cancel returns; check a parcel with Fez; see Fez delivery codes (to help someone who lost the SMS); suspend a seller in an emergency (with a reason); add, reset and turn off customer relations members; create and assign tasks.</li>
+<li><strong>Can\u2019t:</strong> unsuspend sellers, clear debts, raise deal limits, retry payouts or refunds, open the Ledger or settings, or change the Customer Relations Admin account. Bank account numbers show only the last 4 digits.</li>
+<li><strong>Alerts:</strong> every new dispute (from a buyer, seller, rider or courier) is texted to the Customer Relations Admin and the admin, with the case reference and a link. The admin also gets a text for every decision made by anyone else.</li>
+<li><strong>WhatsApp:</strong> each open dispute has <em>WhatsApp buyer</em> and <em>WhatsApp seller</em> buttons that open a chat with the first message typed in. Use the TrustGap WhatsApp Business number, not a personal one.</li>
+<li><strong>Customer relations members</strong> decide a dispute only with a \u201CDecide a dispute\u201D task, and only on orders up to \u20A6200,000. Bigger ones go to the Customer Relations Admin or the admin.</li>
+</ul>`
+    },
+    {
       id: "standard",
       title: "Our support standard",
       html: `
@@ -4723,6 +4875,8 @@ var MANUAL = {
 <dd>No. Tubalcain Ads Enterprise is the registered business that runs TrustGap; Flutterwave shows the registered name. Only pay through the TrustGap link the seller sent.</dd>
 <dt>\u201CI\u2019ve paid. Where is my item?\u201D</dt>
 <dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
+<dt>\u201CI didn\u2019t get / lost the Fez delivery code.\u201D</dt>
+<dd>With Fez, the code is texted by Fez Delivery when the rider is dispatched (not before), and it also shows on the buyer\u2019s tracking page. If it isn\u2019t there yet, the item hasn\u2019t been dispatched. If it should be, tell the admin, who can see it on the order page or in the Fez business portal. Never read the code to anyone but the buyer, on their own number.</dd>
 <dt>\u201CI lost my delivery PIN.\u201D</dt>
 <dd>It is in their SMS and on their tracking page (the link in their SMS). <strong>Never ask for the PIN and never read it out</strong>; only the buyer gives it to the rider.</dd>
 <dt>\u201CThe rider wants the PIN before I see the item.\u201D</dt>
@@ -4774,8 +4928,8 @@ var MANUAL = {
       html: `
 <dl>
 <dt>Deal link</dt><dd>The payment link a seller creates for one item and one buyer.</dd>
-<dt>Delivery PIN</dt><dd>The buyer\u2019s 4-digit code given to the rider after checking the item. Marks the order delivered.</dd>
-<dt>Return PIN</dt><dd>The seller\u2019s 4-digit code given to the rider when a returned item reaches them.</dd>
+<dt>Delivery PIN / delivery code</dt><dd>The code the buyer gives the rider after checking the item; it marks the order delivered. With Fez, Fez makes it and texts it to the buyer at dispatch (also on their tracking page). With our own riders, it\u2019s TrustGap\u2019s 4-digit PIN, sent when they pay.</dd>
+<dt>Return PIN / return code</dt><dd>The seller\u2019s code given to the rider when a returned item reaches them, after checking it. With Fez it\u2019s Fez\u2019s code for the return, texted to the seller and shown on their order page.</dd>
 <dt>Inspection window</dt><dd>Time after delivery (currently 24 hours) to report a hidden problem.</dd>
 <dt>Ship-by time</dt><dd>The deadline for the seller to hand the item to the courier.</dd>
 <dt>Packing note</dt><dd>The seller\u2019s description of what they packed, written when booking pickup.</dd>
@@ -4799,11 +4953,6 @@ async function requireStaff(ctx, request, { allowPasswordChange = false } = {}) 
   return staff;
 }
 __name(requireStaff, "requireStaff");
-async function requireAdmin2(ctx, request) {
-  const session2 = await authenticate(ctx, request);
-  if (!session2?.is_admin) throw new UserError("Admin login required.", 401);
-}
-__name(requireAdmin2, "requireAdmin");
 function teamRoutes(r) {
   r.post("/api/team/login", ({ ctx, body }) => staffLogin(ctx, body));
   r.get("/api/team/me", async ({ ctx, request }) => ({ staff: meView(await requireStaff(ctx, request, { allowPasswordChange: true })) }));
@@ -4821,26 +4970,27 @@ function teamRoutes(r) {
     if (!session2?.is_admin) await requireStaff(ctx, request);
     return { manual: MANUAL };
   });
-  const admin = /* @__PURE__ */ __name((handler) => async (args) => {
-    await requireAdmin2(args.ctx, args.request);
-    return handler(args);
-  }, "admin");
-  r.get("/api/admin/team", admin(async ({ ctx }) => ({
+  const lead = /* @__PURE__ */ __name((handler) => async (args) => handler({ ...args, who: await requireAccess(args.ctx, args.request, { cr: true }) }), "lead");
+  const byOf = /* @__PURE__ */ __name((who) => ({ by: who.role, byStaffId: who.staff?.id ?? null }), "byOf");
+  r.get("/api/admin/team", lead(async ({ ctx, who }) => ({
     staff: await listStaff(ctx),
     tasks: await allTasks(ctx),
-    roles: ROLES,
     statuses: TASK_STATUSES,
     priorities: PRIORITIES,
-    kinds: TASK_KINDS
+    kinds: TASK_KINDS,
+    roles: who.role === "admin" ? ROLES : { customer_relations: ROLES.customer_relations },
+    team_dispute_cap: ctx.config.teamDisputeCapKobo,
+    me: { role: who.role, id: who.staff?.id ?? null }
   })));
-  r.post("/api/admin/team", admin(async ({ ctx, body }) => ({ staff: await createStaff(ctx, body) })));
-  r.post("/api/admin/team/:id", admin(async ({ ctx, params, body }) => ({ staff: await updateStaff(ctx, params.id, body) })));
-  r.post("/api/admin/tasks", admin(async ({ ctx, body }) => ({ task: await createTask(ctx, body) })));
-  r.post("/api/admin/tasks/:id", admin(async ({ ctx, params, body }) => ({ task: await updateTask(ctx, params.id, body) })));
-  r.post("/api/admin/tasks/:id/notes", admin(async ({ ctx, params, body }) => {
+  r.post("/api/admin/team", lead(async ({ ctx, body, who }) => ({ staff: await createStaff(ctx, body, byOf(who)) })));
+  r.post("/api/admin/team/:id", lead(async ({ ctx, params, body, who }) => ({ staff: await updateStaff(ctx, params.id, body, byOf(who)) })));
+  r.post("/api/admin/team/:id/delete", lead(async ({ ctx, params, who }) => deleteStaff(ctx, params.id, byOf(who))));
+  r.post("/api/admin/tasks", lead(async ({ ctx, body }) => ({ task: await createTask(ctx, body) })));
+  r.post("/api/admin/tasks/:id", lead(async ({ ctx, params, body }) => ({ task: await updateTask(ctx, params.id, body) })));
+  r.post("/api/admin/tasks/:id/notes", lead(async ({ ctx, params, body, who }) => {
     const t = await first(ctx.env, "SELECT id FROM tasks WHERE id = ?", Number(params.id));
     if (!t) throw new UserError("Task not found.", 404);
-    await addNote(ctx, t.id, "Admin", body.body);
+    await addNote(ctx, t.id, who.role === "admin" ? "Admin" : who.name, body.body);
     return { ok: true };
   }));
 }

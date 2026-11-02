@@ -1,16 +1,20 @@
 import { first, all, run, insert, update } from '../lib/db.js';
 import { hashPassword, checkPassword } from '../lib/crypto.js';
 import { UserError, iso, str, requireLength, normalisePhone, validEmail, getOrder, getDeal, getSeller, DISPUTE_CATEGORIES } from './common.js';
-import { createSession } from './sellers.js';
+import { createSession, sendCode, consumeCode } from './sellers.js';
 import { DELIVERY_LABELS, resolveDispute, evidenceDetails } from './orders.js';
 import { activeReturn, returnView } from './returns.js';
 import { caseView } from './statements.js';
 
-// Team members (staff who are not the admin, e.g. customer relations). Each has their own email and
-// password. They see the tasks the admin assigns them, the orders those tasks are about (read only),
-// and the team manual. They can't move money, decide disputes or change orders.
+// Team members (staff who are not the admin). Each has their own email and password.
+// - Customer relations: see the tasks assigned to them, the orders those tasks are about (read only)
+//   and the team manual; they decide a dispute only with a "Decide a dispute" task, and only on
+//   orders up to TEAM_DISPUTE_CAP_NAIRA.
+// - Customer Relations Admin (one at a time): near-admin access on the admin pages (core/access.js),
+//   decides any dispute, manages customer relations members and their tasks. Logs in with a code
+//   texted to their phone as well as the password.
 
-export const ROLES = { customer_relations: 'Customer relations' };
+export const ROLES = { customer_relations: 'Customer relations', cr_admin: 'Customer Relations Admin' };
 export const TASK_STATUSES = { todo: 'To do', in_progress: 'In progress', done: 'Done' };
 export const PRIORITIES = { normal: 'Normal', high: 'High' };
 // 'decide_dispute' lets the assignee decide that order's open dispute, until the task is done.
@@ -32,14 +36,23 @@ function newPassword(input, label = 'Password') {
 // ---------------------------------------------------------------- admin: team members
 
 export async function listStaff(ctx) {
-  return (await all(ctx.env, 'SELECT * FROM staff ORDER BY disabled_at IS NOT NULL, name')).map(staffView);
+  const rows = await all(ctx.env, 'SELECT s.*, (SELECT COUNT(*) FROM tasks t WHERE t.assigned_to = s.id) AS task_count FROM staff s ORDER BY s.disabled_at IS NOT NULL, s.name');
+  return rows.map((s) => ({ ...staffView(s), task_count: s.task_count, can_delete: s.task_count === 0 }));
 }
 
-export async function createStaff(ctx, input) {
+// `by` is who is adding them: only the admin can add the Customer Relations Admin.
+export async function createStaff(ctx, input, { by = 'admin' } = {}) {
   const name = requireLength(input.name, 'Name', 2, 100);
   const email = validEmail(input.email);
   const phone = str(input.phone) ? normalisePhone(input.phone) : null;
   const role = ROLES[input.role] ? input.role : 'customer_relations';
+  if (role === 'cr_admin') {
+    if (by !== 'admin') throw new UserError('Only the admin can add the Customer Relations Admin.', 403);
+    if (!phone) throw new UserError('The Customer Relations Admin needs a phone number: login codes and dispute alerts go to it.');
+    if (await first(ctx.env, "SELECT id FROM staff WHERE role = 'cr_admin' AND disabled_at IS NULL")) {
+      throw new UserError('There is already a Customer Relations Admin. Turn their account off first.');
+    }
+  }
   const password = newPassword(input.password, 'Temporary password');
   if (await first(ctx.env, 'SELECT id FROM staff WHERE email = ?', email)) throw new UserError('A team member with this email already exists.');
   const id = await insert(ctx.env, 'staff', {
@@ -49,18 +62,54 @@ export async function createStaff(ctx, input) {
 }
 
 // Reset the password (they must choose a new one at next login), or turn the account off and on.
-export async function updateStaff(ctx, id, input) {
+export async function updateStaff(ctx, id, input, { by = 'admin', byStaffId = null } = {}) {
   const s = await first(ctx.env, 'SELECT * FROM staff WHERE id = ?', Number(id));
   if (!s) throw new UserError('Team member not found.', 404);
+  // The Customer Relations Admin manages customer relations members, not themselves or the admin role.
+  if (by !== 'admin' && (s.role === 'cr_admin' || s.id === byStaffId)) throw new UserError('Only the admin can change this account.', 403);
+  if (input.disabled === false && s.role === 'cr_admin' && (await first(ctx.env, "SELECT id FROM staff WHERE role = 'cr_admin' AND disabled_at IS NULL AND id != ?", s.id))) {
+    throw new UserError('There is already an active Customer Relations Admin.');
+  }
   const fields = {};
+  // Change role (admin only), e.g. make an existing member the Customer Relations Admin, keeping
+  // their account and history. Their sessions end, so the new access starts at their next login.
+  if (input.role !== undefined && input.role !== s.role) {
+    if (by !== 'admin') throw new UserError('Only the admin can change a role.', 403);
+    if (!ROLES[input.role]) throw new UserError('Unknown role.');
+    const phone = input.phone !== undefined ? normalisePhone(input.phone) : s.phone;
+    if (input.role === 'cr_admin') {
+      if (!phone) throw new UserError('The Customer Relations Admin needs a phone number: login codes and dispute alerts go to it.');
+      if (await first(ctx.env, "SELECT id FROM staff WHERE role = 'cr_admin' AND disabled_at IS NULL AND id != ?", s.id)) {
+        throw new UserError('There is already a Customer Relations Admin. Turn their account off or change their role first.');
+      }
+    }
+    Object.assign(fields, { role: input.role, phone });
+  } else if (input.phone !== undefined) {
+    if (by !== 'admin') throw new UserError('Only the admin can change a phone number.', 403);
+    fields.phone = str(input.phone) ? normalisePhone(input.phone) : null;
+  }
   if (input.password !== undefined) Object.assign(fields, { password_hash: await hashPassword(newPassword(input.password, 'Temporary password')), must_change_password: 1 });
   if (input.disabled === true) fields.disabled_at = iso(ctx.now());
   if (input.disabled === false) fields.disabled_at = null;
   if (!Object.keys(fields).length) throw new UserError('Nothing to change.');
   await update(ctx.env, 'staff', s.id, fields);
   // A reset or a disabled account signs them out everywhere.
-  if (fields.password_hash || fields.disabled_at) await run(ctx.env, 'DELETE FROM sessions WHERE staff_id = ?', s.id);
+  if (fields.password_hash || fields.disabled_at || fields.role) await run(ctx.env, 'DELETE FROM sessions WHERE staff_id = ?', s.id);
   return staffView(await first(ctx.env, 'SELECT * FROM staff WHERE id = ?', s.id));
+}
+
+// Delete an account added by mistake. Only one that has never had a task, so the records of who did
+// what stay complete; anyone else is turned off instead.
+export async function deleteStaff(ctx, id, { by = 'admin', byStaffId = null } = {}) {
+  const s = await first(ctx.env, 'SELECT * FROM staff WHERE id = ?', Number(id));
+  if (!s) throw new UserError('Team member not found.', 404);
+  if (by !== 'admin' && (s.role === 'cr_admin' || s.id === byStaffId)) throw new UserError('Only the admin can delete this account.', 403);
+  if (await first(ctx.env, 'SELECT id FROM tasks WHERE assigned_to = ?', s.id)) {
+    throw new UserError(`${s.name} has tasks on record, so the account can’t be deleted. Turn it off instead.`);
+  }
+  await run(ctx.env, 'DELETE FROM sessions WHERE staff_id = ?', s.id);
+  await run(ctx.env, 'DELETE FROM staff WHERE id = ?', s.id);
+  return { deleted: true };
 }
 
 // ---------------------------------------------------------------- team login
@@ -76,6 +125,11 @@ export async function staffLogin(ctx, input) {
     fails.push(iso(ctx.now()));
     await run(ctx.env, 'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(fails));
     throw new UserError('Wrong email or password.', 401);
+  }
+  // The Customer Relations Admin also needs the code texted to their phone (a second step).
+  if (s.role === 'cr_admin') {
+    if (!str(input.code)) return { needs_code: true, phone_hint: s.phone ? `••••${s.phone.slice(-4)}` : '', ...(await sendCode(ctx, s.phone, s.email)) };
+    await consumeCode(ctx, s.phone, str(input.code));
   }
   await update(ctx.env, 'staff', s.id, { last_login_at: iso(ctx.now()) });
   return { token: await createSession(ctx, { staffId: s.id }), staff: staffView(s) };
@@ -134,7 +188,7 @@ export async function createTask(ctx, input) {
   const now = iso(ctx.now());
   const orderId = await orderIdFromRef(ctx, input.order_ref);
   const kind = TASK_KINDS[input.kind] ? input.kind : 'general';
-  if (kind === 'decide_dispute') await requireOpenDispute(ctx, orderId);
+  if (kind === 'decide_dispute') await requireOpenDispute(ctx, orderId, assignee);
   const id = await insert(ctx.env, 'tasks', {
     title, details, kind, order_id: orderId, assigned_to: assignee.id,
     priority: PRIORITIES[input.priority] ? input.priority : 'normal', status: 'todo', due_at: dueDate(input.due_date), created_at: now, updated_at: now,
@@ -143,10 +197,20 @@ export async function createTask(ctx, input) {
   return (await taskRows(ctx, 't.id = ?', id))[0];
 }
 
-async function requireOpenDispute(ctx, orderId) {
+async function requireOpenDispute(ctx, orderId, assignee = null) {
   if (!orderId) throw new UserError('A "Decide a dispute" task needs the order reference.');
   if (!(await first(ctx.env, "SELECT id FROM disputes WHERE order_id = ? AND status = 'open'", orderId))) {
     throw new UserError('That order has no open dispute to decide.');
+  }
+  if (assignee && assignee.role !== 'cr_admin') await withinTeamCap(ctx, orderId);
+}
+
+// Customer relations members decide disputes only on orders up to the team cap (the amount the buyer
+// paid); bigger ones are for the Customer Relations Admin or the admin.
+async function withinTeamCap(ctx, orderId) {
+  const o = await getOrder(ctx, orderId);
+  if (o.amount > ctx.config.teamDisputeCapKobo) {
+    throw new UserError(`This order is over ₦${(ctx.config.teamDisputeCapKobo / 100).toLocaleString('en-NG')}, so only the Customer Relations Admin or the admin can decide it.`, 403);
   }
 }
 
@@ -166,8 +230,9 @@ export async function updateTask(ctx, id, input) {
   if (input.due_date !== undefined) fields.due_at = dueDate(input.due_date);
   if (input.order_ref !== undefined) fields.order_id = await orderIdFromRef(ctx, input.order_ref);
   if (input.kind !== undefined && TASK_KINDS[input.kind]) fields.kind = input.kind;
-  if ((fields.kind || t.kind) === 'decide_dispute' && (fields.kind || fields.order_id !== undefined)) {
-    await requireOpenDispute(ctx, fields.order_id !== undefined ? fields.order_id : t.order_id);
+  if ((fields.kind || t.kind) === 'decide_dispute' && (fields.kind || fields.order_id !== undefined || input.assigned_to !== undefined)) {
+    const assignee = await first(ctx.env, 'SELECT * FROM staff WHERE id = ?', input.assigned_to !== undefined ? Number(input.assigned_to) : t.assigned_to);
+    await requireOpenDispute(ctx, fields.order_id !== undefined ? fields.order_id : t.order_id, assignee);
   }
   if (input.status !== undefined) Object.assign(fields, statusFields(ctx, input.status));
   let newAssignee = null;
@@ -250,6 +315,7 @@ export async function teamOrderView(ctx, staff, orderId) {
 async function decisionTask(ctx, staff, orderId) {
   const task = await first(ctx.env, "SELECT * FROM tasks WHERE order_id = ? AND assigned_to = ? AND kind = 'decide_dispute' AND status != 'done' ORDER BY id DESC", orderId, staff.id);
   if (!task) return null;
+  if (staff.role !== 'cr_admin' && (await getOrder(ctx, orderId)).amount > ctx.config.teamDisputeCapKobo) return null;
   return (await first(ctx.env, "SELECT id FROM disputes WHERE order_id = ? AND status = 'open'", orderId)) ? task : null;
 }
 
@@ -259,6 +325,7 @@ export async function teamResolveDispute(ctx, staff, disputeId, input) {
   const dispute = await first(ctx.env, 'SELECT * FROM disputes WHERE id = ?', Number(disputeId));
   const task = dispute && (await decisionTask(ctx, staff, dispute.order_id));
   if (!task || dispute.status !== 'open') throw new UserError('You can only decide a dispute the admin has asked you to decide, while it is open.', 403);
+  await withinTeamCap(ctx, dispute.order_id);
   const result = await resolveDispute(ctx, dispute.id, input, { by: `team:${staff.name}` });
   const d = await first(ctx.env, 'SELECT * FROM disputes WHERE id = ?', dispute.id);
   const naira = (k) => '₦' + (k / 100).toLocaleString('en-NG');

@@ -31,6 +31,7 @@ import {
   caseRef,
   caseUpdateBy,
 } from './common.js';
+import { alertNewDispute, alertDecision } from './alerts.js';
 
 // ---------------------------------------------------------------- buyer checkout
 
@@ -236,7 +237,9 @@ export async function confirmPayment(ctx, txRef, actor = 'system') {
     event: 'payment_received_buyer',
     phone: order.buyer_phone,
     email: order.buyer_email,
-    sms: `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
+    sms: courierGivesCode(ctx)
+      ? `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. When it’s dispatched, Fez Delivery will text you a delivery code: inspect the item first, then give the rider the code. Track: ${trackUrl(ctx, order)}`
+      : `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`,
   });
   return getOrder(ctx, order.id);
@@ -271,6 +274,16 @@ async function refundDuplicate(ctx, order, v, actor) {
 
 export async function revealPin(ctx, order) {
   return order.delivery_pin_enc ? decrypt(order.delivery_pin_enc, ctx.config.appSecret) : null;
+}
+
+// Whether the courier gives the recipient its own delivery code (Fez) instead of TrustGap's PIN.
+// A booked order or return goes by the courier it was booked with; before booking, the current one.
+export const courierGivesCode = (ctx, courier = null) => (courier ? courier === 'fez' : Boolean(ctx.logistics.givesCode));
+export const revealCourierCode = (ctx, row) => (row?.courier_code_enc ? decrypt(row.courier_code_enc, ctx.config.appSecret) : null);
+// Keeps the courier's code (read with the status) encrypted on the order or return, when it changes.
+export async function saveCourierCode(ctx, table, row, code) {
+  if (!code || (await revealCourierCode(ctx, row)) === code) return;
+  await update(ctx.env, table, row.id, { courier_code_enc: await encrypt(code, ctx.config.appSecret) });
 }
 
 // ---------------------------------------------------------------- delivery
@@ -369,7 +382,9 @@ async function deliveryNotice(ctx, order, stage, reason = '') {
     await send('buyer', `TrustGap: your item for order ${order.ref} has been picked up from the seller. Keep your phone on; we’ll text you when it’s out for delivery.`);
     await send('seller', `TrustGap: the courier has collected order ${order.ref}. Your part is nearly done; we’ll tell you when it’s delivered.`);
   } else if (stage === 'out_for_delivery') {
-    await send('buyer', `TrustGap: order ${order.ref} is on its way to you today. When it arrives, inspect it before giving the rider your PIN. If it isn’t right, keep your PIN and report it.`);
+    await send('buyer', courierGivesCode(ctx, order.courier)
+      ? `TrustGap: order ${order.ref} is on its way to you today. Fez Delivery has texted you a delivery code (it’s also on your TrustGap tracking page). Inspect the item first, then give the rider the code. If it isn’t right, keep the code and report it: ${trackUrl(ctx, order)}`
+      : `TrustGap: order ${order.ref} is on its way to you today. When it arrives, inspect it before giving the rider your PIN. If it isn’t right, keep your PIN and report it.`);
   } else if (stage === 'attempt_failed') {
     await send('buyer', `TrustGap: the rider couldn’t deliver order ${order.ref} (${reason}). They will try again; please keep your phone on.`);
   }
@@ -430,6 +445,7 @@ export async function syncCourierStatus(ctx, order) {
   const st = await ctx.logistics.getStatus(order.delivery_ref);
   if (!st) return null;
   const changed = Boolean(st.raw && st.raw !== order.courier_status);
+  await saveCourierCode(ctx, 'orders', order, st.code);
   if (changed) {
     await update(ctx.env, 'orders', order.id, { courier_status: st.raw });
     await logEvent(ctx, order.id, 'courier', 'courier_status', st.reason ? `${st.raw}: ${st.reason}` : st.raw);
@@ -507,6 +523,7 @@ export async function openDispute(ctx, order, { by, category, description, photo
     sms: by === 'buyer' ? `TrustGap: we have received your report on order ${order.ref}. ${common} Keep the item and packaging safe; we may ask for more evidence.` : sms });
   await ctx.notify.send({ orderId: order.id, event: 'dispute_opened', phone: seller.phone,
     sms: `${sms} Add your side and any photos from your order page; we read both sides before deciding.` });
+  await alertNewDispute(ctx, order.id);
   if (duringDelivery) await startReturnAfterRefusal(ctx, await getOrder(ctx, order.id), parcel);
 }
 
@@ -607,9 +624,11 @@ export async function resolveDispute(ctx, disputeId, input, { by = 'admin' } = {
     const sms = `TrustGap decision on ${order.ref}. ${decisionSummary(decision)} The refund is sent once the seller has the item back.`;
     await ctx.notify.send({ orderId: order.id, event: 'dispute_decided', phone: order.buyer_phone, email: order.buyer_email, sms });
     await ctx.notify.send({ orderId: order.id, event: 'dispute_decided', phone: seller.phone, email: seller.email, sms });
+    await alertDecision(ctx, order, dispute, { by, summary: decisionSummary(decision) });
     return { waiting_for_return: true };
   }
   await settleDispute(ctx, order, dispute, decision);
+  await alertDecision(ctx, order, dispute, { by, summary: decisionSummary(decision) });
   return { waiting_for_return: false };
 }
 

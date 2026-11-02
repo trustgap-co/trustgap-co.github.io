@@ -137,6 +137,7 @@ export function sellerRoutes(r) {
         seller_payout: o.seller_payout,
         delivery_fee: o.delivery_fee,
         delivery_payer: d.delivery_payer,
+        courier: o.courier,
         courier_status: o.courier_status,
         buyer_name: o.buyer_name,
         delivery_state: o.delivery_state,

@@ -92,6 +92,9 @@ export function createFezLogistics(ctx) {
     name: 'fez',
     // Live Fez books real pickups that Fez bills for; the sandbox doesn't.
     live: !base.includes('sandbox'),
+    // Fez makes its own delivery code and texts it to the recipient at dispatch (read back as
+    // delivery_OTP); TrustGap's PIN isn't used.
+    givesCode: true,
 
     // POST /order/cost: the amount charged is cost + VAT ("totalCost").
     async quote({ pickupState, dropoffState, weightKg }) {
@@ -101,9 +104,9 @@ export function createFezLogistics(ctx) {
       return { feeKobo: Math.ceil(total) * 100 };
     },
 
-    // POST /order books the pickup. uniqueID is our order reference, and the buyer's delivery PIN
-    // goes in CustToken (Fez's "token sent to recipient for confirmation of receipt").
-    async book({ order, deal, seller, pin }) {
+    // POST /order books the pickup. uniqueID is our order reference. Fez generates the delivery code
+    // itself (CustToken is only for organisations that send their own), so none is sent.
+    async book({ order, deal, seller }) {
       const data = await call('POST', '/order', [
         {
           recipientAddress: order.delivery_address,
@@ -113,9 +116,8 @@ export function createFezLogistics(ctx) {
           recipientEmail: order.buyer_email,
           uniqueID: order.ref,
           BatchID: order.ref,
-          CustToken: pin,
           itemDescription: `${deal.item_title} (x${deal.quantity})`.slice(0, 250),
-          additionalDetails: [order.delivery_landmark && `Landmark: ${order.delivery_landmark}`, order.packing_note && `Contents: ${order.packing_note}`, 'Buyer gives a 4-digit PIN only after checking the item.']
+          additionalDetails: [order.delivery_landmark && `Landmark: ${order.delivery_landmark}`, order.packing_note && `Contents: ${order.packing_note}`, 'TrustGap order: the buyer checks the item before giving the delivery code.']
             .filter(Boolean)
             .join(' | '),
           valueOfItem: String(Math.round(deal.item_price / 100)),
@@ -135,9 +137,9 @@ export function createFezLogistics(ctx) {
     },
 
     // A return is a new Fez order the other way round: collected from the buyer, delivered to the
-    // seller's pickup address. The seller's return PIN goes in CustToken, so Fez marks it delivered
-    // only when the seller gives the rider that PIN.
-    async bookReturn({ order, deal, seller, pin, ref }) {
+    // seller's pickup address. Fez texts the seller its own code for it, so Fez marks it delivered only
+    // when the seller gives the rider that code.
+    async bookReturn({ order, deal, seller, ref }) {
       const data = await call('POST', '/order', [
         {
           recipientAddress: deal.pickup_address,
@@ -147,9 +149,8 @@ export function createFezLogistics(ctx) {
           recipientEmail: seller.email,
           uniqueID: ref,
           BatchID: ref,
-          CustToken: pin,
           itemDescription: `RETURN: ${deal.item_title} (x${deal.quantity})`.slice(0, 250),
-          additionalDetails: [`Return for order ${order.ref}`, order.delivery_landmark && `Pickup landmark: ${order.delivery_landmark}`, 'Seller gives a 4-digit PIN only after checking the item.']
+          additionalDetails: [`Return for order ${order.ref}`, order.delivery_landmark && `Pickup landmark: ${order.delivery_landmark}`, 'TrustGap return: the seller checks the item before giving the delivery code.']
             .filter(Boolean)
             .join(' | '),
           valueOfItem: String(Math.round(deal.item_price / 100)),
@@ -173,7 +174,12 @@ export function createFezLogistics(ctx) {
       const data = await call('GET', `/orders/${encodeURIComponent(orderNo)}`);
       const details = Array.isArray(data.orderDetails) ? data.orderDetails[0] : data.orderDetails;
       if (!details) return null;
-      return { raw: details.orderStatus, stage: mapFezStatus(details.orderStatus), reason: details.returnReason || details.statusDescription || null };
+      return {
+        raw: details.orderStatus,
+        stage: mapFezStatus(details.orderStatus),
+        reason: details.returnReason || details.statusDescription || null,
+        code: details.delivery_OTP != null && String(details.delivery_OTP).trim() ? String(details.delivery_OTP).trim() : null,
+      };
     },
 
     // Fez's status webhook: { orderNumber, status } with X-Timestamp and

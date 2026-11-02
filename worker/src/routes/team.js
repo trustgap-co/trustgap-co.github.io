@@ -2,10 +2,11 @@ import { first } from '../lib/db.js';
 import { UserError } from '../lib/http.js';
 import { authenticate } from '../core/sellers.js';
 import {
-  ROLES, TASK_STATUSES, PRIORITIES, TASK_KINDS, listStaff, createStaff, updateStaff, staffLogin, changeOwnPassword, meView,
+  ROLES, TASK_STATUSES, PRIORITIES, TASK_KINDS, listStaff, createStaff, updateStaff, deleteStaff, staffLogin, changeOwnPassword, meView,
   allTasks, tasksFor, createTask, updateTask, setTaskStatus, addNote, staffNote, teamOrderView, teamResolveDispute,
 } from '../core/team.js';
 import { MANUAL } from '../manual.js';
+import { requireAccess } from '../core/access.js';
 
 async function requireStaff(ctx, request, { allowPasswordChange = false } = {}) {
   const session = await authenticate(ctx, request);
@@ -14,10 +15,6 @@ async function requireStaff(ctx, request, { allowPasswordChange = false } = {}) 
   // A new or reset account must choose its own password before doing anything else.
   if (staff.must_change_password && !allowPasswordChange) throw new UserError('Choose a new password first.', 403);
   return staff;
-}
-async function requireAdmin(ctx, request) {
-  const session = await authenticate(ctx, request);
-  if (!session?.is_admin) throw new UserError('Admin login required.', 401);
 }
 
 export function teamRoutes(r) {
@@ -45,22 +42,24 @@ export function teamRoutes(r) {
     return { manual: MANUAL };
   });
 
-  // ---- admin: team members and tasks
-  const admin = (handler) => async (args) => {
-    await requireAdmin(args.ctx, args.request);
-    return handler(args);
-  };
-  r.get('/api/admin/team', admin(async ({ ctx }) => ({
-    staff: await listStaff(ctx), tasks: await allTasks(ctx), roles: ROLES, statuses: TASK_STATUSES, priorities: PRIORITIES, kinds: TASK_KINDS,
+  // ---- team members and tasks: the admin and the Customer Relations Admin (who can't add or change
+  // the Customer Relations Admin role, or their own account here)
+  const lead = (handler) => async (args) => handler({ ...args, who: await requireAccess(args.ctx, args.request, { cr: true }) });
+  const byOf = (who) => ({ by: who.role, byStaffId: who.staff?.id ?? null });
+  r.get('/api/admin/team', lead(async ({ ctx, who }) => ({
+    staff: await listStaff(ctx), tasks: await allTasks(ctx), statuses: TASK_STATUSES, priorities: PRIORITIES, kinds: TASK_KINDS,
+    roles: who.role === 'admin' ? ROLES : { customer_relations: ROLES.customer_relations },
+    team_dispute_cap: ctx.config.teamDisputeCapKobo, me: { role: who.role, id: who.staff?.id ?? null },
   })));
-  r.post('/api/admin/team', admin(async ({ ctx, body }) => ({ staff: await createStaff(ctx, body) })));
-  r.post('/api/admin/team/:id', admin(async ({ ctx, params, body }) => ({ staff: await updateStaff(ctx, params.id, body) })));
-  r.post('/api/admin/tasks', admin(async ({ ctx, body }) => ({ task: await createTask(ctx, body) })));
-  r.post('/api/admin/tasks/:id', admin(async ({ ctx, params, body }) => ({ task: await updateTask(ctx, params.id, body) })));
-  r.post('/api/admin/tasks/:id/notes', admin(async ({ ctx, params, body }) => {
+  r.post('/api/admin/team', lead(async ({ ctx, body, who }) => ({ staff: await createStaff(ctx, body, byOf(who)) })));
+  r.post('/api/admin/team/:id', lead(async ({ ctx, params, body, who }) => ({ staff: await updateStaff(ctx, params.id, body, byOf(who)) })));
+  r.post('/api/admin/team/:id/delete', lead(async ({ ctx, params, who }) => deleteStaff(ctx, params.id, byOf(who))));
+  r.post('/api/admin/tasks', lead(async ({ ctx, body }) => ({ task: await createTask(ctx, body) })));
+  r.post('/api/admin/tasks/:id', lead(async ({ ctx, params, body }) => ({ task: await updateTask(ctx, params.id, body) })));
+  r.post('/api/admin/tasks/:id/notes', lead(async ({ ctx, params, body, who }) => {
     const t = await first(ctx.env, 'SELECT id FROM tasks WHERE id = ?', Number(params.id));
     if (!t) throw new UserError('Task not found.', 404);
-    await addNote(ctx, t.id, 'Admin', body.body);
+    await addNote(ctx, t.id, who.role === 'admin' ? 'Admin' : who.name, body.body);
     return { ok: true };
   }));
 }

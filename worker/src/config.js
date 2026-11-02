@@ -72,6 +72,10 @@ export function loadConfig(env) {
       maxUses: num(env.PROMO_MAX_USES, 1000),
     },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
+    // Customer relations members may decide disputes only on orders up to this (the Customer Relations
+    // Admin and the admin decide any). Dispute alerts go to ADMIN_ALERT_PHONE and the CR Admin.
+    teamDisputeCapKobo: num(env.TEAM_DISPUTE_CAP_NAIRA, 200000) * 100,
+    adminAlertPhone: String(env.ADMIN_ALERT_PHONE || '').trim(),
     paymentTimeoutMinutes: num(env.PAYMENT_TIMEOUT_MINUTES, 60),
     pinMaxAttempts: 5,
     otp: { ttlMinutes: 10, maxAttempts: 5, maxPerWindow: 3, windowMinutes: 15 },

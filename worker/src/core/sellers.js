@@ -68,9 +68,8 @@ export async function requestLogin(ctx, input) {
   return { phone, ...(await sendCode(ctx, phone, seller.email)) };
 }
 
-export async function verifyCode(ctx, input) {
-  const phone = normalisePhone(input.phone);
-  const code = str(input.code);
+// Checks and uses up the latest code sent to `phone`. Throws if it's wrong, used or expired.
+export async function consumeCode(ctx, phone, code) {
   const { otp } = ctx.config;
   const row = await first(
     ctx.env,
@@ -86,6 +85,11 @@ export async function verifyCode(ctx, input) {
   }
   const claimed = await run(ctx.env, 'UPDATE otps SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL', iso(ctx.now()), row.id);
   if (claimed.meta.changes !== 1) throw new UserError('That code was already used. Request a new one.');
+}
+
+export async function verifyCode(ctx, input) {
+  const phone = normalisePhone(input.phone);
+  await consumeCode(ctx, phone, str(input.code));
   const seller = await first(ctx.env, 'SELECT * FROM sellers WHERE phone = ?', phone);
   if (!seller) throw new UserError('That code is wrong or has expired. Request a new one.');
   if (!seller.phone_verified_at) await update(ctx.env, 'sellers', seller.id, { phone_verified_at: iso(ctx.now()) });

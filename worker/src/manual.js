@@ -3,7 +3,7 @@
 // Each section is plain HTML: headings, paragraphs, lists and tables only.
 
 export const MANUAL = {
-  updated: '2026-11-01',  // support standard, case references, order journey
+  updated: '2026-11-02',  // Fez delivery codes, Customer Relations Admin
   sections: [
     {
       id: 'start',
@@ -203,6 +203,19 @@ export const MANUAL = {
 </ul>`,
     },
     {
+      id: 'cr-admin',
+      title: 'Customer Relations Admin',
+      html: `
+<p>The Customer Relations Admin (one person at a time) runs customer relations day to day. They log in at the team portal with their email, password <strong>and a code texted to their phone</strong>, and work on the admin pages.</p>
+<ul>
+<li><strong>Can:</strong> see every order, dispute, case account, evidence photo, return, seller and message; decide any dispute, whatever the amount; book, close or cancel returns; check a parcel with Fez; see Fez delivery codes (to help someone who lost the SMS); suspend a seller in an emergency (with a reason); add, reset and turn off customer relations members; create and assign tasks.</li>
+<li><strong>Can’t:</strong> unsuspend sellers, clear debts, raise deal limits, retry payouts or refunds, open the Ledger or settings, or change the Customer Relations Admin account. Bank account numbers show only the last 4 digits.</li>
+<li><strong>Alerts:</strong> every new dispute (from a buyer, seller, rider or courier) is texted to the Customer Relations Admin and the admin, with the case reference and a link. The admin also gets a text for every decision made by anyone else.</li>
+<li><strong>WhatsApp:</strong> each open dispute has <em>WhatsApp buyer</em> and <em>WhatsApp seller</em> buttons that open a chat with the first message typed in. Use the TrustGap WhatsApp Business number, not a personal one.</li>
+<li><strong>Customer relations members</strong> decide a dispute only with a “Decide a dispute” task, and only on orders up to ₦200,000. Bigger ones go to the Customer Relations Admin or the admin.</li>
+</ul>`,
+    },
+    {
       id: 'standard',
       title: 'Our support standard',
       html: `
@@ -231,6 +244,8 @@ export const MANUAL = {
 <dd>No. Tubalcain Ads Enterprise is the registered business that runs TrustGap; Flutterwave shows the registered name. Only pay through the TrustGap link the seller sent.</dd>
 <dt>“I’ve paid. Where is my item?”</dt>
 <dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
+<dt>“I didn’t get / lost the Fez delivery code.”</dt>
+<dd>With Fez, the code is texted by Fez Delivery when the rider is dispatched (not before), and it also shows on the buyer’s tracking page. If it isn’t there yet, the item hasn’t been dispatched. If it should be, tell the admin, who can see it on the order page or in the Fez business portal. Never read the code to anyone but the buyer, on their own number.</dd>
 <dt>“I lost my delivery PIN.”</dt>
 <dd>It is in their SMS and on their tracking page (the link in their SMS). <strong>Never ask for the PIN and never read it out</strong>; only the buyer gives it to the rider.</dd>
 <dt>“The rider wants the PIN before I see the item.”</dt>
@@ -282,8 +297,8 @@ export const MANUAL = {
       html: `
 <dl>
 <dt>Deal link</dt><dd>The payment link a seller creates for one item and one buyer.</dd>
-<dt>Delivery PIN</dt><dd>The buyer’s 4-digit code given to the rider after checking the item. Marks the order delivered.</dd>
-<dt>Return PIN</dt><dd>The seller’s 4-digit code given to the rider when a returned item reaches them.</dd>
+<dt>Delivery PIN / delivery code</dt><dd>The code the buyer gives the rider after checking the item; it marks the order delivered. With Fez, Fez makes it and texts it to the buyer at dispatch (also on their tracking page). With our own riders, it’s TrustGap’s 4-digit PIN, sent when they pay.</dd>
+<dt>Return PIN / return code</dt><dd>The seller’s code given to the rider when a returned item reaches them, after checking it. With Fez it’s Fez’s code for the return, texted to the seller and shown on their order page.</dd>
 <dt>Inspection window</dt><dd>Time after delivery (currently 24 hours) to report a hidden problem.</dd>
 <dt>Ship-by time</dt><dd>The deadline for the seller to hand the item to the courier.</dd>
 <dt>Packing note</dt><dd>The seller’s description of what they packed, written when booking pickup.</dd>

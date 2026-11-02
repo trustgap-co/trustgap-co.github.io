@@ -2,9 +2,10 @@ import { first, all, update, insert } from '../lib/db.js';
 import { nairaToKobo, formatNaira } from '../lib/money.js';
 import { UserError, notFound } from '../lib/http.js';
 import { verifyLink } from '../lib/crypto.js';
+import { requireAccess } from '../core/access.js';
 import { DISPUTE_CATEGORIES, getOrder, getDeal, getSeller, trackUrl, iso, str } from '../core/common.js';
 import { adminLogin, authenticate } from '../core/sellers.js';
-import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceDetails, DELIVERY_LABELS } from '../core/orders.js';
+import { resolveDispute, sendTransfer, applyDeliveryUpdate, verifyDeliveryPin, syncCourierStatus, evidenceDetails, revealCourierCode, DELIVERY_LABELS } from '../core/orders.js';
 import { runJobs } from '../core/jobs.js';
 import { suspendSeller, unsuspendSeller, sellerHistory } from '../core/suspension.js';
 import { healthReport } from './public.js';
@@ -15,10 +16,6 @@ import { activeReturn, isOpenReturn, returnView, verifyReturnPin, applyReturnUpd
 import { dealPhotos } from '../core/deals.js';
 import { syncSheets } from '../providers/sheets.js';
 
-async function requireAdmin(ctx, request) {
-  const session = await authenticate(ctx, request);
-  if (!session?.is_admin) throw new UserError('Admin login required.', 401);
-}
 
 // A rider link is either a delivery ("rider-<order id>") or a pickup return ("return-<return id>").
 async function riderJob(ctx, token) {
@@ -116,10 +113,11 @@ export function riderRoutes(r) {
 export function adminRoutes(r) {
   r.post('/api/admin/login', ({ ctx, body }) => adminLogin(ctx, body));
 
-  const admin = (handler) => async (args) => {
-    await requireAdmin(args.ctx, args.request);
-    return handler(args);
-  };
+  // The admin's pages and actions. Those marked { cr: true } are also open to the Customer Relations
+  // Admin (see core/access.js); `who` says who is acting, for the records.
+  const admin = (handler, opts = {}) => async (args) => handler({ ...args, who: await requireAccess(args.ctx, args.request, opts) });
+
+  r.get('/api/admin/me', admin(async ({ who }) => ({ role: who.role, name: who.name }), { cr: true }));
 
   r.get('/api/admin/orders', admin(async ({ ctx, url }) => {
     const status = url.searchParams.get('status') || '';
@@ -135,17 +133,19 @@ export function adminRoutes(r) {
     );
     const counts = Object.fromEntries((await all(ctx.env, 'SELECT status, COUNT(*) n FROM orders GROUP BY status')).map((x) => [x.status, x.n]));
     return { orders, counts };
-  }));
+  }, { cr: true }));
 
-  r.get('/api/admin/orders/:id', admin(async ({ ctx, params }) => {
+  r.get('/api/admin/orders/:id', admin(async ({ ctx, params, who }) => {
     const o = await getOrder(ctx, Number(params.id));
     if (!o) throw notFound('Order not found.');
     const d = await getDeal(ctx, o.deal_id);
     const s = await getSeller(ctx, o.seller_id);
-    const { refund_account_enc, delivery_pin_enc, last_transition, terms_json, ...order } = o;
+    const { refund_account_enc, delivery_pin_enc, courier_code_enc, last_transition, terms_json, ...order } = o;
     return {
       order: {
         ...order,
+        // Fez's delivery code, for staff helping a buyer who lost the SMS.
+        courier_code: await revealCourierCode(ctx, o),
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         track_url: trackUrl(ctx, o),
       },
@@ -153,7 +153,9 @@ export function adminRoutes(r) {
       photos: await dealPhotos(ctx, d),
       seller: {
         id: s.id, business_name: s.business_name, full_name: s.full_name, phone: s.phone, email: s.email,
-        payout_bank_name: s.payout_bank_name, payout_account_number: s.payout_account_number,
+        payout_bank_name: s.payout_bank_name,
+        // The Customer Relations Admin sees only the last 4 digits.
+        payout_account_number: who.role === 'admin' ? s.payout_account_number : s.payout_account_number && `••••${s.payout_account_number.slice(-4)}`,
         identity_verified: Boolean(s.identity_verified_at), amount_owed: s.amount_owed,
       },
       disputes: await Promise.all((await all(ctx.env, 'SELECT * FROM disputes WHERE order_id = ? ORDER BY id', o.id)).map(async (x) => ({
@@ -175,9 +177,11 @@ export function adminRoutes(r) {
       events: await all(ctx.env, 'SELECT * FROM order_events WHERE order_id = ? ORDER BY id', o.id),
       messages: await all(ctx.env, 'SELECT * FROM outbox WHERE order_id = ? ORDER BY id', o.id),
     };
-  }));
+  }, { cr: true }));
 
-  r.post('/api/admin/disputes/:id/resolve', admin(async ({ ctx, params, body }) => ({ ok: true, ...(await resolveDispute(ctx, Number(params.id), body)) })));
+  // The admin and the Customer Relations Admin decide any dispute, whatever the amount; recorded under their name.
+  r.post('/api/admin/disputes/:id/resolve', admin(async ({ ctx, params, body, who }) =>
+    ({ ok: true, ...(await resolveDispute(ctx, Number(params.id), body, { by: who.actor })) }), { cr: true }));
 
   const adminReturn = async (ctx, id) => {
     const ret = await first(ctx.env, 'SELECT * FROM returns WHERE id = ?', Number(id));
@@ -188,7 +192,7 @@ export function adminRoutes(r) {
   r.post('/api/admin/returns/:id/received', admin(async ({ ctx, params }) => {
     if (!(await receiveReturn(ctx, await adminReturn(ctx, params.id), 'admin'))) throw new UserError('This return is already closed.');
     return { ok: true };
-  }));
+  }, { cr: true }));
   // Staff book a collection from the buyer by hand (e.g. the buyer still has a refused parcel and no
   // return was started, or a courier error stopped the automatic booking).
   r.post('/api/admin/orders/:id/book-return', admin(async ({ ctx, params }) => {
@@ -197,15 +201,15 @@ export function adminRoutes(r) {
     if (!['disputed', 'shipping'].includes(order.status) || !order.dispatched_at) throw new UserError('A return can only be booked for a shipped order under review.');
     const ret = await bookPickupReturn(ctx, order, { parcelWithBuyer: true });
     return { ok: true, return_id: ret.id };
-  }));
+  }, { cr: true }));
   r.post('/api/admin/returns/:id/cancel', admin(async ({ ctx, params, body }) => {
     await cancelReturn(ctx, await adminReturn(ctx, params.id), body.note);
     return { ok: true };
-  }));
+  }, { cr: true }));
   r.post('/api/admin/returns/:id/sync-courier', admin(async ({ ctx, params }) => {
     const st = await syncReturnStatus(ctx, await adminReturn(ctx, params.id));
     return { status: st?.raw || 'no update' };
-  }));
+  }, { cr: true }));
 
   r.get('/api/admin/disputes', admin(async ({ ctx, url }) => ({
     disputes: (await all(
@@ -213,7 +217,7 @@ export function adminRoutes(r) {
       `SELECT x.*, o.ref FROM disputes x JOIN orders o ON o.id = x.order_id WHERE ${dateRange(url, 'x.created_at').where}
        ORDER BY ${dateRange(url, 'x.created_at').order} LIMIT 500`, ...dateRange(url, 'x.created_at').args,
     )).map((x) => ({ ...x, category_label: DISPUTE_CATEGORIES[x.category] || x.category })),
-  })));
+  }), { cr: true }));
 
   r.get('/api/admin/sellers', admin(async ({ ctx, url }) => ({
     sellers: await Promise.all((await all(
@@ -225,11 +229,13 @@ export function adminRoutes(r) {
        FROM sellers s WHERE ${dateRange(url, 's.created_at').where} ORDER BY ${dateRange(url, 's.created_at').order} LIMIT 500`,
       ...dateRange(url, 's.created_at').args,
     )).map(async (s) => ({ ...s, history: await sellerHistory(ctx, s.id) }))),
-  })));
+  }), { cr: true }));
 
-  r.post('/api/admin/sellers/:id', admin(async ({ ctx, params, body }) => {
+  r.post('/api/admin/sellers/:id', admin(async ({ ctx, params, body, who }) => {
     const id = Number(params.id);
-    if (body.action === 'suspend') return { ok: true, ...(await suspendSeller(ctx, id, { reason: body.reason })) };
+    if (body.action === 'suspend') return { ok: true, ...(await suspendSeller(ctx, id, { reason: body.reason, by: who.role === 'admin' ? 'admin' : who.name })) };
+    // The Customer Relations Admin may suspend in an emergency; everything else here is the admin's.
+    if (who.role !== 'admin') throw new UserError('Only the admin can do this. You can suspend a seller; the admin lifts it.', 403);
     if (body.action === 'unsuspend') return { ok: true, ...(await unsuspendSeller(ctx, id, { reason: body.reason })) };
     // A higher deal limit for one seller (a high-value deal arranged through support). Empty resets it.
     if (body.action === 'limit') {
@@ -248,12 +254,12 @@ export function adminRoutes(r) {
     if (!(await getSeller(ctx, id))) throw notFound('Seller not found.');
     await update(ctx.env, 'sellers', id, fields);
     return { ok: true };
-  }));
+  }, { cr: true }));
 
   r.get('/api/admin/outbox', admin(async ({ ctx, url }) => {
     const range = dateRange(url, 'm.created_at');
     return { messages: await all(ctx.env, `SELECT m.* FROM outbox m WHERE ${range.where} ORDER BY ${range.order} LIMIT 500`, ...range.args) };
-  }));
+  }, { cr: true }));
 
   r.get('/api/admin/ledger', admin(async ({ ctx, url }) => {
     const range = dateRange(url, 'l.created_at');
@@ -272,7 +278,7 @@ export function adminRoutes(r) {
     if (!o) throw notFound('Order not found.');
     const st = await syncCourierStatus(ctx, o);
     return { status: st ? st.raw : 'No courier status (manual rider, or not booked yet).' };
-  }));
+  }, { cr: true }));
 
   // Tells Fez where to send parcel status updates (Fez → POST /webhooks/store).
   r.post('/api/admin/courier/register-webhook', admin(async ({ ctx }) => {

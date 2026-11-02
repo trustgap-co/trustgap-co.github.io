@@ -71,5 +71,13 @@ export const MIGRATIONS = [
   {
     "name": "0018_fees_and_limits.sql",
     "sql": "-- Revenue: delivery as TrustGap's own service (courier cost kept apart from the price charged),\n-- a dispute fee paid by whoever is at fault, and a per-seller deal limit the admin can raise.\nALTER TABLE deals ADD COLUMN courier_cost INTEGER;\nALTER TABLE deals ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\nALTER TABLE sellers ADD COLUMN deal_limit INTEGER;\nALTER TABLE disputes ADD COLUMN fault TEXT;\nALTER TABLE disputes ADD COLUMN dispute_fee INTEGER NOT NULL DEFAULT 0;\n-- The part of the fee kept from the held money (the rest, if any, was added to the seller's debt).\nALTER TABLE disputes ADD COLUMN dispute_fee_taken INTEGER NOT NULL DEFAULT 0;\n"
+  },
+  {
+    "name": "0019_courier_delivery_codes.sql",
+    "sql": "-- Fez makes its own delivery code (delivery_OTP) and texts it to the recipient at dispatch; the rider\n-- can't complete delivery without it. TrustGap reads it from Fez's API and keeps it encrypted, to show\n-- the buyer (delivery) or seller (return) on their private page. TrustGap's own PIN stays for your\n-- own riders.\nALTER TABLE orders ADD COLUMN courier_code_enc TEXT;\nALTER TABLE returns ADD COLUMN courier_code_enc TEXT;\n"
+  },
+  {
+    "name": "0020_customer_relations_admin.sql",
+    "sql": "-- The Customer Relations Admin: one team member with near-admin access (staff.role = 'cr_admin').\n-- At most one active at a time.\nCREATE UNIQUE INDEX IF NOT EXISTS staff_one_cr_admin ON staff(role) WHERE role = 'cr_admin' AND disabled_at IS NULL;\n"
   }
 ];

@@ -110,8 +110,8 @@ describe('Fez', () => {
       }
       if (u.endsWith('/order/cost')) return json({ status: 'Success', cost: { state: body.state, cost: body.state === body.pickUpState ? 2500 : 6000 }, vat: { vatAmount: 187.5 }, totalCost: body.state === body.pickUpState ? 2687.5 : 6450 });
       if (u.endsWith('/order') && init.method === 'POST') return json({ status: 'Success', description: 'Order Successfully Created', orderNos: { [body[0].uniqueID]: body[0].uniqueID.endsWith('-R') ? 'FEZRET1' : 'FEZ123456' } }, 201);
-      if (u.includes('/orders/FEZ123456')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZ123456', orderStatus: state.status, returnReason: state.reason }] });
-      if (u.includes('/orders/FEZRET1')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZRET1', orderStatus: state.returnStatus }] });
+      if (u.includes('/orders/FEZ123456')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZ123456', orderStatus: state.status, returnReason: state.reason, delivery_OTP: state.otp ?? null }] });
+      if (u.includes('/orders/FEZRET1')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZRET1', orderStatus: state.returnStatus, delivery_OTP: state.returnOtp ?? null }] });
       if (u.endsWith('/webhooks/store')) return json({ status: 'Success', data: { webhook: body.webhook } });
       return json({ status: 'Error', description: 'unexpected ' + u }, 404);
     };
@@ -162,11 +162,16 @@ describe('Fez', () => {
     assert.match(cost.headers.Authorization, /^Bearer fez-token-\d+$/);
   });
 
-  test('booking creates the Fez order with the buyer’s details and the delivery PIN as CustToken', async () => {
+  test('booking creates the Fez order with the buyer’s details; Fez makes the delivery code, not TrustGap', async () => {
     const fez = fakeFez();
     const t = boot(FEZ);
     const { seller, trackToken, order } = await paidFezOrder(t);
-    const pin = (await t.get(`/api/track/${trackToken}`)).data.order.pin;
+    const view = (await t.get(`/api/track/${trackToken}`)).data.order;
+    assert.equal(view.pin, null, 'no TrustGap PIN on a Fez order');
+    assert.equal(view.code_by_courier, true);
+    const paidSms = (await t.db("SELECT sms FROM outbox WHERE event = 'payment_received_buyer'"))[0].sms;
+    assert.match(paidSms, /Fez Delivery will text you a delivery code/);
+    assert.doesNotMatch(paidSms, /PIN is \d{4}/);
     const booked = await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box, serial 42' }, seller);
     assert.equal(booked.status, 200, JSON.stringify(booked.data));
     // The ledger keeps Fez's cost and TrustGap's margin apart (same state: Fez ₦2,688 + 15% → ₦3,092).
@@ -175,7 +180,7 @@ describe('Fez', () => {
     const create = fez.calls.find((c) => c.url.endsWith('/order') && c.method === 'POST').body;
     assert.equal(create.length, 1);
     assert.equal(create[0].uniqueID, order.ref);
-    assert.equal(create[0].CustToken, pin);
+    assert.equal(create[0].CustToken, undefined, 'Fez generates the code itself');
     assert.equal(create[0].recipientState, 'Lagos');
     assert.equal(create[0].recipientAddress, DEAL.delivery_address);
     assert.equal(create[0].pickUpState, 'Lagos');
@@ -196,11 +201,17 @@ describe('Fez', () => {
 
     // A forged webhook claiming "Delivered" changes nothing: Fez itself still says Dispatched.
     fez.state.status = 'Dispatched';
+    fez.state.otp = '5821'; // Fez's delivery code, texted to the buyer at dispatch
     await webhook(t, 'Delivered', { signature: 'forged' });
     let o = await t.one('SELECT * FROM orders');
     assert.equal(o.status, 'shipping');
     assert.equal(o.delivery_status, 'out_for_delivery');
     assert.equal(o.courier_status, 'Dispatched');
+    // The buyer sees Fez's code on their tracking page (kept encrypted), and the text points to it.
+    assert.ok(o.courier_code_enc && !o.courier_code_enc.includes('5821'));
+    const { trackToken } = await t.one('SELECT buyer_token AS trackToken FROM orders');
+    assert.equal((await t.get(`/api/track/${trackToken}`)).data.order.courier_code, '5821');
+    assert.match((await t.db("SELECT sms FROM outbox WHERE event = 'delivery_out_for_delivery'"))[0].sms, /Fez Delivery has texted you a delivery code/);
 
     fez.state.status = 'Delivered';
     await webhook(t, 'Delivered');
@@ -209,6 +220,7 @@ describe('Fez', () => {
     assert.ok(o.inspection_ends_at);
     const events = (await t.db('SELECT type FROM order_events WHERE order_id = ?', o.id)).map((e) => e.type);
     assert.ok(events.includes('delivered_by_courier'));
+    assert.equal((await t.get(`/api/track/${trackToken}`)).data.order.courier_code, null, 'hidden once delivered');
   });
 
   test('the timers catch up a missed webhook, and a returned parcel opens a dispute', async () => {
@@ -249,7 +261,7 @@ describe('Fez', () => {
     assert.deepEqual({ ...(await t.one('SELECT kind, status, received_by FROM returns')) }, { kind: 'door', status: 'received', received_by: 'courier' });
   });
 
-  test('a return after delivery is a new Fez order carrying the seller’s PIN; Delivered releases the refund', async () => {
+  test('a return after delivery is a new Fez order with Fez’s own code for the seller; Delivered releases the refund', async () => {
     const fez = fakeFez();
     const t = boot(FEZ);
     const { seller, trackToken, order } = await paidFezOrder(t);
@@ -263,10 +275,12 @@ describe('Fez', () => {
       { buyer_refund: '1000', seller_payout: '0', seller_charge: '0', note: 'Torn sole in photos; item goes back.' }, admin);
     assert.equal(r.data.waiting_for_return, true, JSON.stringify(r.data));
 
-    const pin = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.pin;
+    const ret = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return;
+    assert.equal(ret.pin, undefined, 'no TrustGap return PIN on a Fez return');
+    assert.equal(ret.code_by_courier, true);
     const create = fez.calls.filter((c) => c.url.endsWith('/order') && c.method === 'POST').at(-1).body[0];
     assert.equal(create.uniqueID, `${order.ref}-R`);
-    assert.equal(create.CustToken, pin);
+    assert.equal(create.CustToken, undefined);
     assert.equal(create.recipientName, 'Bayo Kicks');
     assert.equal(create.recipientAddress, DEAL.pickup_address);
     assert.equal(create.pickUpAddress, order.delivery_address);
@@ -274,8 +288,10 @@ describe('Fez', () => {
     assert.equal((await t.one('SELECT delivery_ref FROM returns')).delivery_ref, 'FEZRET1');
 
     fez.state.returnStatus = 'Picked-Up';
+    fez.state.returnOtp = '7734';
     await t.scheduled();
     assert.equal((await t.one('SELECT status FROM returns')).status, 'picked_up');
+    assert.equal((await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.courier_code, '7734');
     assert.equal((await t.one('SELECT status FROM orders')).status, 'disputed');
 
     fez.state.returnStatus = 'Delivered';

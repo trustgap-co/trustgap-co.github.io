@@ -1,7 +1,8 @@
 import { first, run, insert, update } from '../lib/db.js';
 import { randomDigits, encrypt, decrypt, safeEqual, signLink } from '../lib/crypto.js';
 import { UserError, iso, addHours, str, getSeller, getDeal, getOrder, logEvent, fmtDate, trackUrl, transition } from './common.js';
-import { settleAfterReturn, checkedEvidence, evidencePhotoStmt, fakePaymentRealCourier, FAKE_PAYMENT_REAL_COURIER } from './orders.js';
+import { alertNewDispute } from './alerts.js';
+import { settleAfterReturn, checkedEvidence, evidencePhotoStmt, fakePaymentRealCourier, FAKE_PAYMENT_REAL_COURIER, courierGivesCode, revealCourierCode, saveCourierCode } from './orders.js';
 import { parsePhotos } from '../lib/photos.js';
 
 // Returns to the seller: delivery in reverse. The seller gets a 4-digit return PIN (SMS and their
@@ -46,8 +47,14 @@ export async function returnView(ctx, ret, { withPin = false } = {}) {
     deadline_at: ret.deadline_at,
     received_at: ret.received_at,
     received_by: ret.received_by,
-    // After a problem report the seller still needs the PIN: a Fez rider can only close the job with it.
-    ...(withPin && (isOpenReturn(ret) || ret.problem_at) ? { pin: await revealReturnPin(ctx, ret) } : {}),
+    // After a problem report the seller still needs the code: a Fez rider can only close the job with it.
+    // Fez returns: Fez's own code for the seller (read from Fez at dispatch), never TrustGap's PIN.
+    code_by_courier: courierGivesCode(ctx, ret.courier),
+    ...(withPin && (isOpenReturn(ret) || ret.problem_at)
+      ? courierGivesCode(ctx, ret.courier)
+        ? { courier_code: await revealCourierCode(ctx, ret) }
+        : { pin: await revealReturnPin(ctx, ret) }
+      : {}),
   };
 }
 
@@ -81,7 +88,9 @@ export async function startDoorReturn(ctx, order, { received = false, by = 'cour
     await update(ctx.env, 'orders', order.id, { delivery_status: 'returned' });
   } else {
     const seller = await getSeller(ctx, order.seller_id);
-    await ctx.notify.send({ orderId: order.id, event: 'return_pin', phone: seller.phone, email: seller.email, sms: `TrustGap: the buyer refused order ${order.ref} at the door and the rider is bringing it back. ${pinSms(order, pin)}` });
+    await ctx.notify.send({ orderId: order.id, event: 'return_pin', phone: seller.phone, email: seller.email, sms: courierGivesCode(ctx, order.courier)
+      ? `TrustGap: the buyer refused order ${order.ref} at the door and Fez Delivery is bringing it back to you. When it arrives, check it’s your item, as you sent it, before you accept it. If it isn’t, contact TrustGap.`
+      : `TrustGap: the buyer refused order ${order.ref} at the door and the rider is bringing it back. ${pinSms(order, pin)}` });
   }
   return activeReturn(ctx, order.id);
 }
@@ -128,7 +137,9 @@ export async function bookPickupReturn(ctx, order, { parcelWithBuyer = false, by
     email: order.buyer_email,
     sms: `TrustGap: a rider will collect "${deal.item_title}" from you to return it to the seller (order ${order.ref}). Please have it packed with everything that came with it by ${fmtDate(deadline)}. Your refund is sent once the seller receives it: ${trackUrl(ctx, order)}`,
   });
-  await ctx.notify.send({ orderId: order.id, event: 'return_pin', phone: seller.phone, email: seller.email, sms: `TrustGap: the item from order ${order.ref} is being returned to you. ${pinSms(order, pin)}` });
+  await ctx.notify.send({ orderId: order.id, event: 'return_pin', phone: seller.phone, email: seller.email, sms: courierGivesCode(ctx, ctx.logistics.name)
+    ? `TrustGap: the item from order ${order.ref} is being returned to you by Fez Delivery. Fez will text you a delivery code when the rider is on the way (it’s also on your order page). Check the item first, then give the rider the code.`
+    : `TrustGap: the item from order ${order.ref} is being returned to you. ${pinSms(order, pin)}` });
   return first(ctx.env, 'SELECT * FROM returns WHERE id = ?', id);
 }
 
@@ -183,6 +194,7 @@ export async function syncReturnStatus(ctx, ret) {
   if (!isOpenReturn(ret) || ret.kind !== 'pickup' || !ret.delivery_ref || ret.courier !== ctx.logistics.name) return null;
   const st = await ctx.logistics.getStatus(ret.delivery_ref);
   if (!st) return null;
+  await saveCourierCode(ctx, 'returns', ret, st.code);
   if (st.raw && st.raw !== ret.courier_status) {
     await update(ctx.env, 'returns', ret.id, { courier_status: st.raw });
     await logEvent(ctx, ret.order_id, 'courier', 'return_courier_status', st.reason ? `${st.raw}: ${st.reason}` : st.raw);
@@ -243,5 +255,6 @@ export async function reportReturnProblem(ctx, ret, input) {
   await ctx.notify.send({ orderId: order.id, event: 'return_problem', phone: order.buyer_phone, email: order.buyer_email,
     sms: `TrustGap: the seller says the item returned for order ${order.ref} isn't what was delivered. Any refund is on hold while TrustGap reviews. Send any photos or video you have of the item before you handed it over: ${trackUrl(ctx, order)}` });
   await ctx.notify.send({ orderId: order.id, event: 'return_problem', phone: seller.phone,
-    sms: `TrustGap: we've recorded the item for order ${order.ref} as back with you, with your report. You can now give the rider your return PIN so they can leave. TrustGap will review and decide.` });
+    sms: `TrustGap: we've recorded the item for order ${order.ref} as back with you, with your report. You can now give the rider ${courierGivesCode(ctx, ret.courier) ? 'the code' : 'your return PIN'} so they can leave. TrustGap will review and decide.` });
+  await alertNewDispute(ctx, order.id);
 }
