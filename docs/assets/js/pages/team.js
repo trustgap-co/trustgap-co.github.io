@@ -15,9 +15,27 @@ function loginView() {
     </form></section>`);
   onSubmit($('#login'), async (data) => {
     const r = await api('/api/team/login', { method: 'POST', body: data });
-    auth.setTeam(r.token);
-    location.reload(); // redraws the header with the team menu
+    if (r.needs_code) return codeView(data, r);
+    signedIn(r);
   });
+}
+
+// The Customer Relations Admin's second step: the code texted to their phone.
+function codeView(creds, first) {
+  show('#app', html`<section class="card narrow"><h1>Enter your login code</h1>
+    <p class="muted">We texted a code to your phone ${first.phone_hint}. It expires in 10 minutes.</p>
+    ${first.dev_code ? html`<p class="devcode">Test mode code: <strong>${first.dev_code}</strong></p>` : ''}
+    <form class="form" id="code">
+      <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+      <button class="btn btn-block">Log in</button>
+    </form></section>`);
+  onSubmit($('#code'), async ({ code }) => signedIn(await api('/api/team/login', { method: 'POST', body: { ...creds, code } })));
+}
+
+function signedIn(r) {
+  auth.setTeam(r.token);
+  auth.setStaffName(r.staff?.name);
+  location.reload(); // redraws the header with the team menu (or moves the CR Admin to the admin pages)
 }
 
 function passwordView(me) {
@@ -84,6 +102,13 @@ async function render() {
   if (!auth.team()) return loginView();
   const { staff: me } = await api('/api/team/me', { as: 'team' });
   if (me.must_change_password) return passwordView(me);
+  auth.setStaffName(me.name);
+  // The Customer Relations Admin works on the admin pages (with near-admin access).
+  if (me.role === 'cr_admin') {
+    auth.setAdmin(auth.team(), 'cr_admin');
+    location.href = link('admin/orders.html');
+    return;
+  }
   await tasksView();
   keepFresh('/api/team/tasks', tasksView, { as: 'team' });
 }

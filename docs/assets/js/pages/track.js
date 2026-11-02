@@ -19,9 +19,10 @@ async function render() {
       ? html`<div class="callout warn">Payment not completed.
           ${o.can_retry_payment ? html`<form id="retry"><button class="btn">Try payment again</button></form>` : html`<br>This link is no longer open. Ask the seller for a new one.`}</div>`
       : ''}
-    ${o.pin
-      ? html`<div class="pinbox"><p>Your delivery PIN</p><div class="pin">${o.pin}</div>
-          <p class="small"><strong>Please inspect the item before sharing your PIN.</strong> Sharing it confirms the handover; your ${o.inspection_hours ? `${o.inspection_hours}-hour ` : ''}inspection window still applies under the deal rules. If the item isn’t right, refuse it and keep your PIN.</p>
+    ${o.pin || o.courier_code
+      ? html`<div class="pinbox"><p>${o.courier_code ? 'Your Fez delivery code' : 'Your delivery PIN'}</p><div class="pin">${o.courier_code || o.pin}</div>
+          ${o.courier_code ? html`<p class="small muted">The same code Fez Delivery texted you. The rider can’t complete the delivery without it.</p>` : ''}
+          <p class="small"><strong>Please inspect the item before sharing your ${o.courier_code ? 'code' : 'PIN'}.</strong> Sharing it confirms the handover; your ${o.inspection_hours ? `${o.inspection_hours}-hour ` : ''}inspection window still applies under the deal rules. If the item isn’t right, refuse it and keep your ${o.courier_code ? 'code' : 'PIN'}.</p>
           ${o.status === 'shipping' ? html`<p class="small" style="margin:10px 0 0"><strong>At the door, check:</strong></p>
           <ul class="handover-check">
             <li>Is this the correct item (${o.item_title})?</li>
@@ -30,7 +31,11 @@ async function render() {
             <li>Does it match the agreed description${o.item_condition ? ` and condition: ${o.item_condition}` : ''}?</li>
             <li>Are the accessories, box and anything promised included?</li>
           </ul>` : ''}</div>`
-      : ''}
+      : o.code_by_courier && ['paid', 'shipping'].includes(o.status)
+        ? html`<div class="pinbox"><p>Your delivery code</p>
+            <p class="small"><strong>Fez Delivery will text you a delivery code when your item is dispatched.</strong> It will also appear here. Inspect the item first, then give the rider the code; the rider can’t complete the delivery without it.</p>
+            ${o.status === 'shipping' && o.delivery_status !== 'booked' ? html`<p class="small muted">Haven’t received it? Check your SMS from Fez Delivery, or contact TrustGap support quoting ${o.ref}.</p>` : ''}</div>`
+        : ''}
     ${o.status === 'shipping' && o.courier_status ? html`<p class="small muted">Courier’s latest update: ${o.courier_status}</p>` : ''}
     <details class="rules"><summary>What you paid</summary><table class="breakdown">
       <tr><td>Item</td><td>${money(o.price.item)}</td></tr>

@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos, caseAccounts, keepFresh, faultField, FAULT_LABELS } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos, caseAccounts, keepFresh, faultField, FAULT_LABELS, auth, whatsappButton, disputeChatText } from '../core.js';
 
 await shell('admin');
 const id = encodeURIComponent(params.get('id'));
@@ -45,12 +45,15 @@ async function render() {
             <button type="button" class="linklike" data-copy="${o.rider_url}">(copy rider link)</button>` : ''}</p></div>
     </div>
     <p class="small">Delivery: ${o.delivery_label} ${o.courier ? `· ${o.courier}` : ''} ${o.delivery_ref ? `· ${o.delivery_ref}` : ''}
-      ${o.courier_status ? `· courier says “${o.courier_status}”` : ''} · ship by ${date(o.ship_by)} · PIN attempts ${o.pin_attempts}
+      ${o.courier_status ? `· courier says “${o.courier_status}”` : ''} · ship by ${date(o.ship_by)} · ${o.courier === 'fez' ? html`Fez delivery code: <strong>${o.courier_code || 'not sent yet (Fez sends it at dispatch)'}</strong>` : `PIN attempts ${o.pin_attempts}`}
       ${o.courier === 'fez' && o.status === 'shipping' ? html`<button class="linklike" id="sync">check with Fez now</button>` : ''}</p>
   </section>
   ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''} ${x.status === 'superseded' ? 'card-muted' : ''}">
     <h2>Dispute #${x.id}: ${x.category_label} (${x.status})</h2>
-    <p class="small muted">Opened by ${x.opened_by} · ${date(x.created_at)}${x.parcel_location ? ` · parcel: ${x.parcel_location === 'rider' ? 'rider took it back' : 'left with the buyer'}` : ''}</p>
+    <p class="small muted">Case ${o.ref}-C${x.id} · opened by ${x.opened_by} · ${date(x.created_at)}${x.parcel_location ? ` · parcel: ${x.parcel_location === 'rider' ? 'rider took it back' : 'left with the buyer'}` : ''}</p>
+    ${['open', 'awaiting_return'].includes(x.status) ? html`<div class="actions">
+      ${whatsappButton(o.buyer_phone, disputeChatText({ name: o.buyer_name.split(' ')[0], ref: o.ref, caseRef: `${o.ref}-C${x.id}`, as: 'buyer' }), 'WhatsApp buyer')}
+      ${whatsappButton(s.phone, disputeChatText({ name: s.full_name.split(' ')[0], ref: o.ref, caseRef: `${o.ref}-C${x.id}`, as: 'seller' }), 'WhatsApp seller')}</div>` : ''}
     ${x.case?.statements?.length > 1 ? '' : html`<p class="pre">${x.description}</p>`}
     ${x.case?.statements?.length > 1 ? html`<h3>Accounts</h3>${caseAccounts(x.case, { staff: true })}`
       : html`${x.photos?.length ? evidencePhotos(x.photos) : x.opened_by === 'buyer' ? html`<p class="small muted">No photos attached.</p>` : ''}`}
@@ -102,7 +105,7 @@ async function render() {
     <h2>Money</h2>
     <table class="breakdown">${ledger.map((l) => html`<tr><td>${l.kind} → ${l.counterparty} <small class="muted">${l.provider_ref || ''}</small></td>
       <td>${money(l.amount)} <span class="badge badge-${l.status === 'success' ? 'ok' : l.status === 'failed' ? 'warn' : 'muted'}">${l.status}</span>
-      ${l.status === 'failed' ? html`<button class="linklike" data-retry="${l.id}">retry</button>` : ''}</td></tr>`)}</table>
+      ${l.status === 'failed' && !auth.isLead() ? html`<button class="linklike" data-retry="${l.id}">retry</button>` : ''}</td></tr>`)}</table>
     <h2>Timeline</h2>${timeline(events, { detail: true })}
     <h2>Messages sent</h2>
     <ul class="small">${messages.map((m) => html`<li><strong>${m.to_phone || m.to_email}</strong> (${m.status}): ${m.sms}</li>`)}</ul>

@@ -1,5 +1,5 @@
 // Team: one order, read only (only orders one of your tasks is about). No bank details, no PINs.
-import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, evidencePhotos, caseAccounts, fail, keepFresh, faultField, $ } from '../core.js';
+import { api, auth, html, show, onSubmit, shell, link, money, date, orderBadge, timeline, params, flash, evidencePhotos, caseAccounts, fail, keepFresh, faultField, whatsappButton, disputeChatText, $ } from '../core.js';
 
 const naira = (kobo) => String(kobo / 100);
 
@@ -21,7 +21,10 @@ async function render() {
     <p>${o.delivery_label}${o.courier ? ` · ${o.courier}` : ''}${o.delivery_ref ? ` · ${o.delivery_ref}` : ''}${o.courier_status ? ` · courier says “${o.courier_status}”` : ''}<br>
       <span class="small">Ship by ${date(o.ship_by)}${o.delivered_at ? ` · delivered ${date(o.delivered_at)}` : ''}${o.inspection_ends_at ? ` · inspection ends ${date(o.inspection_ends_at)}` : ''}</span></p>
     ${o.packing_note ? html`<p class="small"><strong>Packing note:</strong> ${o.packing_note}</p>` : ''}
-    ${disputes.map((x) => html`<div class="callout ${x.status === 'open' ? 'warn' : 'info'}"><strong>Dispute: ${x.category_label}</strong> (${x.status.replace('_', ' ')}) · opened by ${x.opened_by} · ${date(x.created_at)}<br>${x.description}
+    ${disputes.map((x) => html`<div class="callout ${x.status === 'open' ? 'warn' : 'info'}"><strong>Dispute: ${x.category_label}</strong> (${x.status.replace('_', ' ')}) · case ${o.ref}-C${x.id} · opened by ${x.opened_by} · ${date(x.created_at)}<br>${x.description}
+      ${['open', 'awaiting_return'].includes(x.status) ? html`<div class="actions">
+        ${whatsappButton(o.buyer.phone, disputeChatText({ name: o.buyer.name.split(' ')[0], ref: o.ref, caseRef: `${o.ref}-C${x.id}`, as: 'buyer' }), 'WhatsApp buyer')}
+        ${whatsappButton(o.seller.phone, disputeChatText({ name: o.seller.name.split(' ')[0], ref: o.ref, caseRef: `${o.ref}-C${x.id}`, as: 'seller' }), 'WhatsApp seller')}</div>` : ''}
       ${x.case?.statements?.length > 1 ? caseAccounts(x.case, { staff: true }) : evidencePhotos(x.photos)}
       ${x.resolution_note ? html`<br><strong>Decision${x.decided_by ? ` (${x.decided_by.replace('team:', '')})` : ''}:</strong> ${x.resolution_note} (refund ${money(x.buyer_refund || 0)} · seller ${money(x.seller_payout || 0)} · seller charge ${money(x.seller_charge || 0)})` : ''}</div>`)}
     ${decide ? decideForm(decide) : ''}

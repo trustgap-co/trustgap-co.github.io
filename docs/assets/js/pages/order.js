@@ -22,7 +22,7 @@ async function render() {
           </form></div>`
       : ''}
     ${o.status === 'shipping' ? html`${o.courier_status ? html`<p class="small muted">Courier’s latest update: ${o.courier_status}</p>` : ''}
-      <p class="small"><strong>At handover:</strong> the buyer’s PIN confirms they received the item. Please don’t pressure the buyer to share it before they have the item and have checked it.</p>` : ''}
+      <p class="small"><strong>At handover:</strong> the buyer’s delivery code${o.courier === 'fez' ? ' (texted to them by Fez Delivery)' : ''} confirms they received the item. Please don’t pressure the buyer to share it before they have the item and have checked it.</p>` : ''}
     ${dispute
       ? html`<div class="callout ${dispute.status === 'open' ? 'warn' : 'info'}">
           <strong>${dispute.status === 'open' ? `Case ${dispute.case_ref}: under review` : dispute.status === 'awaiting_return' ? 'Decided, waiting for the return' : 'Decided'}:</strong> ${dispute.description}
@@ -33,12 +33,16 @@ async function render() {
       : ''}
     ${ret?.open
       ? html`<div class="callout warn return-box"><strong>The item is coming back to you.</strong> ${ret.label}.
-          <p class="return-pin-label">Your return PIN</p>
-          <p class="pin">${ret.pin}</p>
-          <p class="small">When the rider arrives, open the parcel and check the item <strong>before</strong> giving this PIN. The buyer’s refund is sent once you give it.</p>
+          ${ret.code_by_courier
+            ? ret.courier_code
+              ? html`<p class="return-pin-label">Your Fez delivery code</p><p class="pin">${ret.courier_code}</p>
+                  <p class="small muted">The same code Fez Delivery texted you for this return.</p>`
+              : html`<p class="small">${ret.kind === 'door' ? 'Fez Delivery is bringing it back to you.' : 'Fez Delivery will text you a delivery code when the rider is on the way to you. It will also appear here.'}</p>`
+            : html`<p class="return-pin-label">Your return PIN</p><p class="pin">${ret.pin}</p>`}
+          <p class="small">When the rider arrives, open the parcel and check the item <strong>before</strong> giving ${ret.code_by_courier ? 'the code' : 'this PIN'}. The buyer’s refund is sent once you have it back.</p>
           <ul class="small">
-            <li><strong>It’s your item, as you sent it:</strong> give the rider the PIN.</li>
-            <li><strong>It isn’t right</strong> (swapped, damaged, parts missing): accept the parcel, but first report it below with photos. Then give the rider the PIN so they can leave. The refund stays on hold while TrustGap reviews.</li>
+            <li><strong>It’s your item, as you sent it:</strong> give the rider the ${ret.code_by_courier ? 'code' : 'PIN'}.</li>
+            <li><strong>It isn’t right</strong> (swapped, damaged, parts missing): accept the parcel, but first report it below with photos. Then give the rider the ${ret.code_by_courier ? 'code' : 'PIN'} so they can leave. The refund stays on hold while TrustGap reviews.</li>
           </ul>
           <details class="rules" id="problem-box"><summary>It came back, but it isn’t right</summary>
             <form class="form" id="return-problem">
@@ -55,7 +59,7 @@ async function render() {
             </form></details>
           <form id="return-received"><button class="btn btn-secondary btn-small">I already have it back, and it’s fine</button></form></div>`
       : ret?.problem ? html`<div class="callout warn"><strong>You reported the returned item isn’t right.</strong> TrustGap is reviewing; the buyer’s refund is on hold.
-          ${ret.pin ? html`<br>If a courier rider is still waiting, give them your return PIN so they can close the job: <strong class="pin-inline">${ret.pin}</strong>` : ''}</div>`
+          ${ret.pin || ret.courier_code ? html`<br>If a courier rider is still waiting, give them your ${ret.courier_code ? 'Fez code' : 'return PIN'} so they can close the job: <strong class="pin-inline">${ret.courier_code || ret.pin}</strong>` : ''}</div>`
       : ret?.status === 'received' ? html`<p class="ok-text">Item back with you${ret.received_at ? ` (${date(ret.received_at)})` : ''}.</p>` : ''}
     ${kase ? html`<section class="case-box"><h2>What’s been said</h2>
       <p class="small muted">One case for this problem. Add your side with photos (your packing photos or video help most). TrustGap reads every account before deciding.</p>
@@ -92,7 +96,7 @@ async function render() {
       const photos = picker.list();
       if (!photos.length) throw new Error('Add at least one photo showing what came back.');
       await api(orderPath + '/return-problem', { method: 'POST', body: { ...data, photos }, as: 'seller' });
-      flash.set('Reported. The refund is on hold while TrustGap reviews. You can now give the rider your return PIN.');
+      flash.set('Reported. The refund is on hold while TrustGap reviews. You can now give the rider the code.');
       location.reload();
     });
   }

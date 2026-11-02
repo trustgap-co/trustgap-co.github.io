@@ -1,10 +1,10 @@
 // Admin: team members (accounts, password resets) and the tasks assigned to them.
-import { api, html, show, onSubmit, shell, link, date, flash, fail, params, $, $$, keepFresh } from '../core.js';
+import { api, html, show, onSubmit, shell, link, date, money, flash, fail, params, $, $$, keepFresh } from '../core.js';
 
 await shell('admin');
 
 async function render() {
-  const { staff, tasks, roles, statuses, priorities, kinds } = await api('/api/admin/team', { as: 'admin' });
+  const { staff, tasks, roles, statuses, priorities, kinds, team_dispute_cap: cap, me } = await api('/api/admin/team', { as: 'admin' });
   const active = staff.filter((s) => !s.disabled);
   const filter = params.get('show') || 'open';
   const shown = tasks.filter((t) => (filter === 'done' ? t.status === 'done' : filter === 'all' ? true : t.status !== 'done'));
@@ -24,7 +24,7 @@ async function render() {
         <label>Type <select name="kind">${Object.entries(kinds).map(([k, l]) => html`<option value="${k}">${l}</option>`)}</select></label>
         <label>Priority <select name="priority">${Object.entries(priorities).map(([k, l]) => html`<option value="${k}">${l}</option>`)}</select></label>
       </div>
-      <p class="small muted"><strong>Decide a dispute</strong> lets them decide that order’s open dispute (refund, payout, seller charge) while the task is open, with the same rules and checks as you. Needs the order reference. Every decision records who made it.</p>
+      <p class="small muted"><strong>Decide a dispute</strong> lets them decide that order’s open dispute (refund, payout, seller charge) while the task is open, with the same rules and checks as you. Needs the order reference. Every decision records who made it. Customer relations members can only decide disputes on orders up to ${money(cap)}; the Customer Relations Admin decides any.</p>
       <button class="btn">Assign task</button>
       <p class="small muted">They get an SMS and email with the task title.</p>
     </form>` : html`<p class="muted">Add a team member below first.</p>`}
@@ -52,22 +52,22 @@ async function render() {
     ${staff.length ? html`<div class="list">${staff.map((s) => html`<div class="row">
       <div><strong>${s.name}</strong> · ${s.role_label}${s.disabled ? html` <span class="badge badge-muted">disabled</span>` : ''}<br>
         <small class="muted">${s.email}${s.phone ? ` · ${s.phone}` : ''} · ${s.last_login_at ? `last login ${date(s.last_login_at)}` : 'never logged in'}${s.must_change_password ? ' · must set a new password' : ''}</small></div>
-      <div class="right actions">
+      <div class="right actions">${me.role !== 'admin' && (s.role === 'cr_admin' || s.id === me.id) ? html`<small class="muted">Managed by the admin</small>` : html`
         <button class="btn btn-small btn-secondary" data-reset="${s.id}" data-name="${s.name}">Reset password</button>
-        <button class="btn btn-small ${s.disabled ? '' : 'btn-danger'}" data-disable="${s.id}" data-on="${s.disabled ? 'false' : 'true'}">${s.disabled ? 'Turn back on' : 'Turn off'}</button>
+        <button class="btn btn-small ${s.disabled ? '' : 'btn-danger'}" data-disable="${s.id}" data-on="${s.disabled ? 'false' : 'true'}">${s.disabled ? 'Turn back on' : 'Turn off'}</button>`}
       </div></div>`)}</div>` : html`<p class="muted">No team members yet.</p>`}
     <h3>Add a team member</h3>
     <form class="form" id="new-member">
       <div class="grid3">
         <label>Name <input name="name" required maxlength="100"></label>
         <label>Email <small>they log in with this</small><input name="email" type="email" required></label>
-        <label>Phone <small>for task SMS</small><input name="phone" inputmode="tel"></label>
+        <label>Phone <small>for task SMS (required for the Customer Relations Admin: login codes and dispute alerts)</small><input name="phone" inputmode="tel"></label>
       </div>
       <label>Role <select name="role">${Object.entries(roles).map(([k, l]) => html`<option value="${k}">${l}</option>`)}</select></label>
       <label>Temporary password <small>at least 10 characters. Give it to them in person or by phone, not in writing; they must change it when they first log in</small>
         <input name="password" type="text" required minlength="10" autocomplete="off"></label>
       <button class="btn">Add team member</button>
-      <p class="small muted">They log in at <strong>${link('team/index.html')}</strong>. They see only their own tasks, the orders those tasks are about (read only, no bank details or PINs) and the manual. They can’t move money or decide disputes.</p>
+      <p class="small muted">They log in at <strong>${link('team/index.html')}</strong>. They see only their own tasks, the orders those tasks are about (read only, no bank details or PINs) and the manual. They can’t move money, and decide a dispute only when given that task. ${roles.cr_admin ? html`<br><strong>Customer Relations Admin</strong> (one at a time): uses the admin pages with near-admin access: decides any dispute, books and closes returns, can suspend (not unsuspend) sellers, and manages customer relations members and their tasks. Not the Ledger, payouts, debts, deal limits or settings. Logs in with a code texted to their phone, and gets an SMS for every new dispute.` : ''}</p>
     </form>
   </section>`);
 

@@ -1,5 +1,5 @@
 // Admin list pages: disputes, sellers, messages, ledger. Which one is chosen by <main data-list>.
-import { api, html, show, shell, money, date, link, flash, fail, $, $$, keepFresh, dateFilters, wireDateFilters, dateQuery, byDay } from '../core.js';
+import { api, auth, html, show, shell, money, date, link, flash, fail, $, $$, keepFresh, dateFilters, wireDateFilters, dateQuery, byDay } from '../core.js';
 
 await shell('admin');
 const list = $('main').dataset.list;
@@ -24,10 +24,13 @@ const pages = {
         ${s.suspended_at ? html`<br><span class="badge badge-warn">Suspended</span> <small>${date(s.suspended_at)} by ${s.suspended_by || 'admin'}: ${s.suspend_reason || 'no reason recorded'}${s.held ? html` · <strong>${money(s.held)} in payouts held</strong>` : ''}</small>` : ''}
         ${s.history?.length ? html`<details class="small"><summary>History (${s.history.length})</summary><ul>${s.history.map((h) => html`<li>${date(h.created_at)}: ${h.action} by ${h.actor}${h.reason ? ` · ${h.reason}` : ''}</li>`)}</ul></details>` : ''}</div>
       <div class="right actions">
-        ${s.identity_verified_at ? '' : btn(s, 'verify', 'Mark ID verified')}
+        ${auth.isLead()
+          // The Customer Relations Admin can suspend in an emergency; the admin does the rest.
+          ? (s.suspended_at ? html`<small class="muted">Only the admin can unsuspend.</small>` : btn(s, 'suspend', 'Suspend', 'btn-danger'))
+          : html`${s.identity_verified_at ? '' : btn(s, 'verify', 'Mark ID verified')}
         ${s.suspended_at ? btn(s, 'unsuspend', 'Unsuspend', 'btn-secondary') : btn(s, 'suspend', 'Suspend', 'btn-danger')}
         ${s.amount_owed ? btn(s, 'settled', 'Debt paid', 'btn-secondary') : ''}
-        ${btn(s, 'limit', s.deal_limit ? 'Change deal limit' : 'Raise deal limit', 'btn-secondary')}
+        ${btn(s, 'limit', s.deal_limit ? 'Change deal limit' : 'Raise deal limit', 'btn-secondary')}`}
       </div></div>`)}</div>`;
   },
   async messages() {
@@ -40,6 +43,7 @@ const pages = {
       { summary: (day) => `${day.filter((m) => m.status === 'failed').length} failed` })}</div>`;
   },
   async ledger() {
+    if (auth.isLead()) return html`<h1>Ledger</h1><p class="muted">The ledger is for the admin only.</p>`;
     const { held, totals, entries, sheets_synced_at } = await api(withDates('/api/admin/ledger'), { as: 'admin' });
     return html`<h1>Ledger</h1>
       <div class="stats"><div class="stat"><span>${money(held)}</span>held for open orders</div>
@@ -66,7 +70,7 @@ pages[list]()
     show('#app', content);
     wireDateFilters();
     // Lists have no forms to protect, so a change simply reloads the page.
-    if (LIST_PATHS[list]) keepFresh(LIST_PATHS[list], () => location.reload(), { as: 'admin' });
+    if (LIST_PATHS[list] && !(list === 'ledger' && auth.isLead())) keepFresh(LIST_PATHS[list], () => location.reload(), { as: 'admin' });
     for (const b of $$('[data-seller]')) {
       b.addEventListener('click', async () => {
         const action = b.dataset.action;

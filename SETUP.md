@@ -275,9 +275,18 @@ With Fez (`worker/src/providers/logistics/fez.js`, built from Fez's API docs):
 | When | Fez endpoint | What happens |
 |---|---|---|
 | Seller fills in the link (live preview) and creates it | `POST /order/cost` | Delivery price for pickup state → buyer's state, by weight; TrustGap uses `totalCost` (cost + VAT) and fixes it on the link |
-| Seller marks the item packed | `POST /order` | Creates the Fez order: buyer's address/state/name/phone, `uniqueID` = TrustGap order ref, weight, fragile, pickup address/state, the seller as sender (`thirdparty`), and the buyer's **delivery PIN as `CustToken`** |
-| Fez status changes | your webhook → `GET /orders/{orderNo}` | The webhook is only a hint; the status is re-read from Fez. Picked-Up / Dispatched update tracking, **Delivered** starts the buyer's inspection window, **Returned** opens a dispute |
+| Seller marks the item packed | `POST /order` | Creates the Fez order: buyer's address/state/name/phone, `uniqueID` = TrustGap order ref, weight, fragile, pickup address/state, the seller as sender (`thirdparty`). No `CustToken`: **Fez makes its own delivery code** |
+| Fez status changes | your webhook → `GET /orders/{orderNo}` | The webhook is only a hint; the status is re-read from Fez. Picked-Up / Dispatched update tracking, **Delivered** starts the buyer's inspection window, **Returned** opens a dispute. The same reply carries Fez's code (`delivery_OTP`), which TrustGap stores encrypted |
 | Every 5 minutes | `GET /orders/{orderNo}` | Catches up any missed webhook |
+
+**Delivery codes with Fez.** Fez generates the delivery code and texts it to the recipient at
+dispatch, with its own tracking link; the rider can't complete a delivery without it. So on Fez
+orders TrustGap shows no PIN of its own: the payment SMS says "Fez Delivery will text you a delivery
+code", and once Fez reports the order Dispatched, TrustGap reads the code (`delivery_OTP`) and shows it
+on the buyer's private tracking page (until delivery), with the inspect-first rules. Returns work the
+same way: Fez texts the **seller** a code for the return order, shown on their order page. Staff see
+the code on the admin order page if someone loses the SMS. Your own riders (`manual`) keep using
+TrustGap's PIN and rider link.
 
 Steps:
 1. After onboarding and KYC, Fez gives you admin credentials (a user ID like `G-1234-5678` and a
@@ -566,6 +575,14 @@ press articles, business directories, blog posts, Nairaland threads, partner pag
 The site now makes it easy for them to understand TrustGap; mentions elsewhere make them trust it.
 
 ## 12. Team members, tasks and the manual
+
+**Customer Relations Admin.** On Admin → Team, add the person with the role **Customer Relations
+Admin** and their phone number (required: login codes and dispute alerts go to it). Only one can be
+active. They log in at `team/index.html` with email + password, then a code texted to their phone,
+and land on the admin pages with near-admin access (see the manual's "Customer Relations Admin"
+section). Add a **Text** variable `ADMIN_ALERT_PHONE` with your own number so you get an SMS for
+every new dispute and for every decision made by someone else. Optional: `TEAM_DISPUTE_CAP_NAIRA`
+(default 200000), the largest order a customer relations member may decide.
 
 - **Add a team member:** Admin → **Team** → *Add a team member*: name, email (their login), phone (for
   task SMS) and a temporary password of at least 10 characters. Tell them the password by phone or in

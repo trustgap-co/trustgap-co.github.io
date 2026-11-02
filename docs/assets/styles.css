@@ -667,3 +667,7 @@ body.is-live .when-prelaunch { display: none !important; }
 .sv-reward strong { display: block; color: var(--text); margin-bottom: 4px; font-size: 1.02rem; }
 .sv-reward span { color: var(--muted); font-size: .92rem; line-height: 1.5; }
 .sv-opt small { display: block; font-weight: 400; font-size: .78rem; opacity: .8; }
+
+/* WhatsApp chat buttons on disputes */
+.btn-whatsapp { background: #1f8f4e; color: #fff; border-color: transparent; }
+.btn-whatsapp:hover { background: #18773f; color: #fff; }

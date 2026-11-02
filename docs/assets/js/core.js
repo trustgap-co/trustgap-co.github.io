@@ -1,6 +1,7 @@
 // Shared helpers for every page: API calls, safe HTML, formatting, login tokens and the page shell.
 import { API_URL as CONFIGURED_API_URL } from './config.js';
 import { SITE } from './site-info.js';
+import { campaignSource } from './source.js';
 import { initAnalytics, openCookieSettings, trackingConfigured, track, trackThenGo, naira } from './analytics.js';
 
 export { track, trackThenGo, naira };
@@ -77,10 +78,16 @@ export const auth = {
   seller: () => local.get('tg_seller'),
   setSeller: (t) => local.set('tg_seller', t),
   admin: () => session.get('tg_admin'),
-  setAdmin: (t) => session.set('tg_admin', t),
+  // `role` 'cr_admin': the Customer Relations Admin, using the admin pages with their own login.
+  setAdmin: (t, role = 'admin') => { session.set('tg_admin', t); session.set('tg_admin_role', role); },
+  adminRole: () => session.get('tg_admin_role') || 'admin',
+  isLead: () => session.get('tg_admin_role') === 'cr_admin',
   team: () => session.get('tg_team'),
   setTeam: (t) => session.set('tg_team', t),
-  clear: () => { local.del('tg_seller'); session.del('tg_admin'); session.del('tg_team'); },
+  // The signed-in team member's name, for messages they send (e.g. WhatsApp).
+  staffName: () => session.get('tg_staff_name') || '',
+  setStaffName: (n) => session.set('tg_staff_name', n || ''),
+  clear: () => { local.del('tg_seller'); for (const k of ['tg_admin', 'tg_admin_role', 'tg_team', 'tg_staff_name']) session.del(k); },
 };
 
 // ---------------------------------------------------------------- API
@@ -183,6 +190,19 @@ export const getConfig = () => (configPromise ||= (() => {
 })());
 export const getBanks = () => api('/api/banks').then((d) => d.banks);
 
+// ---------------------------------------------------------------- WhatsApp
+// A button that opens WhatsApp with this person's number and a first message typed in (editable).
+export function whatsappButton(phone, text, label) {
+  const digits = String(phone || '').replace(/\D/g, '').replace(/^0(?=[789])/, '234');
+  if (!digits) return '';
+  return html`<a class="btn btn-small btn-whatsapp" href="${`https://wa.me/${digits}?text=${encodeURIComponent(text)}`}" target="_blank" rel="noopener">💬 ${label}</a>`;
+}
+// The opening line for a dispute chat, from the signed-in person (Nora, a team member, or support).
+export const disputeChatText = ({ name, ref, caseRef, as }) => {
+  const me = auth.staffName() ? `${auth.staffName()} from TrustGap` : 'TrustGap support';
+  return `Hello ${name}, this is ${me} about ${as === 'buyer' ? 'your order' : 'order'} ${ref}${caseRef ? ` (case ${caseRef})` : ''}. `;
+};
+
 // ---------------------------------------------------------------- seller price quotes
 // The breakdown from POST /api/seller/quote, shown on the price calculator and the new-link form, so
 // the price a seller quotes a buyer is exactly what the link will charge. `d` is the form's answers.
@@ -231,7 +251,7 @@ function nextStep(o, as, dispute) {
       ? `Your payment is secured. The seller is preparing your item and must hand it to the courier by ${date(o.ship_by)}. Nothing to do yet.`
       : `Payment confirmed. Pack the item and book pickup before ${date(o.ship_by)}.`;
     case 'shipping':
-      if (d === 'out_for_delivery') return buyer ? 'On its way to you. When it arrives, inspect it before you share your PIN.' : 'The courier is delivering it. Nothing to do; we’ll tell you when it’s delivered.';
+      if (d === 'out_for_delivery') return buyer ? 'On its way to you. When it arrives, inspect it before you share your delivery code.' : 'The courier is delivering it. Nothing to do; we’ll tell you when it’s delivered.';
       if (d === 'attempt_failed') return buyer ? 'The rider couldn’t deliver and will try again. Please keep your phone on.' : 'The rider couldn’t deliver and will try again.';
       if (d === 'picked_up') return buyer ? 'Your item has left the seller. We’ll text you when it’s on the way.' : 'The courier has collected it. Your part is nearly done.';
       return buyer ? 'The seller has packed your item and pickup is booked. We’ll text you when it’s on the way.' : 'Pickup is booked. Hand the parcel to the courier when they arrive.';
@@ -250,8 +270,8 @@ const STEP_MEANING = {
     'Your money is held by TrustGap, not the seller. It goes to the seller only after delivery and your inspection, or back to you under the deal rules.',
     'The seller is packing your item and booking the courier. If they don’t hand it over by the ship-by date, you get a full refund.',
     'The courier has collected your item from the seller.',
-    'A rider is bringing it to you. Keep your phone on, and inspect the item before you share your delivery PIN.',
-    'You checked the item and gave the rider your PIN. That confirms the handover.',
+    'A rider is bringing it to you. Keep your phone on, and inspect the item before you share your delivery code.',
+    'You checked the item and gave the rider your delivery code. That confirms the handover.',
     'Your time to check everything properly{hours}. Confirm if all is well, or report a problem before it ends. Nobody is paid while you inspect.',
     'The seller has been paid and the deal is complete.',
   ],
@@ -261,7 +281,7 @@ const STEP_MEANING = {
     'Your turn: pack the item, write the packing note (your evidence) and book pickup before the ship-by date.',
     'The courier has the parcel. Your part of the delivery is done.',
     'A rider is delivering it. If the buyer refuses a correct item, it comes back to you and the delivery costs come out of their refund.',
-    'The buyer checked the item and confirmed with their PIN.',
+    'The buyer checked the item and confirmed with their delivery code.',
     'The buyer is checking the item{hours}. If they confirm, or the time ends with no problem reported, you are paid.',
     'Your payout has been released to your bank account.',
   ],
@@ -620,15 +640,8 @@ function loadImage(slot) {
   }
 }
 
-// Which campaign link brought this visitor (?source=instagram, utm_source, or the referring site),
-// remembered from the page they land on so the survey and early-access forms can record it.
-function rememberSource() {
-  const q = new URLSearchParams(location.search);
-  const tagged = q.get('source') || q.get('utm_source');
-  const ref = document.referrer && new URL(document.referrer).hostname;
-  if (tagged) local.set('tg_source', JSON.stringify({ source: tagged, medium: q.get('utm_medium') || '', campaign: q.get('utm_campaign') || '' }));
-  else if (ref && ref !== location.hostname && !local.get('tg_source')) local.set('tg_source', JSON.stringify({ source: ref, medium: 'referral', campaign: '' }));
-}
+// Which campaign link or ad brought this visitor, remembered from the page they land on (source.js).
+const rememberSource = () => campaignSource();
 
 // Draws the header and footer straight away (no waiting for the API), then adds the test-mode bar
 // when the settings arrive. Returns the settings.
@@ -641,7 +654,7 @@ export async function shell(area) {
     admin: auth.admin()
       ? html`<nav class="nav"><a href="${link('admin/orders.html')}">Orders</a><a href="${link('admin/disputes.html')}">Disputes</a>
         <a href="${link('admin/sellers.html')}">Sellers</a><a href="${link('admin/messages.html')}">Messages</a>
-        <a href="${link('admin/ledger.html')}">Ledger</a><a href="${link('admin/team.html')}">Team</a>
+        ${auth.isLead() ? '' : html`<a href="${link('admin/ledger.html')}">Ledger</a>`}<a href="${link('admin/team.html')}">Team</a>
         <a href="${link('team/manual.html')}">Manual</a><button class="linklike" id="logout">Log out</button></nav>`
       : '',
     team: auth.team()

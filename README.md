@@ -116,6 +116,16 @@ shown to admin on the order page and copied to Google Sheets.
    WhatsApp number first (saved to the early-access list at once), then answer the survey or skip to
    their code; organic visitors keep optional contact, now with "Yes, send me my code" pre-selected.
    Every survey and early-access row records the mode, campaign, ad and click source (SETUP.md §10).
+18. **Fez delivery codes**: on Fez orders Fez makes the delivery code and texts it at dispatch; TrustGap
+   reads it (`delivery_OTP`) and shows it on the buyer's tracking page (or the seller's page for a
+   return) instead of its own PIN. Your own riders keep TrustGap's PIN.
+19. **Customer Relations Admin** (one at a time, added on Admin → Team): logs in at the team portal with
+   password + texted code and works on the admin pages: decides any dispute, handles returns, can
+   suspend (not unsuspend) sellers, manages customer relations members and tasks; no Ledger, payouts,
+   debts, deal limits or settings; bank numbers masked. Every new dispute is texted to them and to
+   `ADMIN_ALERT_PHONE`; decisions by anyone else are texted to the admin. Customer relations members
+   decide only with a task and only up to `TEAM_DISPUTE_CAP_NAIRA` (200,000). Disputes have WhatsApp
+   buyer/seller buttons.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
