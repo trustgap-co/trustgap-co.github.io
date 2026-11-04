@@ -704,3 +704,13 @@ body.is-live .when-prelaunch { display: none !important; }
 @media (max-width: 699px) { .tour-help-label { display: none; } .tour-help { padding: 0; justify-content: center; } }
 body.touring .tour-help, body.touring .tour-invite { display: none; }
 @media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
+
+/* Slim footer inside accounts and on deal pages: one line, the full footer under "More links" */
+.site-foot-slim { padding: 14px 0 64px; font-size: .85rem; }
+.site-foot-slim .slim-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.site-foot-slim .slim-row a { display: inline; padding: 0; }
+.foot-more > summary { cursor: pointer; list-style: none; color: #8E9BBB; padding-top: 8px; padding-bottom: 4px; display: block; }
+.foot-more > summary::-webkit-details-marker { display: none; }
+.foot-more > summary::after { content: ' ▾'; }
+.foot-more[open] > summary::after { content: ' ▴'; }
+.foot-more[open] { padding-top: 20px; }
