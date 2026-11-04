@@ -1,4 +1,6 @@
 import { shrinkPhoto, fingerprint } from '../photos.js';
+import { offerTour } from '../tour.js';
+import { TOURS } from '../tours.js';
 import { api, html, show, onSubmit, shell, money, feeLabel, feeSummary, fillConsentBody, fillSiteInfo, sellerQuoteBox, sellerQuoteError, session, link, params, stateInput, statesList, formData, fail, track, trackThenGo, confirmModal, $ } from '../core.js';
 
 const config = await shell('seller');
@@ -163,6 +165,7 @@ try {
   });
   form.addEventListener('change', preview);
   preview();
+  offerTour('new-link', TOURS['new-link']);
 
   onSubmit($('#deal'), async (data) => {
     if (!photos.length && !keeping.length) throw new Error('Add at least one photo of the item, so the buyer can see what they are paying for.');

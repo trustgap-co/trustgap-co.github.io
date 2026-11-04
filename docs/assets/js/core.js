@@ -595,6 +595,19 @@ const PUBLIC_NAV = [
 
 const isPlaceholder = (v) => /^\[.*\]$/.test(String(v));
 
+// TrustGap's social pages (site-info.js), as icons; any without an address is left out.
+const SOCIAL = [
+  ['instagramUrl', 'Instagram', '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/>'],
+  ['xUrl', 'X (Twitter)', '<path d="M4 4l16 16M20 4L4 20" />'],
+  ['tiktokUrl', 'TikTok', '<path d="M14 3v11.5a3.5 3.5 0 1 1-3.5-3.5"/><path d="M14 3c.5 2.6 2.4 4.5 5 5"/>'],
+  ['facebookUrl', 'Facebook', '<path d="M14 8h3V4h-3a4 4 0 0 0-4 4v3H7v4h3v6h4v-6h3l1-4h-4V8z"/>'],
+];
+function socialLinks() {
+  const links = SOCIAL.filter(([key]) => SITE[key] && !isPlaceholder(SITE[key]));
+  if (!links.length) return '';
+  return html`<p class="socials" aria-label="TrustGap on social media">${links.map(([key, label, icon]) => html`<a href="${SITE[key]}" target="_blank" rel="noopener" aria-label="TrustGap on ${label}" title="${label}">${raw(`<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`)}</a>`)}</p>`;
+}
+
 // Fills <span data-site="supportEmail"></span> etc. from site-info.js; unfilled values are highlighted.
 export function fillSiteInfo() {
   for (const el of $$('[data-site]')) {
@@ -677,7 +690,8 @@ export async function shell(area) {
     <header class="top"><div class="top-in"><a class="logo" href="${link('index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>${nav}</div></header>`));
   document.body.insertAdjacentHTML('beforeend', String(html`<footer class="site-foot"><div class="container foot-grid">
     <div class="foot-brand"><a class="logo" href="${link('index.html')}">Trust<span>Gap</span></a>
-      <p>The safe completion layer for social commerce in Nigeria: payment secured, item delivered, both sides know what happens next.</p></div>
+      <p>The safe completion layer for social commerce in Nigeria: payment secured, item delivered, both sides know what happens next.</p>
+      ${socialLinks()}</div>
     <div><h4>Product</h4>${PUBLIC_NAV.map(([href, label]) => html`<a href="${link(href)}">${label}</a>`)}
       ${SITE.launched ? html`<a href="${link('seller/signup.html')}">Create a seller account</a>`
         : html`<a href="${link('early-access.html')}">Get early access</a><a href="${link('survey.html')}">Take the survey</a>`}</div>

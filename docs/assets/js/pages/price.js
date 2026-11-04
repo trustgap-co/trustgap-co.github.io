@@ -1,6 +1,8 @@
 // Seller price calculator: the exact price of a deal (the same quote a link would charge, with the
 // real delivery price for both addresses), a message to send the buyer, and a button that opens the
 // new-link form with everything filled in.
+import { offerTour } from '../tour.js';
+import { TOURS } from '../tours.js';
 import { api, html, show, shell, money, fillSiteInfo, sellerQuoteBox, sellerQuoteError, session, link, stateInput, statesList, formData, fail, track, $ } from '../core.js';
 
 const config = await shell('seller');
@@ -109,6 +111,7 @@ try {
   form.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(calculate, 600); });
   form.addEventListener('change', calculate);
   calculate();
+  offerTour('price', TOURS.price);
 
   $('#copy').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('#for-buyer').value); } catch { $('#for-buyer').select(); document.execCommand?.('copy'); }

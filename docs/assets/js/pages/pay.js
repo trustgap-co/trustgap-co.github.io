@@ -1,5 +1,7 @@
 // The link the seller sends. Step 1: confirm the whole deal, including the delivery address the
 // seller entered (read-only) and the exact total. Step 2: contact details and refund account, pay.
+import { offerTour } from '../tour.js';
+import { TOURS } from '../tours.js';
 import { SITE } from '../site-info.js';
 import { api, html, show, onSubmit, shell, money, date, feeLabel, fillConsentBody, link, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
 
@@ -152,6 +154,7 @@ function review(d, rules, promo = null) {
 
 async function details(d, checkoutId, total) {
   const banks = await getBanks();
+  document.querySelector('.tour-help')?.remove(); // the tour is about step 1
   show('#app', html`${steps(2)}<section class="card">
     <h1>Your details</h1>
     <p class="muted">${d.item_title} → ${d.delivery.state} · <strong>${money(total)}</strong> · <button class="linklike" id="back">review the deal again</button></p>
@@ -195,6 +198,7 @@ async function load() {
   }
   if (!viewed) { viewed = true; track('view_item', ecommerce(deal)); }
   review(deal, rules);
+  offerTour('pay', TOURS.pay);
 }
 let viewed = false;
 if (!token) {

@@ -1,5 +1,7 @@
 import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, trackThenGo, gallery, confirmModal, caseAccounts, keepFresh, orderJourney, $ } from '../core.js';
 import { photoPicker } from '../photos.js';
+import { offerTour } from '../tour.js';
+import { TOURS } from '../tours.js';
 
 const orderPath = `/api/seller/orders/${encodeURIComponent(params.get('id'))}`;
 
@@ -121,4 +123,4 @@ async function render() {
     });
   }
 }
-render().then(() => keepFresh(orderPath, render, { as: 'seller' })).catch(fail);
+render().then(() => { keepFresh(orderPath, render, { as: 'seller' }); offerTour('seller-order', TOURS['seller-order']); }).catch(fail);

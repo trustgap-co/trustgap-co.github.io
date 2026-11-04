@@ -67,6 +67,8 @@ ORG = {
                     'paid when the agreed release condition is met.'),
     'areaServed': {'@type': 'Country', 'name': 'Nigeria'},
     'founder': {'@id': BASE + 'about.html#alajayibo-mystery'},
+    # TrustGap's own social pages (site-info.js), so search engines connect them to the site.
+    'sameAs': [SITE[k] for k in ('instagramUrl', 'xUrl', 'tiktokUrl', 'facebookUrl') if SITE.get(k) and not SITE[k].startswith('[')],
     'knowsAbout': ['social commerce', 'buyer protection', 'seller protection', 'online payment safety in Nigeria',
                    'WhatsApp and Instagram selling'],
 }

@@ -1,5 +1,7 @@
 // The buyer's private tracking page: status, delivery PIN, confirm or report a problem.
 import { photoPicker } from '../photos.js';
+import { offerTour } from '../tour.js';
+import { TOURS } from '../tours.js';
 import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, orderJourney, $ } from '../core.js';
 
 await shell('buyer');
@@ -198,5 +200,5 @@ if (!token) {
   show('#app', html`<section class="card narrow"><h1>Open your tracking link</h1>
     <p>This page needs the tracking link from your SMS or WhatsApp message. Please open that link again.</p></section>`);
 } else {
-  render().then(() => keepFresh(path, render)).catch(fail);
+  render().then(() => { keepFresh(path, render); offerTour('track', TOURS.track); }).catch(fail);
 }

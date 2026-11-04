@@ -1,8 +1,12 @@
 // Home page: shared shell plus the hero animation, which tells what TrustGap stands for: closing
 // the trust gap between a buyer and a seller in five steps: Agree, Secure, Deliver, Inspect, Release.
 import { shell, track, $, $$ } from '../core.js';
+import { offerTour } from '../tour.js';
+import { TOURS } from '../tours.js';
 
 shell('public'); // not awaited: this page doesn't need the server settings to draw
+// First visit: a welcome pop-up offering the tour (never forced; the ? button replays it).
+offerTour('home', TOURS.home);
 
 const STEPS = [
   ['Agree', 'Buyer and seller agree in the chat. The seller turns it into one TrustGap deal link.'],
