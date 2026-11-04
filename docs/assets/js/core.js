@@ -688,7 +688,7 @@ export async function shell(area) {
   document.body.insertAdjacentHTML('afterbegin', String(html`
     <a class="skip" href="#app">Skip to content</a>
     <header class="top"><div class="top-in"><a class="logo" href="${link('index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>${nav}</div></header>`));
-  document.body.insertAdjacentHTML('beforeend', String(html`<footer class="site-foot"><div class="container foot-grid">
+  const fullFooter = html`<div class="container foot-grid">
     <div class="foot-brand"><a class="logo" href="${link('index.html')}">Trust<span>Gap</span></a>
       <p>The safe completion layer for social commerce in Nigeria: payment secured, item delivered, both sides know what happens next.</p>
       ${socialLinks()}</div>
@@ -706,7 +706,18 @@ export async function shell(area) {
       <span data-site="registeredAddress"></span></p></div>
   </div><div class="container foot-bottom">© ${new Date().getFullYear()} TrustGap, a trading name of <span data-site="legalName"></span> · RC <span data-site="rcNumber"></span>.
     TrustGap is not a bank and does not guarantee items or sellers. See the <a href="${link('legal/terms.html')}">Terms</a>.
-    ${trackingConfigured && !['admin', 'team'].includes(area) ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div></footer>`));
+    ${trackingConfigured && !['admin', 'team'].includes(area) ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div>`;
+  // Inside accounts and on deal pages (seller, buyer, admin, team) the footer is one slim line; the
+  // full footer opens with "More links". The public pages keep the full footer.
+  const slim = ['seller', 'buyer', 'admin', 'team'].includes(area);
+  document.body.insertAdjacentHTML('beforeend', String(slim
+    ? html`<footer class="site-foot site-foot-slim"><div class="container slim-row">
+        <span>© ${new Date().getFullYear()} TrustGap</span>
+        <a href="${link('legal/terms.html')}">Terms</a><a href="${link('legal/privacy.html')}">Privacy</a>
+        <a href="${link('legal/disputes.html')}">Refunds &amp; disputes</a>
+        <span>Support: <span data-site="supportEmail"></span></span></div>
+      <details class="foot-more"><summary class="container">More links</summary>${fullFooter}</details></footer>`
+    : html`<footer class="site-foot">${fullFooter}</footer>`));
   rememberSource();
   $('.static-links')?.remove(); // plain links for crawlers that don't run JavaScript; the menu replaces them
   document.body.classList.add('has-shell');
