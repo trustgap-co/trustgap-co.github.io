@@ -1,26 +1,14 @@
 // The words and targets of each guided tour (see tour.js). Short, plain sentences: written for
-// someone who has never paid or sold through a link like this before.
+// someone who has never paid or sold through a link like this before. Tours run only in the seller's
+// account (dashboard, new link, price calculator, settings, order page) and for buyers on their deal
+// link (step 1 and step 2) and tracking page: never on the public pages.
 const visible = (sel) => () => [...document.querySelectorAll(sel)].find((e) => e.getClientRects().length) || null;
 const fieldsetOf = (sel) => () => document.querySelector(sel)?.closest('fieldset') || null;
 const headingNamed = (text) => () => { const h = [...document.querySelectorAll('h2')].find((x) => x.textContent.includes(text)); return h ? h.closest('section') || h : null; };
+const headingText = (text) => () => [...document.querySelectorAll('h1, h2')].find((h) => h.textContent.includes(text)) || null;
 const summaryNamed = (text) => () => [...document.querySelectorAll('summary')].find((s) => s.textContent.includes(text))?.closest('details') || null;
 
 export const TOURS = {
-  home: {
-    welcome: {
-      title: 'Welcome to TrustGap',
-      text: 'TrustGap keeps your money safe when you buy or sell on WhatsApp and Instagram. Want a 1-minute tour of how it works?',
-    },
-    steps: [
-      { title: 'What TrustGap does', text: 'The buyer’s money is held safely until the item is delivered and checked. Only then is the seller paid. No more “send your account details” and hoping for the best.' },
-      { el: '#trust-anim', title: 'The five steps', text: 'Agree, Secure, Deliver, Inspect, Release. This picture plays each step: watch it once and you know how every TrustGap deal works.' },
-      { el: visible('.cta-row'), title: 'Start here', text: 'Sellers create a payment link for each deal and send it to the buyer in the chat. Buyers just open the link their seller sends.' },
-      { el: '#how', title: 'How a deal goes', text: 'Scroll here any time for the full story, step by step, for buyers and sellers.' },
-      { el: headingNamed('Every naira'), title: 'Clear fees', text: 'Every fee is shown before anyone pays. Buyer and seller agree who pays what: the buyer, the seller, or half each.' },
-      { el: visible('.top .nav, .top #menu'), title: 'Find your way', text: 'The menu has pages for buyers and sellers, fees, questions and answers, and more.' },
-      { el: '.tour-help', title: 'Help is always here', text: 'Tap this button on any page for a quick tour of that page. That’s it, you’re ready.' },
-    ],
-  },
 
   dashboard: {
     invite: 'New here? Take a quick tour of your seller dashboard.',
@@ -97,6 +85,29 @@ export const TOURS = {
       { el: '#book button', title: 'Book the pickup', text: 'Once it’s packed, tap here. The courier collects it from your pickup address. Send it before the ship-by date.' },
       { el: () => [...document.querySelectorAll('p.small')].find((p) => p.textContent.startsWith('At handover')) || null, title: 'At the buyer’s door', text: 'The buyer checks the item, then gives the rider their delivery code. Never ask for the code before they have the item.' },
       { el: '.case-box', title: 'If there’s a dispute', text: 'Add your side with photos here. Packing photos or a video help most. TrustGap reads both sides before deciding.' },
+    ],
+  },
+
+  settings: {
+    invite: 'Setting up your account? Take a quick tour of this page.',
+    steps: [
+      { el: headingText('Payout account'), title: 'Where you get paid', text: 'Add the bank account your payouts go to. It must be in your own name or your business name; we check the name with the bank.' },
+      { el: headingText('Identity'), title: 'Verify your identity', text: 'Enter your NIN and date of birth once. Buyers see a “✓ Identity verified” badge on your links, which helps them trust you.' },
+      { el: '#marketing', title: 'News and offers', text: 'Optional. Messages about your deals and payouts always come, whatever you choose here.' },
+      { el: '.top a[href*="seller/new.html"]', title: 'You’re ready', text: 'Once both are done, create your first payment link here or from your dashboard.' },
+    ],
+  },
+
+  // Step 2 of a deal link. Buyers who finished the step 1 tour go straight on into this one.
+  'pay-details': {
+    after: 'pay',
+    invite: 'Almost there. Want a quick tour of this last step?',
+    steps: [
+      { el: '[name=buyer_name]', title: 'Your name', text: 'As it appears on your bank account, so a refund can reach you if one is ever due.' },
+      { el: '[name=buyer_phone]', title: 'Your phone number', text: 'The rider calls this number, and your delivery code and updates come here by SMS. Use a number you’ll have with you.' },
+      { el: fieldsetOf('[name=refund_bank_code]'), title: 'Refund account', text: 'Only used if you’re owed a refund. It must be in your own name, and the seller never sees it.' },
+      { el: '.pay-name-note', title: 'Who you’re paying', text: 'The payment page shows the name of the registered company that runs TrustGap. Pay only there, never to a seller’s own account.' },
+      { el: '#pay > button.btn', title: 'Pay safely', text: 'Tap to go to the secure payment page. Your money is held until you have the item and have checked it.' },
     ],
   },
 };

@@ -1,3 +1,5 @@
+import { offerTour } from '../tour.js';
+import { TOURS } from '../tours.js';
 import { api, html, show, onSubmit, shell, getBanks, bankOptions, testAccountsHint, date, flash, link, fail, trackThenGo, $ } from '../core.js';
 
 const config = await shell('seller');
@@ -56,4 +58,4 @@ async function render() {
     });
   }
 }
-render().catch(fail);
+render().then(() => offerTour('settings', TOURS.settings)).catch(fail);

@@ -154,7 +154,7 @@ function review(d, rules, promo = null) {
 
 async function details(d, checkoutId, total) {
   const banks = await getBanks();
-  document.querySelector('.tour-help')?.remove(); // the tour is about step 1
+
   show('#app', html`${steps(2)}<section class="card">
     <h1>Your details</h1>
     <p class="muted">${d.item_title} → ${d.delivery.state} · <strong>${money(total)}</strong> · <button class="linklike" id="back">review the deal again</button></p>
@@ -179,6 +179,7 @@ async function details(d, checkoutId, total) {
       <p class="muted small center">Your payment is secured under the deal rules. The seller is not paid until delivery and inspection.</p>
     </form>
   </section>`);
+  offerTour('pay-details', TOURS['pay-details']);
   $('#back').addEventListener('click', () => { track('deal_review_again'); load(); });
   onSubmit($('#pay'), async (data) => {
     const res = await api(`/api/deals/${encodeURIComponent(token)}/pay`, {

@@ -21,11 +21,17 @@ const target = (step) => {
 let active = null; // the running tour, if any
 const offered = new Set();
 
-export function offerTour(id, { invite = 'First time here? Take a quick tour of this page.', welcome = null, steps }) {
+// `after`: the tour of the step before (e.g. step 1 of a deal link). If they finished it, this one
+// starts straight away; if they skipped or declined it, this one isn't offered (the ? button stays).
+export function offerTour(id, { invite = 'First time here? Take a quick tour of this page.', welcome = null, after = null, steps }) {
   if (!steps?.length) return;
   helpButton(id, steps);
   if (seen(id) || offered.has(id)) return; // pages that redraw call this again: offer once
   offered.add(id);
+  if (after && seen(after)) {
+    if (seen(after) === 'completed') setTimeout(() => startTour(id, steps, 'continued'), 500);
+    return;
+  }
   // Wait for the cookie choice to be made first, so the two never sit on top of each other.
   const ready = () => !document.querySelector('.consent') && !active;
   const show = () => (welcome ? welcomeCard(id, welcome, steps) : inviteBar(id, invite, steps));

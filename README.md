@@ -126,10 +126,10 @@ shown to admin on the order page and copied to Google Sheets.
    `ADMIN_ALERT_PHONE`; decisions by anyone else are texted to the admin. Customer relations members
    decide only with a task and only up to `TEAM_DISPUTE_CAP_NAIRA` (200,000). Disputes have WhatsApp
    buyer/seller buttons.
-20. **Guided tours** (`tour.js`, words in `tours.js`): seven tours (home, seller dashboard, new payment
-   link, price calculator, buyer deal page, tracking page, seller order page). Always offered, never
-   forced: a welcome pop-up on the home page's first visit, an invitation elsewhere, and a "Show me
-   around" (?) button to replay. Back / Next / Skip; once finished or skipped, not offered again on
+20. **Guided tours** (`tour.js`, words in `tours.js`), never on the public pages. Sellers: dashboard,
+   settings, new payment link, price calculator, order page. Buyers: deal link step 1 and step 2
+   (step 2 follows straight on if they took the step 1 tour) and the tracking page. Always offered,
+   never forced: an invitation, and a "Show me around" (?) button to replay. Back / Next / Skip; once finished or skipped, not offered again on
    that device. GA4 events: tour_offered, tour_started, tour_step, tour_completed, tour_skipped, tour_declined.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
