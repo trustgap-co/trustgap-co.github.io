@@ -2,11 +2,48 @@
 import { photoPicker } from '../photos.js';
 import { offerTour } from '../tour.js';
 import { TOURS } from '../tours.js';
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, orderJourney, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, orderJourney, link, $ } from '../core.js';
 
 await shell('buyer');
 const token = params.get('t') || '';
 const path = `/api/track/${encodeURIComponent(token)}`;
+
+// After a completed order: share TrustGap with friends (a WhatsApp message, and a picture for the
+// WhatsApp status), and, for buyers who also sell, join with this seller's invite.
+const SITE_HOME = new URL('../../', import.meta.url).href;
+function shareCard(o) {
+  const url = `${SITE_HOME}?utm_source=buyer_share&utm_medium=referral&utm_campaign=completed_order`;
+  const text = `I just bought "${o.item_title}" safely with TrustGap: my money was held until I had the item and checked it. If you buy or sell on WhatsApp or Instagram, use TrustGap: ${url}`;
+  return html`<section class="card share-card">
+    <h2>Your money was protected 🛡️</h2>
+    <p>Know someone who buys or sells online? Tell them about TrustGap.</p>
+    <div class="actions">
+      <a class="btn btn-whatsapp" href="${`https://wa.me/?text=${encodeURIComponent(text)}`}" target="_blank" rel="noopener" id="share-wa">💬 Share on WhatsApp</a>
+      <button type="button" class="btn btn-secondary" id="share-status">📸 Picture for my status</button>
+    </div>
+    ${o.seller_invite ? html`<p class="small">Do you sell online too? <a href="${link(`seller/signup.html?ref=${encodeURIComponent(o.seller_invite)}`)}">Join with an invite from ${o.seller_name}</a>: your first deals have no TrustGap fee.</p>` : ''}
+  </section>`;
+}
+
+// A square picture for the WhatsApp status, drawn on the phone (nothing is uploaded).
+async function statusPicture() {
+  const c = document.createElement('canvas');
+  c.width = 1080; c.height = 1080;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0B1B3D'; g.fillRect(0, 0, 1080, 1080);
+  g.fillStyle = '#F4B740'; g.beginPath(); g.arc(540, 330, 120, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#0B1B3D'; g.font = 'bold 150px Arial'; g.textAlign = 'center'; g.fillText('✓', 540, 385);
+  g.fillStyle = '#FFFFFF'; g.font = 'bold 70px Arial';
+  g.fillText('I just bought safely', 540, 580); g.fillText('with TrustGap', 540, 670);
+  g.fillStyle = '#C9D3EA'; g.font = '40px Arial';
+  g.fillText('My money was held until I had', 540, 770); g.fillText('the item and checked it.', 540, 825);
+  g.fillStyle = '#9DB9F5'; g.font = 'bold 44px Arial'; g.fillText('trustgap-co.github.io', 540, 960);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  const file = new File([blob], 'trustgap.png', { type: 'image/png' });
+  if (navigator.canShare?.({ files: [file] })) return navigator.share({ files: [file], text: 'Buy safely online with TrustGap' }).catch(() => {});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'trustgap.png'; a.click();
+}
 
 async function render() {
   const [{ order: o, dispute, return: ret, case: kase, events }, config] = await Promise.all([api(path), getConfig()]);
@@ -50,7 +87,7 @@ async function render() {
           If not, report it before <strong>${date(o.inspection_ends_at)}</strong>.
           <form id="accept"><button class="btn">Everything is fine, pay the seller</button></form></div>`
       : ''}
-    ${o.status === 'completed' && !dispute ? html`<div class="callout ok">Complete. The seller has been paid.</div>` : ''}
+    ${o.status === 'completed' && !dispute ? html`<div class="callout ok">Complete. The seller has been paid.</div>${shareCard(o)}` : ''}
     ${dispute
       ? html`<div class="callout ${dispute.status === 'open' ? 'warn' : 'info'}">
           <strong>${dispute.status === 'open' ? `Case ${dispute.case_ref}: under review` : 'Decision'}</strong><br>
@@ -127,6 +164,8 @@ async function render() {
     <p class="muted small">This is your private tracking page. Bookmark it to come back on this phone, or use the link in your SMS from any device. Seller’s phone: ${o.seller_phone}</p>
   </section>`);
 
+  $('#share-wa')?.addEventListener('click', () => track('share', { method: 'whatsapp', content_type: 'completed_order' }));
+  $('#share-status')?.addEventListener('click', () => { track('share', { method: 'status_picture', content_type: 'completed_order' }); statusPicture(); });
   if ($('#retry')) {
     onSubmit($('#retry'), async () => {
       const { payment_url } = await api(path + '/retry', { method: 'POST', body: {} });

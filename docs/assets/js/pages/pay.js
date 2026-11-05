@@ -38,7 +38,7 @@ const half = (payer) => (payer === 'split' ? ' (your half)' : '');
 // `promo`: the buyer's early-access code once applied ({ code, discount, checkoutId, total }).
 function breakdown(d, promo) {
   const p = d.price;
-  const feeCell = d.promo_applied ? html`<span class="muted">Waived (early-access code)</span>`
+  const feeCell = d.promo_applied ? html`<span class="muted">Waived (${d.promo_kind === 'free_deal' ? 'the seller’s free deal' : 'early-access code'})</span>`
     : p.platform_fee ? money(p.platform_fee) : paidBySeller;
   return html`<table class="breakdown">
     <tr><td>Item price${d.quantity > 1 ? ` (×${d.quantity})` : ''}</td><td>${money(p.item)}</td></tr>
@@ -72,7 +72,8 @@ function review(d, rules, promo = null) {
   const canUseCode = !d.promo_applied && d.price.platform_fee > 0;
   show('#app', html`${steps(1)}<section class="card">
     <p class="seller-line">Seller: <strong>${d.seller.business_name}</strong>
-      ${d.seller.identity_verified ? html`<span class="badge badge-ok">✓ Identity verified</span>` : html`<span class="badge badge-muted">Identity not yet verified</span>`}</p>
+      ${d.seller.identity_verified ? html`<span class="badge badge-ok">✓ Identity verified</span>` : html`<span class="badge badge-muted">Identity not yet verified</span>`}
+      ${d.seller.history?.ambassador ? html`<span class="badge badge-info" title="Has brought other sellers to TrustGap who completed protected deals">⭐ TrustGap Ambassador</span>` : ''}</p>
     ${sellerRecord(d.seller.history)}
     <p class="lead-note">Before you pay, here is exactly what you are agreeing to. No hidden fees. No guesswork.</p>
     <h1>${d.item_title}</h1>

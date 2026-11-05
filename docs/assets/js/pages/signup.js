@@ -1,4 +1,4 @@
-import { api, auth, html, show, onSubmit, link, shell, track, $ } from '../core.js';
+import { api, auth, html, show, onSubmit, link, shell, track, local, $ } from '../core.js';
 import { codeStep } from './auth-code.js';
 
 shell('public'); // not awaited: this page doesn't need the server settings to draw
@@ -6,6 +6,7 @@ if (auth.seller()) location.href = link('seller/dashboard.html');
 
 show('#app', html`<section class="card narrow">
   <h1>Create your seller account</h1>
+  <div id="invite"></div>
   <p class="muted">Buyers never need an account. Only sellers sign up. No password: we text you a code each time you log in.</p>
   <form class="form" id="signup">
     <label>Full name <small>exactly as on your bank account and NIN</small><input name="full_name" required autocomplete="name"></label>
@@ -22,7 +23,19 @@ show('#app', html`<section class="card narrow">
   <p class="muted">Already have an account? <a href="${link('seller/login.html')}">Log in</a></p>
 </section>`);
 
+// Invited by another seller (signup.html?ref=CODE): remembered on this phone, shown, and sent with sign-up.
+const ref = (new URLSearchParams(location.search).get('ref') || local.get('tg_ref') || '').trim().toUpperCase();
+if (ref) {
+  local.set('tg_ref', ref);
+  api(`/api/referral/${encodeURIComponent(ref)}`).then((r) => {
+    if (!r.valid) { local.del('tg_ref'); return; }
+    show('#invite', html`<div class="callout ok"><strong>🎁 ${r.business_name} invited you.</strong> Join with their invite and your first ${r.welcome_deals} deals have no TrustGap fee.</div>`);
+    track('referral_invite_seen', {});
+  }).catch(() => {});
+}
+
 onSubmit($('#signup'), async (data) => {
+  if (ref) data.ref = ref;
   if (data.terms_accepted !== 'yes') throw new Error('Tick the box to accept the Terms of Service and Seller Terms. You can’t create an account without accepting them.');
   track('terms_accepted', { side: 'seller' });
   const sent = await api('/api/auth/signup', { method: 'POST', body: data });

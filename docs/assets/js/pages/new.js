@@ -81,6 +81,7 @@ try {
         <p class="label">TrustGap fee (${feeSummary(fee)}) + payment processing</p>
         <p class="muted small">Payment processing passes the payment provider’s charges on at cost (about ${config.processing.percent}%${config.processing.capKobo ? `, max ${money(config.processing.capKobo)},` : ''} plus a small payout fee). Both lines are shown to the buyer separately.</p>
         <div class="choices">${radio('fee_payer', 'buyer', 'Buyer pays')}${radio('fee_payer', 'seller', 'I pay')}${radio('fee_payer', 'split', 'Split 50/50')}</div>
+        ${seller.free_deals ? html`<label class="choice"><input type="checkbox" id="use-free" checked> 🎁 Use one of my free deals on this link <small>(${seller.free_deals} left): no TrustGap fee</small></label>` : ''}
         <label>Early-access code <small>optional. Removes the TrustGap fee from this link (once per seller)</small>
           <input name="promo_code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. EARLYGAP" value="${v.promo_code || ''}" class="code-input"></label>
       </fieldset>
@@ -138,8 +139,9 @@ try {
   let last = '';
   async function preview() {
     const d = formData(form);
+    if ($('#use-free')) d.use_free_deal = $('#use-free').checked ? 'yes' : 'no';
     if (!d.item_price || !d.pickup_state || !d.delivery_state || !d.delivery_payer || !d.fee_payer) return;
-    const key = JSON.stringify([d.item_price, d.pickup_state, d.delivery_state, d.weight_kg, d.delivery_payer, d.fee_payer, d.promo_code?.trim(), d.delivery_days]);
+    const key = JSON.stringify([d.item_price, d.pickup_state, d.delivery_state, d.weight_kg, d.delivery_payer, d.fee_payer, d.promo_code?.trim(), d.delivery_days, d.use_free_deal]);
     if (key === last) return;
     last = key;
     show('#preview', html`<p class="muted small">Calculating…</p>`);
@@ -168,6 +170,7 @@ try {
   offerTour('new-link', TOURS['new-link']);
 
   onSubmit($('#deal'), async (data) => {
+    if ($('#use-free')) data.use_free_deal = $('#use-free').checked ? 'yes' : 'no';
     if (!photos.length && !keeping.length) throw new Error('Add at least one photo of the item, so the buyer can see what they are paying for.');
     if (photos.length) data.photos = photos;
     // The seller confirms the item's condition, with the cost of a false description in front of them.

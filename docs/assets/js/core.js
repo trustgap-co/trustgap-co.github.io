@@ -219,12 +219,12 @@ export function sellerQuoteBox({ price: p, delivery_state: state, promo, dispute
   return html`<table class="breakdown">
     <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
     <tr><td>Delivery to ${state} (${PAYER_LABEL[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
-    <tr><td>TrustGap fee ${feeLabel(fee, promo ? promo.saving : p.platformFee)} ${promo ? '(early-access code)' : `(${PAYER_LABEL[d.fee_payer]})`}</td>
+    <tr><td>TrustGap fee ${feeLabel(fee, promo ? promo.saving : p.platformFee)} ${promo ? (promo.free_deal ? '(free deal)' : '(early-access code)') : `(${PAYER_LABEL[d.fee_payer]})`}</td>
       <td>${promo ? html`<s class="muted">${money(promo.saving)}</s> ${money(0)}` : money(p.platformFee)}</td></tr>
     <tr><td>Payment processing (${PAYER_LABEL[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
     <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
     <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
-  </table>${eta ? html`<p class="small"><span aria-hidden="true">🚚</span> <strong>Delivery time:</strong> ${eta.transit}. If the buyer pays today: estimated ${etaRange(eta)}${eta.busy ? ' (busy festive season: allow a little longer)' : ''}.</p>` : ''}${disputeFee ? html`<p class="small muted">Dispute fee: ${money(disputeFee)}, paid only by whoever TrustGap finds at fault if a dispute has to be decided. Settle problems with the buyer first and nobody pays it.</p>` : ''}${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`;
+  </table>${eta ? html`<p class="small"><span aria-hidden="true">🚚</span> <strong>Delivery time:</strong> ${eta.transit}. If the buyer pays today: estimated ${etaRange(eta)}${eta.busy ? ' (busy festive season: allow a little longer)' : ''}.</p>` : ''}${disputeFee ? html`<p class="small muted">Dispute fee: ${money(disputeFee)}, paid only by whoever TrustGap finds at fault if a dispute has to be decided. Settle problems with the buyer first and nobody pays it.</p>` : ''}${promo ? html`<p class="small ok-text">${promo.free_deal ? html`🎁 Free deal used: no TrustGap fee on this link${promo.left > 1 ? ` (${promo.left - 1} more after this)` : ''}.` : html`Early-access code ${promo.code} applied: no TrustGap fee on this link.`}</p>` : ''}`;
 }
 // A quote that can't be priced: the high-value route to support, or the reason (e.g. price too low).
 export function sellerQuoteError(err) {
