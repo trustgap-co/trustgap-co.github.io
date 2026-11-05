@@ -139,16 +139,16 @@ try {
   async function preview() {
     const d = formData(form);
     if (!d.item_price || !d.pickup_state || !d.delivery_state || !d.delivery_payer || !d.fee_payer) return;
-    const key = JSON.stringify([d.item_price, d.pickup_state, d.delivery_state, d.weight_kg, d.delivery_payer, d.fee_payer, d.promo_code?.trim()]);
+    const key = JSON.stringify([d.item_price, d.pickup_state, d.delivery_state, d.weight_kg, d.delivery_payer, d.fee_payer, d.promo_code?.trim(), d.delivery_days]);
     if (key === last) return;
     last = key;
     show('#preview', html`<p class="muted small">Calculating…</p>`);
     try {
-      const { price: p, delivery_state, promo, dispute_fee: disputeFee } = await api('/api/seller/quote', { method: 'POST', body: d, as: 'seller' });
+      const { price: p, delivery_state, promo, dispute_fee: disputeFee, eta } = await api('/api/seller/quote', { method: 'POST', body: d, as: 'seller' });
       lastDeliveryFee = p.deliveryFee;
       lastDisputeFee = disputeFee || 0;
       if (key !== last) return;
-      show('#preview', sellerQuoteBox({ price: p, delivery_state, promo, dispute_fee: disputeFee }, d, fee));
+      show('#preview', sellerQuoteBox({ price: p, delivery_state, promo, dispute_fee: disputeFee, eta }, d, fee));
       if (promo && !promoTracked) { promoTracked = true; track('promo_applied', { side: 'seller', discount: promo.saving / 100 }); }
     } catch (err) {
       if (key === last) {

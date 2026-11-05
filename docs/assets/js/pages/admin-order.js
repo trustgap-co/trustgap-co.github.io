@@ -1,4 +1,4 @@
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos, caseAccounts, keepFresh, faultField, FAULT_LABELS, auth, whatsappButton, disputeChatText } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, flash, fail, $, $$, gallery, evidencePhotos, caseAccounts, keepFresh, faultField, FAULT_LABELS, auth, whatsappButton, disputeChatText, etaRange } from '../core.js';
 
 await shell('admin');
 const id = encodeURIComponent(params.get('id'));
@@ -45,7 +45,7 @@ async function render() {
             <button type="button" class="linklike" data-copy="${o.rider_url}">(copy rider link)</button>` : ''}</p></div>
     </div>
     <p class="small">Delivery: ${o.delivery_label} ${o.courier ? `· ${o.courier}` : ''} ${o.delivery_ref ? `· ${o.delivery_ref}` : ''}
-      ${o.courier_status ? `· courier says “${o.courier_status}”` : ''} · ship by ${date(o.ship_by)} · ${o.courier === 'fez' ? html`Fez delivery code: <strong>${o.courier_code || 'not sent yet (Fez sends it at dispatch)'}</strong>` : `PIN attempts ${o.pin_attempts}`}
+      ${o.courier_status ? `· courier says “${o.courier_status}”` : ''} · ship by ${date(o.ship_by)}${o.eta ? ` · estimated delivery ${etaRange(o.eta)}` : ''} · ${o.courier === 'fez' ? html`Fez delivery code: <strong>${o.courier_code || 'not sent yet (Fez sends it at dispatch)'}</strong>` : `PIN attempts ${o.pin_attempts}`}
       ${o.courier === 'fez' && o.status === 'shipping' ? html`<button class="linklike" id="sync">check with Fez now</button>` : ''}</p>
   </section>
   ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''} ${x.status === 'superseded' ? 'card-muted' : ''}">

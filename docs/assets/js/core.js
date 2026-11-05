@@ -203,11 +203,19 @@ export const disputeChatText = ({ name, ref, caseRef, as }) => {
   return `Hello ${name}, this is ${me} about ${as === 'buyer' ? 'your order' : 'order'} ${ref}${caseRef ? ` (case ${caseRef})` : ''}. `;
 };
 
+// ---------------------------------------------------------------- delivery estimates
+// The estimate from the Worker (lib/eta.js) as "Tue 10 Nov – Wed 11 Nov".
+const etaDay = (d) => new Date(d).toLocaleDateString('en-NG', { timeZone: 'Africa/Lagos', weekday: 'short', day: 'numeric', month: 'short' });
+export const etaRange = (eta) => (eta ? (etaDay(eta.earliest) === etaDay(eta.latest) ? etaDay(eta.earliest) : `${etaDay(eta.earliest)} – ${etaDay(eta.latest)}`) : '');
+export const etaNote = (eta) => (eta ? `${eta.transit[0].toUpperCase()}${eta.transit.slice(1)}. An estimate from the courier’s timelines.${eta.busy ? ' Busy festive season: allow a little longer.' : ''}` : '');
+// The line under an order's progress: when to expect it, and why.
+export const etaLine = (eta) => (eta ? html`<p class="eta-line"><span aria-hidden="true">🚚</span> <strong>Estimated delivery: ${etaRange(eta)}</strong><br><small class="muted">${etaNote(eta)}</small></p>` : '');
+
 // ---------------------------------------------------------------- seller price quotes
 // The breakdown from POST /api/seller/quote, shown on the price calculator and the new-link form, so
 // the price a seller quotes a buyer is exactly what the link will charge. `d` is the form's answers.
 const PAYER_LABEL = { buyer: 'paid by buyer', seller: 'paid by you', split: 'split 50/50' };
-export function sellerQuoteBox({ price: p, delivery_state: state, promo, dispute_fee: disputeFee }, d, fee) {
+export function sellerQuoteBox({ price: p, delivery_state: state, promo, dispute_fee: disputeFee, eta }, d, fee) {
   return html`<table class="breakdown">
     <tr><td>Item price</td><td>${money(p.itemPrice)}</td></tr>
     <tr><td>Delivery to ${state} (${PAYER_LABEL[d.delivery_payer]})</td><td>${money(p.deliveryFee)}</td></tr>
@@ -216,7 +224,7 @@ export function sellerQuoteBox({ price: p, delivery_state: state, promo, dispute
     <tr><td>Payment processing (${PAYER_LABEL[d.fee_payer]})</td><td>${money(p.processingFee)}</td></tr>
     <tr class="total"><td>Buyer pays</td><td>${money(p.buyerTotal)}</td></tr>
     <tr class="total"><td>You receive after delivery</td><td>${money(p.sellerPayout)}</td></tr>
-  </table>${disputeFee ? html`<p class="small muted">Dispute fee: ${money(disputeFee)}, paid only by whoever TrustGap finds at fault if a dispute has to be decided. Settle problems with the buyer first and nobody pays it.</p>` : ''}${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`;
+  </table>${eta ? html`<p class="small"><span aria-hidden="true">🚚</span> <strong>Delivery time:</strong> ${eta.transit}. If the buyer pays today: estimated ${etaRange(eta)}${eta.busy ? ' (busy festive season: allow a little longer)' : ''}.</p>` : ''}${disputeFee ? html`<p class="small muted">Dispute fee: ${money(disputeFee)}, paid only by whoever TrustGap finds at fault if a dispute has to be decided. Settle problems with the buyer first and nobody pays it.</p>` : ''}${promo ? html`<p class="small ok-text">Early-access code ${promo.code} applied: no TrustGap fee on this link.</p>` : ''}`;
 }
 // A quote that can't be priced: the high-value route to support, or the reason (e.g. price too low).
 export function sellerQuoteError(err) {
@@ -294,7 +302,8 @@ export function orderJourney(o, { as = 'buyer', dispute = null } = {}) {
   const state = (i) => (i < at ? 'Done' : i === at && !paused ? 'Happening now' : paused && i === at ? 'Paused' : 'Still to come');
   return html`<div class="journey"><div class="status-strip" role="list" aria-label="Order progress. Tap a step to see what it means.">${JOURNEY.map((label, i) => html`<button type="button" role="listitem" class="${i < at ? 'done' : i === at && !paused ? 'now' : ''}" data-step-info="${`${label} (${state(i)}): ${meaning[i]}`}"${i === at && !paused ? raw(' aria-current="step"') : ''}>${label}</button>`)}</div>
     <p class="step-info" aria-live="polite"><span class="muted">Tap any step to see what it means for you.</span></p>
-    ${nextStep(o, as, dispute) ? html`<p class="next-step"><strong>${paused && dispute ? 'Paused for review.' : 'What happens next:'}</strong> ${nextStep(o, as, dispute)}</p>` : ''}</div>`;
+    ${nextStep(o, as, dispute) ? html`<p class="next-step"><strong>${paused && dispute ? 'Paused for review.' : 'What happens next:'}</strong> ${nextStep(o, as, dispute)}</p>` : ''}
+    ${paused ? '' : etaLine(o.eta)}</div>`;
 }
 
 // One listener for every journey on the page (pages redraw it every 30 seconds): a tap shows a step's

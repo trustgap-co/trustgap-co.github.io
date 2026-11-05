@@ -3,7 +3,7 @@
 // new-link form with everything filled in.
 import { offerTour } from '../tour.js';
 import { TOURS } from '../tours.js';
-import { api, html, show, shell, money, fillSiteInfo, sellerQuoteBox, sellerQuoteError, session, link, stateInput, statesList, formData, fail, track, $ } from '../core.js';
+import { api, html, show, shell, money, etaRange, fillSiteInfo, sellerQuoteBox, sellerQuoteError, session, link, stateInput, statesList, formData, fail, track, $ } from '../core.js';
 
 const config = await shell('seller');
 const KEEP = 'tg_calculator';
@@ -75,6 +75,7 @@ try {
       `Item ${money(p.itemPrice)}`,
       p.buyerDelivery ? `Delivery to ${q.delivery_state} ${money(p.buyerDelivery)}${d.delivery_payer === 'split' ? ' (your half)' : ''}` : 'Delivery: paid by me',
       p.buyerFeeShare ? `TrustGap protection and payment processing ${money(p.buyerFeeShare)}${d.fee_payer === 'split' ? ' (your half)' : ''}` : 'TrustGap fees: paid by me',
+      ...(q.eta ? [`Estimated delivery if you pay today: ${etaRange(q.eta)}`] : []),
       '',
       'You pay through a TrustGap link: your money is held safely and I’m paid only after you receive and check the item. I’ll send the link now.',
     ];

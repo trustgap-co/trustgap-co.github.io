@@ -3,7 +3,7 @@
 import { offerTour } from '../tour.js';
 import { TOURS } from '../tours.js';
 import { SITE } from '../site-info.js';
-import { api, html, show, onSubmit, shell, money, date, feeLabel, fillConsentBody, link, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, feeLabel, fillConsentBody, etaRange, link, params, getBanks, bankOptions, testAccountsHint, fail, gallery, raw, track, trackThenGo, naira, confirmModal, $ } from '../core.js';
 
 const config = await shell('buyer');
 const token = params.get('d') || '';
@@ -88,6 +88,7 @@ function review(d, rules, promo = null) {
     ${breakdown(d, promo)}
     <ul class="facts">
       <li>📦 Seller hands it to the courier within <strong>${d.delivery_days} day(s)</strong> of payment</li>
+      ${d.eta ? html`<li>🚚 Estimated delivery: <strong>${etaRange(d.eta)}</strong> if you pay today <small class="muted">(${d.eta.transit}${d.eta.busy ? '; busy festive season, allow a little longer' : ''})</small></li>` : ''}
       <li>🔍 You get <strong>${d.inspection_hours} hours</strong> after delivery to report a problem</li>
       <li>⏰ This link expires <strong>${date(d.expires_at)}</strong></li>
     </ul>
