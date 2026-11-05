@@ -74,6 +74,16 @@ export function loadConfig(env) {
       maxUses: num(env.PROMO_MAX_USES, 1000),
     },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
+    // Referrals (core/referrals.js). REFERRALS = "off" switches the programme off.
+    referrals: {
+      on: String(env.REFERRALS || 'on').trim().toLowerCase() !== 'off',
+      welcomeDeals: num(env.REFERRAL_WELCOME_DEALS, 2),
+      rewardDeals: num(env.REFERRAL_REWARD_DEALS, 1),
+      minOrderKobo: num(env.REFERRAL_MIN_ORDER_NAIRA, 10000) * 100,
+      monthlyCap: num(env.REFERRAL_MONTHLY_CAP, 10),
+      creditDays: num(env.REFERRAL_CREDIT_DAYS, 90),
+      ambassadorAt: num(env.REFERRAL_AMBASSADOR_AT, 5),
+    },
     // Delivery estimates (lib/eta.js), from the courier's timelines: same state 24-48 hours after pickup
     // (up to 72 for remote areas), another state 3-7 working days. ETA_BUSY_UNTIL (YYYY-MM-DD) shows a
     // "busy season, allow a little longer" note until that day (Fez's Ember season ends 31 Jan 2027).

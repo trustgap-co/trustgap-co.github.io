@@ -148,6 +148,16 @@ function loadConfig(env) {
       maxUses: num(env.PROMO_MAX_USES, 1e3)
     },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
+    // Referrals (core/referrals.js). REFERRALS = "off" switches the programme off.
+    referrals: {
+      on: String(env.REFERRALS || "on").trim().toLowerCase() !== "off",
+      welcomeDeals: num(env.REFERRAL_WELCOME_DEALS, 2),
+      rewardDeals: num(env.REFERRAL_REWARD_DEALS, 1),
+      minOrderKobo: num(env.REFERRAL_MIN_ORDER_NAIRA, 1e4) * 100,
+      monthlyCap: num(env.REFERRAL_MONTHLY_CAP, 10),
+      creditDays: num(env.REFERRAL_CREDIT_DAYS, 90),
+      ambassadorAt: num(env.REFERRAL_AMBASSADOR_AT, 5)
+    },
     // Delivery estimates (lib/eta.js), from the courier's timelines: same state 24-48 hours after pickup
     // (up to 72 for remote areas), another state 3-7 working days. ETA_BUSY_UNTIL (YYYY-MM-DD) shows a
     // "busy season, allow a little longer" note until that day (Fez's Ember season ends 31 Jan 2027).
@@ -935,6 +945,224 @@ async function enforceLimits(ctx, request, method, path) {
 __name(enforceLimits, "enforceLimits");
 var clearOldLimits = /* @__PURE__ */ __name((ctx) => run(ctx.env, "DELETE FROM rate_limits WHERE reset_at < ?", ctx.now().toISOString()), "clearOldLimits");
 
+// src/core/common.js
+var CONDITIONS = ["Brand new (sealed)", "Brand new (open box)", "Used - like new", "Used - good condition", "Used - fair condition"];
+var EXPIRY_OPTIONS = [1, 6, 24, 72];
+var BUYER_DISPUTE_CATEGORIES = {
+  not_delivered: "Item not delivered",
+  wrong_item: "Wrong item sent",
+  damaged: "Item damaged",
+  not_as_described: "Not as described",
+  counterfeit: "Item is fake",
+  changed_mind: "I changed my mind",
+  other: "Something else"
+};
+var DISPUTE_CATEGORIES = {
+  ...BUYER_DISPUTE_CATEGORIES,
+  refused_at_door: "Refused at the door",
+  returned_by_courier: "Returned by the courier",
+  not_shipped: "Seller did not ship in time",
+  seller_issue: "Raised by seller",
+  returned_item_problem: "Returned item isn\u2019t what was delivered"
+};
+var HELD_STATUSES = ["paid", "shipping", "delivered", "disputed"];
+var HOUR = 36e5;
+var iso = /* @__PURE__ */ __name((d) => d.toISOString(), "iso");
+var addHours = /* @__PURE__ */ __name((d, h) => new Date(d.getTime() + h * HOUR), "addHours");
+var str = /* @__PURE__ */ __name((v) => String(v ?? "").trim(), "str");
+function requireLength(value, label, min, max) {
+  const v = str(value);
+  if (v.length < min) throw new UserError(`${label} is too short.`);
+  if (v.length > max) throw new UserError(`${label} is too long (max ${max} characters).`);
+  return v;
+}
+__name(requireLength, "requireLength");
+function normalisePhone(input) {
+  const digits = str(input).replace(/[^\d+]/g, "");
+  const m = digits.match(/^(?:\+?234|0)([789][01]\d{8})$/);
+  if (m) return "+234" + m[1];
+  throw new UserError("Enter a valid Nigerian phone number, e.g. 0803 123 4567.");
+}
+__name(normalisePhone, "normalisePhone");
+function validEmail(input) {
+  const email = str(input).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) throw new UserError("Enter a valid email address.");
+  return email;
+}
+__name(validEmail, "validEmail");
+var getSeller = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM sellers WHERE id = ?", id), "getSeller");
+var getDeal = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM deals WHERE id = ?", id), "getDeal");
+var getOrder = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM orders WHERE id = ?", id), "getOrder");
+var trackUrl = /* @__PURE__ */ __name((ctx, order) => `${ctx.config.siteUrl}/track.html?t=${order.buyer_token}`, "trackUrl");
+var payUrl = /* @__PURE__ */ __name((ctx, deal) => `${ctx.config.siteUrl}/pay.html?d=${deal.token}`, "payUrl");
+var CASE_UPDATE_HOURS = 24;
+var caseRef = /* @__PURE__ */ __name((order, dispute) => `${order.ref}-C${dispute.id}`, "caseRef");
+var caseUpdateBy = /* @__PURE__ */ __name((dispute) => new Date(new Date(dispute.created_at).getTime() + CASE_UPDATE_HOURS * 36e5), "caseUpdateBy");
+var detailText = /* @__PURE__ */ __name((d) => d == null ? null : typeof d === "string" ? d : JSON.stringify(d), "detailText");
+var eventStmt = /* @__PURE__ */ __name((ctx, orderId, actor, type, detail = null) => insertStmt(ctx.env, "order_events", { order_id: orderId, actor, type, detail: detailText(detail), created_at: iso(ctx.now()) }), "eventStmt");
+var logEvent = /* @__PURE__ */ __name((ctx, ...args) => eventStmt(ctx, ...args).run(), "logEvent");
+var ledgerRow = /* @__PURE__ */ __name((ctx, orderId, kind, amount, counterparty, status, notBefore = null) => ({
+  order_id: orderId,
+  kind,
+  amount,
+  counterparty,
+  status,
+  not_before: notBefore,
+  created_at: iso(ctx.now())
+}), "ledgerRow");
+function settlesAt(ctx, paidAt) {
+  const t = new Date(new Date(paidAt).getTime() + ctx.config.settlementHours * HOUR);
+  const day = new Date(t.getTime() + HOUR).getUTCDay();
+  if (day === 6) return new Date(t.getTime() + 48 * HOUR);
+  if (day === 0) return new Date(t.getTime() + 24 * HOUR);
+  return t;
+}
+__name(settlesAt, "settlesAt");
+async function transition(ctx, orderId, from, fields, followUps = () => []) {
+  const nonce = randomToken(12);
+  const set = { ...fields, last_transition: nonce };
+  const keys = Object.keys(set);
+  const cas = stmt(
+    ctx.env,
+    `UPDATE orders SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ? AND status IN (${from.map(() => "?").join(", ")})`,
+    ...keys.map((k) => set[k]),
+    orderId,
+    ...from
+  );
+  const guard = `EXISTS (SELECT 1 FROM orders WHERE id = ${Number(orderId)} AND last_transition = '${nonce}')`;
+  const helpers = {
+    guard,
+    insert: /* @__PURE__ */ __name((table, row) => guardedInsert(ctx.env, table, row, guard), "insert"),
+    event: /* @__PURE__ */ __name((actor, type, detail) => guardedInsert(ctx.env, "order_events", { order_id: orderId, actor, type, detail: detailText(detail), created_at: iso(ctx.now()) }, guard), "event"),
+    sql: /* @__PURE__ */ __name((sql, ...args) => stmt(ctx.env, `${sql} AND ${guard}`, ...args), "sql")
+  };
+  const results = await ctx.env.DB.batch([cas, ...followUps(helpers)]);
+  return results[0].meta.changes === 1;
+}
+__name(transition, "transition");
+function fmtDate(d) {
+  return new Date(d).toLocaleString("en-NG", {
+    timeZone: "Africa/Lagos",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+__name(fmtDate, "fmtDate");
+
+// src/core/referrals.js
+var FREE_DEAL_CODE = "FREE-DEAL";
+var ACTIVE = "('expired', 'cancelled', 'replaced')";
+async function refCode(ctx, seller) {
+  if (seller.ref_code) return seller.ref_code;
+  const base = String(seller.business_name || seller.full_name || "TG").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5) || "TG";
+  for (let i = 0; i < 5; i++) {
+    const code = `${base}${randomDigits(3)}`;
+    const res = await run(ctx.env, "UPDATE sellers SET ref_code = ? WHERE id = ? AND ref_code IS NULL AND NOT EXISTS (SELECT 1 FROM sellers WHERE ref_code = ?)", code, seller.id, code);
+    if (res.meta.changes === 1) return code;
+    const now = await first(ctx.env, "SELECT ref_code FROM sellers WHERE id = ?", seller.id);
+    if (now?.ref_code) return now.ref_code;
+  }
+  throw new Error("Could not create an invite code.");
+}
+__name(refCode, "refCode");
+var inviteLink = /* @__PURE__ */ __name((ctx, code) => `${ctx.config.siteUrl}/seller/signup.html?ref=${encodeURIComponent(code)}`, "inviteLink");
+var findReferrer = /* @__PURE__ */ __name((ctx, code) => first(ctx.env, "SELECT * FROM sellers WHERE ref_code = ? AND suspended_at IS NULL", String(code || "").trim().toUpperCase()), "findReferrer");
+async function grant(ctx, sellerId, count, source, referralId = null) {
+  const expires = iso(addHours(ctx.now(), ctx.config.referrals.creditDays * 24));
+  for (let i = 0; i < count; i++) {
+    await insert(ctx.env, "free_deals", { seller_id: sellerId, source, referral_id: referralId, expires_at: expires, created_at: iso(ctx.now()) });
+  }
+}
+__name(grant, "grant");
+async function recordReferral(ctx, newSellerId, code) {
+  if (!ctx.config.referrals.on || !code) return null;
+  const referrer = await findReferrer(ctx, code);
+  if (!referrer || referrer.id === newSellerId) return null;
+  if (await first(ctx.env, "SELECT id FROM referrals WHERE referred_id = ?", newSellerId)) return null;
+  const id = await insert(ctx.env, "referrals", { referrer_id: referrer.id, referred_id: newSellerId, status: "pending", created_at: iso(ctx.now()) });
+  await run(ctx.env, "UPDATE sellers SET referred_by = ? WHERE id = ?", referrer.id, newSellerId);
+  await grant(ctx, newSellerId, ctx.config.referrals.welcomeDeals, "welcome", id);
+  return referrer;
+}
+__name(recordReferral, "recordReferral");
+async function availableFreeDeal(ctx, seller, revising = null) {
+  return first(ctx.env, `SELECT f.* FROM free_deals f LEFT JOIN deals d ON d.id = f.used_on_deal_id
+    WHERE f.seller_id = ? AND f.expires_at > ? AND (f.used_on_deal_id IS NULL OR d.status IN ${ACTIVE} OR d.id IS ?)
+    ORDER BY f.expires_at LIMIT 1`, seller.id, iso(ctx.now()), revising);
+}
+__name(availableFreeDeal, "availableFreeDeal");
+async function freeDealsLeft(ctx, sellerId) {
+  return (await first(ctx.env, `SELECT COUNT(*) n FROM free_deals f LEFT JOIN deals d ON d.id = f.used_on_deal_id
+    WHERE f.seller_id = ? AND f.expires_at > ? AND (f.used_on_deal_id IS NULL OR d.status IN ${ACTIVE})`, sellerId, iso(ctx.now()))).n;
+}
+__name(freeDealsLeft, "freeDealsLeft");
+async function rewardReferral(ctx, order) {
+  const cfg = ctx.config.referrals;
+  if (!cfg.on) return null;
+  const ref = await first(ctx.env, "SELECT * FROM referrals WHERE referred_id = ? AND status = 'pending'", order.seller_id);
+  if (!ref) return null;
+  const deal = await first(ctx.env, "SELECT item_price FROM deals WHERE id = ?", order.deal_id);
+  if (deal.item_price < cfg.minOrderKobo) return null;
+  if (await first(ctx.env, "SELECT id FROM disputes WHERE order_id = ?", order.id)) return null;
+  const referrer = await getSeller(ctx, ref.referrer_id);
+  const referred = await getSeller(ctx, ref.referred_id);
+  const block = /* @__PURE__ */ __name(async (note) => {
+    await run(ctx.env, "UPDATE referrals SET status = 'blocked', note = ?, order_id = ? WHERE id = ?", note, order.id, ref.id);
+    await logEvent(ctx, order.id, "system", "referral_blocked", note);
+    return null;
+  }, "block");
+  const samePerson = referrer.payout_account_number && referrer.payout_account_number === referred.payout_account_number || referrer.id_last4 && referrer.id_verified_name && referrer.id_last4 === referred.id_last4 && referrer.id_verified_name === referred.id_verified_name;
+  if (samePerson) return block("Same bank account or identity as the inviter.");
+  if ([referrer.phone, referred.phone].includes(order.buyer_phone)) return block("The buyer was the inviter or the seller.");
+  if (referrer.suspended_at) return block("The inviter is suspended.");
+  const month = iso(addHours(ctx.now(), -30 * 24));
+  const recent = await first(ctx.env, "SELECT COUNT(*) n FROM referrals WHERE referrer_id = ? AND status = 'rewarded' AND rewarded_at > ?", referrer.id, month);
+  if (recent.n >= cfg.monthlyCap) return block(`The inviter already had ${cfg.monthlyCap} rewards in the last 30 days.`);
+  const won = await run(ctx.env, "UPDATE referrals SET status = 'rewarded', rewarded_at = ?, order_id = ? WHERE id = ? AND status = 'pending'", iso(ctx.now()), order.id, ref.id);
+  if (won.meta.changes !== 1) return null;
+  await grant(ctx, referrer.id, cfg.rewardDeals, "referral", ref.id);
+  await logEvent(ctx, order.id, "system", "referral_rewarded", { referrer: referrer.id });
+  const total = await rewardedCount(ctx, referrer.id);
+  await ctx.notify.send({
+    event: "referral_rewarded",
+    phone: referrer.phone,
+    sms: `TrustGap: ${referred.business_name}, who joined with your invite, just completed their first protected deal. You\u2019ve earned ${cfg.rewardDeals === 1 ? "a free deal" : `${cfg.rewardDeals} free deals`} (no TrustGap fee), used on your next link.${total === cfg.ambassadorAt ? " You are now a TrustGap Ambassador: buyers see your badge." : ""}`
+  });
+  return { referrer_id: referrer.id };
+}
+__name(rewardReferral, "rewardReferral");
+var rewardedCount = /* @__PURE__ */ __name(async (ctx, sellerId) => (await first(ctx.env, "SELECT COUNT(*) n FROM referrals WHERE referrer_id = ? AND status = 'rewarded'", sellerId)).n, "rewardedCount");
+async function referralView(ctx, seller) {
+  const code = await refCode(ctx, seller);
+  const counts = await first(ctx.env, `SELECT COUNT(*) invited, SUM(status = 'rewarded') active FROM referrals WHERE referrer_id = ?`, seller.id);
+  const soon = await first(ctx.env, `SELECT MIN(f.expires_at) at FROM free_deals f LEFT JOIN deals d ON d.id = f.used_on_deal_id
+    WHERE f.seller_id = ? AND f.expires_at > ? AND (f.used_on_deal_id IS NULL OR d.status IN ${ACTIVE})`, seller.id, iso(ctx.now()));
+  const active = counts.active || 0;
+  return {
+    on: ctx.config.referrals.on,
+    code,
+    link: inviteLink(ctx, code),
+    invited: counts.invited || 0,
+    active,
+    free_deals: await freeDealsLeft(ctx, seller.id),
+    next_expiry: soon?.at || null,
+    ambassador: active >= ctx.config.referrals.ambassadorAt,
+    ambassador_at: ctx.config.referrals.ambassadorAt,
+    welcome_deals: ctx.config.referrals.welcomeDeals,
+    reward_deals: ctx.config.referrals.rewardDeals,
+    min_order: ctx.config.referrals.minOrderKobo
+  };
+}
+__name(referralView, "referralView");
+async function topReferrers(ctx, limit = 10) {
+  return all(ctx.env, `SELECT s.id, s.business_name, COUNT(r.id) invited, SUM(r.status = 'rewarded') active, SUM(r.status = 'blocked') blocked
+    FROM referrals r JOIN sellers s ON s.id = r.referrer_id GROUP BY s.id ORDER BY active DESC, invited DESC LIMIT ?`, limit);
+}
+__name(topReferrers, "topReferrers");
+
 // src/schema.js
 var MIGRATIONS = [
   {
@@ -1064,6 +1292,10 @@ ALTER TABLE disputes ADD COLUMN decided_by TEXT;
   {
     "name": "0021_pickup_time.sql",
     "sql": "-- When the courier collected the parcel, so the delivery estimate can count from the real pickup.\nALTER TABLE orders ADD COLUMN picked_up_at TEXT;\n"
+  },
+  {
+    "name": "0022_referrals.sql",
+    "sql": "-- Referrals: each seller's invite code, who invited whom, and free deals (no TrustGap fee) earned.\nALTER TABLE sellers ADD COLUMN ref_code TEXT;\nCREATE UNIQUE INDEX IF NOT EXISTS sellers_ref_code ON sellers(ref_code);\nALTER TABLE sellers ADD COLUMN referred_by INTEGER;\nCREATE TABLE IF NOT EXISTS referrals (\n  id INTEGER PRIMARY KEY,\n  referrer_id INTEGER NOT NULL REFERENCES sellers(id),\n  referred_id INTEGER NOT NULL UNIQUE REFERENCES sellers(id),\n  status TEXT NOT NULL DEFAULT 'pending', -- pending, rewarded, blocked\n  note TEXT,\n  order_id INTEGER,\n  created_at TEXT NOT NULL,\n  rewarded_at TEXT\n);\nCREATE INDEX IF NOT EXISTS referrals_referrer ON referrals(referrer_id, status);\nCREATE TABLE IF NOT EXISTS free_deals (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  source TEXT NOT NULL, -- welcome (joined with an invite) or referral (their invite worked)\n  referral_id INTEGER,\n  used_on_deal_id INTEGER,\n  expires_at TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS free_deals_seller ON free_deals(seller_id, expires_at);\n-- The TrustGap fee a link gave away (early-access code or free deal), recorded when the order completes.\nALTER TABLE deals ADD COLUMN fee_waived INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];
 
@@ -1313,113 +1545,6 @@ function namesMatch(typedName, accountName) {
 }
 __name(namesMatch, "namesMatch");
 
-// src/core/common.js
-var CONDITIONS = ["Brand new (sealed)", "Brand new (open box)", "Used - like new", "Used - good condition", "Used - fair condition"];
-var EXPIRY_OPTIONS = [1, 6, 24, 72];
-var BUYER_DISPUTE_CATEGORIES = {
-  not_delivered: "Item not delivered",
-  wrong_item: "Wrong item sent",
-  damaged: "Item damaged",
-  not_as_described: "Not as described",
-  counterfeit: "Item is fake",
-  changed_mind: "I changed my mind",
-  other: "Something else"
-};
-var DISPUTE_CATEGORIES = {
-  ...BUYER_DISPUTE_CATEGORIES,
-  refused_at_door: "Refused at the door",
-  returned_by_courier: "Returned by the courier",
-  not_shipped: "Seller did not ship in time",
-  seller_issue: "Raised by seller",
-  returned_item_problem: "Returned item isn\u2019t what was delivered"
-};
-var HELD_STATUSES = ["paid", "shipping", "delivered", "disputed"];
-var HOUR = 36e5;
-var iso = /* @__PURE__ */ __name((d) => d.toISOString(), "iso");
-var addHours = /* @__PURE__ */ __name((d, h) => new Date(d.getTime() + h * HOUR), "addHours");
-var str = /* @__PURE__ */ __name((v) => String(v ?? "").trim(), "str");
-function requireLength(value, label, min, max) {
-  const v = str(value);
-  if (v.length < min) throw new UserError(`${label} is too short.`);
-  if (v.length > max) throw new UserError(`${label} is too long (max ${max} characters).`);
-  return v;
-}
-__name(requireLength, "requireLength");
-function normalisePhone(input) {
-  const digits = str(input).replace(/[^\d+]/g, "");
-  const m = digits.match(/^(?:\+?234|0)([789][01]\d{8})$/);
-  if (m) return "+234" + m[1];
-  throw new UserError("Enter a valid Nigerian phone number, e.g. 0803 123 4567.");
-}
-__name(normalisePhone, "normalisePhone");
-function validEmail(input) {
-  const email = str(input).toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) throw new UserError("Enter a valid email address.");
-  return email;
-}
-__name(validEmail, "validEmail");
-var getSeller = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM sellers WHERE id = ?", id), "getSeller");
-var getDeal = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM deals WHERE id = ?", id), "getDeal");
-var getOrder = /* @__PURE__ */ __name((ctx, id) => first(ctx.env, "SELECT * FROM orders WHERE id = ?", id), "getOrder");
-var trackUrl = /* @__PURE__ */ __name((ctx, order) => `${ctx.config.siteUrl}/track.html?t=${order.buyer_token}`, "trackUrl");
-var payUrl = /* @__PURE__ */ __name((ctx, deal) => `${ctx.config.siteUrl}/pay.html?d=${deal.token}`, "payUrl");
-var CASE_UPDATE_HOURS = 24;
-var caseRef = /* @__PURE__ */ __name((order, dispute) => `${order.ref}-C${dispute.id}`, "caseRef");
-var caseUpdateBy = /* @__PURE__ */ __name((dispute) => new Date(new Date(dispute.created_at).getTime() + CASE_UPDATE_HOURS * 36e5), "caseUpdateBy");
-var detailText = /* @__PURE__ */ __name((d) => d == null ? null : typeof d === "string" ? d : JSON.stringify(d), "detailText");
-var eventStmt = /* @__PURE__ */ __name((ctx, orderId, actor, type, detail = null) => insertStmt(ctx.env, "order_events", { order_id: orderId, actor, type, detail: detailText(detail), created_at: iso(ctx.now()) }), "eventStmt");
-var logEvent = /* @__PURE__ */ __name((ctx, ...args) => eventStmt(ctx, ...args).run(), "logEvent");
-var ledgerRow = /* @__PURE__ */ __name((ctx, orderId, kind, amount, counterparty, status, notBefore = null) => ({
-  order_id: orderId,
-  kind,
-  amount,
-  counterparty,
-  status,
-  not_before: notBefore,
-  created_at: iso(ctx.now())
-}), "ledgerRow");
-function settlesAt(ctx, paidAt) {
-  const t = new Date(new Date(paidAt).getTime() + ctx.config.settlementHours * HOUR);
-  const day = new Date(t.getTime() + HOUR).getUTCDay();
-  if (day === 6) return new Date(t.getTime() + 48 * HOUR);
-  if (day === 0) return new Date(t.getTime() + 24 * HOUR);
-  return t;
-}
-__name(settlesAt, "settlesAt");
-async function transition(ctx, orderId, from, fields, followUps = () => []) {
-  const nonce = randomToken(12);
-  const set = { ...fields, last_transition: nonce };
-  const keys = Object.keys(set);
-  const cas = stmt(
-    ctx.env,
-    `UPDATE orders SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ? AND status IN (${from.map(() => "?").join(", ")})`,
-    ...keys.map((k) => set[k]),
-    orderId,
-    ...from
-  );
-  const guard = `EXISTS (SELECT 1 FROM orders WHERE id = ${Number(orderId)} AND last_transition = '${nonce}')`;
-  const helpers = {
-    guard,
-    insert: /* @__PURE__ */ __name((table, row) => guardedInsert(ctx.env, table, row, guard), "insert"),
-    event: /* @__PURE__ */ __name((actor, type, detail) => guardedInsert(ctx.env, "order_events", { order_id: orderId, actor, type, detail: detailText(detail), created_at: iso(ctx.now()) }, guard), "event"),
-    sql: /* @__PURE__ */ __name((sql, ...args) => stmt(ctx.env, `${sql} AND ${guard}`, ...args), "sql")
-  };
-  const results = await ctx.env.DB.batch([cas, ...followUps(helpers)]);
-  return results[0].meta.changes === 1;
-}
-__name(transition, "transition");
-function fmtDate(d) {
-  return new Date(d).toLocaleString("en-NG", {
-    timeZone: "Africa/Lagos",
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit"
-  });
-}
-__name(fmtDate, "fmtDate");
-
 // src/core/sellers.js
 async function sendCode(ctx, phone, email = null, { deliver: deliver2 = true } = {}) {
   const { otp } = ctx.config;
@@ -1464,7 +1589,8 @@ async function signup(ctx, input) {
   if (existing) {
     await update(ctx.env, "sellers", existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing, ...terms });
   } else {
-    await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
+    const id = await insert(ctx.env, "sellers", { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
+    await recordReferral(ctx, id, input.ref);
   }
   return { phone, ...await sendCode(ctx, phone, email) };
 }
@@ -1926,18 +2052,27 @@ __name(priceDeal, "priceDeal");
 async function previewDeal(ctx, input, seller) {
   if (seller.suspended_at) throw new UserError("Your account is suspended, so you can\u2019t create links. Contact TrustGap support.");
   const p = pricingInput(ctx, input, seller);
-  const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
-  const { q } = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const revising = input.replaces ? Number(input.replaces) : null;
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, revising);
+  const free = promo ? null : await useFreeDeal(ctx, seller, input, revising);
+  const { q } = await priceDeal(ctx, p, { promo: Boolean(promo || free) });
+  const saving = platformFee(p.itemPrice, ctx.config.fee);
   return {
     pickup_state: p.pickupState,
     delivery_state: p.deliveryState,
     price: q,
     dispute_fee: disputeFee(p.itemPrice, ctx.config.disputeFee),
     eta: deliveryEstimate(ctx.config, ctx.now(), { pickup_state: p.pickupState, delivery_state: p.deliveryState, delivery_days: Number(input.delivery_days) || 2 }),
-    promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) }
+    promo: promo ? { code: promo, saving } : free ? { code: FREE_DEAL_CODE, saving, free_deal: true, left: await freeDealsLeft(ctx, seller.id) } : null,
+    free_deals: await freeDealsLeft(ctx, seller.id)
   };
 }
 __name(previewDeal, "previewDeal");
+async function useFreeDeal(ctx, seller, input, revising) {
+  if (input.use_free_deal === "no" || input.use_free_deal === false) return null;
+  return availableFreeDeal(ctx, seller, revising);
+}
+__name(useFreeDeal, "useFreeDeal");
 async function createDeal(ctx, seller, input) {
   if (seller.suspended_at) throw new UserError("Your account is suspended. Contact support.");
   if (!seller.payout_verified_at) throw new UserError("Add and verify your payout bank account before creating links.");
@@ -1969,7 +2104,8 @@ async function createDeal(ctx, seller, input) {
   if (!photoCount) throw new UserError("Add at least one photo of the item, so the buyer can see what they are paying for.");
   const p = pricingInput(ctx, input, seller);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
-  const { q, courierCost } = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const free = promo ? null : await useFreeDeal(ctx, seller, input, replaced?.id ?? null);
+  const { q, courierCost } = await priceDeal(ctx, p, { promo: Boolean(promo || free) });
   const dFee = disputeFee(p.itemPrice, ctx.config.disputeFee);
   if (input.condition_confirmed !== true && input.condition_confirmed !== "yes") {
     throw new UserError("Confirm that the item is in good condition, exactly as agreed with the buyer.");
@@ -2015,14 +2151,16 @@ async function createDeal(ctx, seller, input) {
       delivery_days: deliveryDays,
       inspection_hours: ctx.config.inspectionHours,
       photo_count: photoCount,
-      promo_code: promo,
+      promo_code: promo || (free ? FREE_DEAL_CODE : null),
+      fee_waived: promo || free ? platformFee(p.itemPrice, ctx.config.fee) : 0,
       condition_confirmed_at: iso(now),
       condition_pledge: fillConsent("seller", q.deliveryFee, dFee),
       status: "open",
       expires_at: iso(addHours(now, expiresHours)),
       created_at: iso(now)
     }),
-    updateStmt(ctx.env, "sellers", seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState })
+    updateStmt(ctx.env, "sellers", seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState }),
+    ...free ? [stmt(ctx.env, "UPDATE free_deals SET used_on_deal_id = (SELECT id FROM deals WHERE token = ?) WHERE id = ?", token, free.id)] : []
   );
   const newDealId = "(SELECT id FROM deals WHERE token = ?)";
   photos.forEach((ph, i) => statements.push(stmt(
@@ -2086,7 +2224,11 @@ async function sellerHistoryFor(ctx, seller) {
     paid_orders: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND paid_at IS NOT NULL AND status != 'duplicate_refunded'"),
     completed: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'completed'"),
     disputes: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ?"),
-    decided_against: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ? AND d.fault = 'seller'")
+    decided_against: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ? AND d.fault = 'seller'"),
+    // A TrustGap Ambassador: brought in enough sellers who completed protected deals.
+    ambassador: ctx.config.referrals.on && await n("SELECT COUNT(*) n FROM referrals WHERE referrer_id = ? AND status = 'rewarded'") >= ctx.config.referrals.ambassadorAt,
+    // Their invite code, so buyers who also sell can join with it (first deals free).
+    invite_code: ctx.config.referrals.on ? await refCode(ctx, seller) : null
   };
 }
 __name(sellerHistoryFor, "sellerHistoryFor");
@@ -2113,6 +2255,7 @@ async function publicDealView(ctx, deal) {
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
     promo_applied: Boolean(deal.promo_code),
+    promo_kind: deal.promo_code === FREE_DEAL_CODE ? "free_deal" : deal.promo_code ? "early_access" : null,
     price: {
       item: q.itemPrice,
       delivery: q.buyerDelivery,
@@ -3201,6 +3344,11 @@ __name(settleDispute, "settleDispute");
 async function releaseToSeller(ctx, order, reason) {
   if (order.status !== "delivered") throw new UserError("Payment can only be released after delivery.");
   const seller = await getSeller(ctx, order.seller_id);
+  const deal = await getDeal(ctx, order.deal_id);
+  const waived = [
+    ...deal.fee_waived > 0 ? [[deal.fee_waived, deal.promo_code === FREE_DEAL_CODE ? "referral" : "promo"]] : [],
+    ...order.promo_discount > 0 ? [[order.promo_discount, "promo"]] : []
+  ];
   const recovered = Math.min(seller.amount_owed, order.seller_payout);
   const payout = order.seller_payout - recovered;
   const settles = settlesAt(ctx, order.paid_at);
@@ -3212,9 +3360,15 @@ async function releaseToSeller(ctx, order, reason) {
     h.insert("ledger", ledgerRow(ctx, order.id, "platform_fee", order.platform_fee, "trustgap", "success")),
     h.insert("ledger", ledgerRow(ctx, order.id, "processing_fee", order.processing_fee, "flutterwave", "success")),
     ...payout > 0 ? [h.insert("ledger", ledgerRow(ctx, order.id, "seller_payout", payout, "seller", "pending", iso(settles)))] : [],
+    ...waived.map(([amount, why]) => h.insert("ledger", ledgerRow(ctx, order.id, "fee_waived", amount, why, "info"))),
     h.event(reason === "buyer_confirmed" ? "buyer" : "system", reason)
   ]);
   if (!won) return false;
+  try {
+    await rewardReferral(ctx, order);
+  } catch (err) {
+    console.error("referral reward failed", order.ref, err.message);
+  }
   await sendPendingTransfers(ctx, order.id);
   await ctx.notify.send({
     orderId: order.id,
@@ -3374,6 +3528,10 @@ function publicRoutes(r) {
     if (ctx.env.TEST_MODE !== "false" || await adminRequest(ctx, request)) return h;
     return { ok: h.ok, ...h.ok ? {} : { message: "Something needs attention. Log in to the admin pages and open Orders to see what." } };
   });
+  r.get("/api/referral/:code", async ({ ctx, params }) => {
+    const s = ctx.config.referrals.on ? await findReferrer(ctx, params.code) : null;
+    return s ? { valid: true, business_name: s.business_name, welcome_deals: ctx.config.referrals.welcomeDeals } : { valid: false };
+  });
   r.get("/api/config", async ({ ctx }) => ({
     test_mode: ctx.config.testMode,
     // Which test bank accounts to suggest, only while testing (no provider names otherwise).
@@ -3488,6 +3646,8 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         eta: deliveryEstimate(ctx.config, ctx.now(), deal, o),
         photos: await dealPhotos(ctx, deal),
         seller_name: seller.business_name,
+        // So a happy buyer who also sells can join with this seller's invite (their first deals free).
+        seller_invite: ctx.config.referrals.on && o.status === "completed" ? await refCode(ctx, seller) : null,
         paid_at: o.paid_at,
         seller_phone: seller.phone,
         delivery_state: o.delivery_state,
@@ -3630,7 +3790,10 @@ function sellerRoutes(r) {
     await logout(ctx, await authenticate(ctx, request));
     return { ok: true };
   });
-  r.get("/api/seller/me", async ({ ctx, request }) => ({ seller: sellerView((await requireSeller(ctx, request)).seller) }));
+  r.get("/api/seller/me", async ({ ctx, request }) => {
+    const { seller } = await requireSeller(ctx, request);
+    return { seller: { ...sellerView(seller), free_deals: await freeDealsLeft(ctx, seller.id) } };
+  });
   r.post("/api/seller/payout", async ({ ctx, request, body }) => ({
     seller: await setPayoutAccount(ctx, (await requireSeller(ctx, request)).seller, body)
   }));
@@ -3659,7 +3822,8 @@ function sellerRoutes(r) {
         completed: orders.filter((o) => o.status === "completed").length
       },
       orders,
-      deals
+      deals,
+      referral: await referralView(ctx, seller)
     };
   });
   r.post("/api/seller/debt/pay", async ({ ctx, request }) => startDebtPayment(ctx, (await requireSeller(ctx, request)).seller));
@@ -4220,6 +4384,16 @@ function riderRoutes(r) {
   });
 }
 __name(riderRoutes, "riderRoutes");
+var PROBLEM_STATUSES = "('failed', 'held', 'needs_attention', 'owed')";
+var LEDGER_SEGMENTS = {
+  in: { label: "Money in", note: "Buyer payments received", kinds: ["collected"] },
+  out: { label: "Paid out", note: "Seller payouts and buyer refunds", kinds: ["seller_payout", "buyer_refund"] },
+  revenue: { label: "TrustGap revenue", note: "TrustGap fees, delivery margin, dispute fees", kinds: ["platform_fee", "delivery_margin", "dispute_fee"] },
+  costs: { label: "Costs", note: "Courier (delivery and returns) and payment processing", kinds: ["delivery_cost", "return_cost", "processing_fee"] },
+  giveaways: { label: "Giveaways", note: "TrustGap fees waived: free deals from referrals and early-access codes", kinds: ["fee_waived"] },
+  other: { label: "Other", note: "Kept from dispute decisions, and seller debts recovered", kinds: ["platform_retained", "debt_recovered"] },
+  problems: { label: "Needs attention", note: "Failed, held or owed entries", kinds: [] }
+};
 function adminRoutes(r) {
   r.post("/api/admin/login", ({ ctx, body }) => adminLogin(ctx, body));
   const admin = /* @__PURE__ */ __name((handler, opts = {}) => async (args) => handler({ ...args, who: await requireAccess(args.ctx, args.request, opts) }), "admin");
@@ -4329,12 +4503,19 @@ function adminRoutes(r) {
     sellers: await Promise.all((await all(
       ctx.env,
       `SELECT s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at, s.payout_verified_at, s.payout_bank_name,
-              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.deal_limit, s.created_at,
+              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.deal_limit, s.created_at, s.ref_code,
+              (SELECT business_name FROM sellers x WHERE x.id = s.referred_by) AS referred_by_name,
+              (SELECT COUNT(*) FROM referrals r WHERE r.referrer_id = s.id) AS invited,
+              (SELECT COUNT(*) FROM referrals r WHERE r.referrer_id = s.id AND r.status = 'rewarded') AS invites_active,
+              (SELECT COUNT(*) FROM free_deals f LEFT JOIN deals d ON d.id = f.used_on_deal_id WHERE f.seller_id = s.id AND f.expires_at > ?
+                 AND (f.used_on_deal_id IS NULL OR d.status IN ('expired', 'cancelled', 'replaced'))) AS free_deals,
               (SELECT COALESCE(SUM(l.amount), 0) FROM ledger l JOIN orders o ON o.id = l.order_id
                 WHERE o.seller_id = s.id AND l.kind = 'seller_payout' AND l.status = 'held') AS held
        FROM sellers s WHERE ${dateRange(url, "s.created_at").where} ORDER BY ${dateRange(url, "s.created_at").order} LIMIT 500`,
+      iso(ctx.now()),
       ...dateRange(url, "s.created_at").args
-    )).map(async (s) => ({ ...s, history: await sellerHistory(ctx, s.id) })))
+    )).map(async (s) => ({ ...s, history: await sellerHistory(ctx, s.id) }))),
+    top_referrers: await topReferrers(ctx)
   }), { cr: true }));
   r.post("/api/admin/sellers/:id", admin(async ({ ctx, params, body, who }) => {
     const id = Number(params.id);
@@ -4364,11 +4545,21 @@ function adminRoutes(r) {
   }, { cr: true }));
   r.get("/api/admin/ledger", admin(async ({ ctx, url }) => {
     const range = dateRange(url, "l.created_at");
+    const seg = LEDGER_SEGMENTS[url.searchParams.get("segment")] ? url.searchParams.get("segment") : "all";
+    const segWhere = seg === "all" ? "1 = 1" : seg === "problems" ? `l.status IN ${PROBLEM_STATUSES}` : `l.kind IN (${LEDGER_SEGMENTS[seg].kinds.map((k) => `'${k}'`).join(", ")})`;
+    const counted = "l.status NOT IN ('failed', 'cancelled')";
+    const segmentTotals = await Promise.all(Object.entries(LEDGER_SEGMENTS).map(async ([key, s]) => {
+      const where = key === "problems" ? `l.status IN ${PROBLEM_STATUSES}` : `l.kind IN (${s.kinds.map((k) => `'${k}'`).join(", ")}) AND ${counted}`;
+      const r2 = await first(ctx.env, `SELECT COALESCE(SUM(l.amount), 0) total, COUNT(*) n FROM ledger l WHERE ${where} AND ${range.where}`, ...range.args);
+      return { key, label: s.label, note: s.note, total: r2.total, count: r2.n };
+    }));
     return {
       held: (await first(ctx.env, "SELECT COALESCE(SUM(amount),0) t FROM orders WHERE status IN ('paid','shipping','delivered','disputed')")).t,
-      // Totals for the chosen dates (all time when no dates are chosen).
-      totals: await all(ctx.env, `SELECT l.kind, l.status, SUM(l.amount) total FROM ledger l WHERE ${range.where} GROUP BY l.kind, l.status ORDER BY l.kind`, ...range.args),
-      entries: await all(ctx.env, `SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id WHERE ${range.where} ORDER BY ${range.order} LIMIT 1000`, ...range.args),
+      segment: seg,
+      segments: segmentTotals,
+      // Totals for the chosen dates (all time when no dates are chosen), in this segment.
+      totals: await all(ctx.env, `SELECT l.kind, l.status, SUM(l.amount) total FROM ledger l WHERE ${segWhere} AND ${range.where} GROUP BY l.kind, l.status ORDER BY l.kind`, ...range.args),
+      entries: await all(ctx.env, `SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id WHERE ${segWhere} AND ${range.where} ORDER BY ${range.order} LIMIT 1000`, ...range.args),
       sheets_synced_at: (await first(ctx.env, "SELECT value FROM meta WHERE key = 'sheets_synced_at'"))?.value || null
     };
   }));
@@ -4980,6 +5171,8 @@ var MANUAL = {
 <dd>No. Tubalcain Ads Enterprise is the registered business that runs TrustGap; Flutterwave shows the registered name. Only pay through the TrustGap link the seller sent.</dd>
 <dt>\u201CI\u2019ve paid. Where is my item?\u201D</dt>
 <dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
+<dt>\u201CHow do free deals / invites work?\u201D</dt>
+<dd>Each seller has an invite link on their dashboard. A seller who joins with it gets their first 2 deals with no TrustGap fee. The inviter gets a free deal when that seller completes their first protected deal (item \u20A610,000 or more, no dispute). Free deals are used on the next link automatically (they can untick it), remove only the TrustGap fee, and expire after 90 days. Rewards are blocked for the same person (same bank account, identity or phone). After 5 successful invites a seller becomes a TrustGap Ambassador, and buyers see the badge.</dd>
 <dt>\u201CWhen will my item arrive?\u201D</dt>
 <dd>The estimated delivery date is on their tracking page (and in their SMS). It comes from Fez\u2019s timelines: within the same state 1\u20132 days after pickup (up to 3 for remote areas), to another state 3\u20137 working days. It\u2019s an estimate, not a promise; during the festive season deliveries can take a little longer. If it\u2019s past the latest date, check the order with Fez and tell the admin.</dd>
 <dt>\u201CI didn\u2019t get / lost the Fez delivery code.\u201D</dt>

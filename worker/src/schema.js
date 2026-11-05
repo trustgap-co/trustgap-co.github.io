@@ -83,5 +83,9 @@ export const MIGRATIONS = [
   {
     "name": "0021_pickup_time.sql",
     "sql": "-- When the courier collected the parcel, so the delivery estimate can count from the real pickup.\nALTER TABLE orders ADD COLUMN picked_up_at TEXT;\n"
+  },
+  {
+    "name": "0022_referrals.sql",
+    "sql": "-- Referrals: each seller's invite code, who invited whom, and free deals (no TrustGap fee) earned.\nALTER TABLE sellers ADD COLUMN ref_code TEXT;\nCREATE UNIQUE INDEX IF NOT EXISTS sellers_ref_code ON sellers(ref_code);\nALTER TABLE sellers ADD COLUMN referred_by INTEGER;\nCREATE TABLE IF NOT EXISTS referrals (\n  id INTEGER PRIMARY KEY,\n  referrer_id INTEGER NOT NULL REFERENCES sellers(id),\n  referred_id INTEGER NOT NULL UNIQUE REFERENCES sellers(id),\n  status TEXT NOT NULL DEFAULT 'pending', -- pending, rewarded, blocked\n  note TEXT,\n  order_id INTEGER,\n  created_at TEXT NOT NULL,\n  rewarded_at TEXT\n);\nCREATE INDEX IF NOT EXISTS referrals_referrer ON referrals(referrer_id, status);\nCREATE TABLE IF NOT EXISTS free_deals (\n  id INTEGER PRIMARY KEY,\n  seller_id INTEGER NOT NULL REFERENCES sellers(id),\n  source TEXT NOT NULL, -- welcome (joined with an invite) or referral (their invite worked)\n  referral_id INTEGER,\n  used_on_deal_id INTEGER,\n  expires_at TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS free_deals_seller ON free_deals(seller_id, expires_at);\n-- The TrustGap fee a link gave away (early-access code or free deal), recorded when the order completes.\nALTER TABLE deals ADD COLUMN fee_waived INTEGER NOT NULL DEFAULT 0;\n"
   }
 ];

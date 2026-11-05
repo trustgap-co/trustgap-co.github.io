@@ -1,3 +1,4 @@
+import { findReferrer, refCode } from '../core/referrals.js';
 import { first, all } from '../lib/db.js';
 import { ensureSchema } from '../lib/migrate.js';
 import { redirect, html, UserError, notFound } from '../lib/http.js';
@@ -58,6 +59,12 @@ export function publicRoutes(r) {
     // Details in test mode (to help setup) or for the logged-in admin; otherwise only ok or not.
     if (ctx.env.TEST_MODE !== 'false' || (await adminRequest(ctx, request))) return h;
     return { ok: h.ok, ...(h.ok ? {} : { message: 'Something needs attention. Log in to the admin pages and open Orders to see what.' }) };
+  });
+
+  // Sign-up with an invite link: whose invite it is, and what the new seller gets.
+  r.get('/api/referral/:code', async ({ ctx, params }) => {
+    const s = ctx.config.referrals.on ? await findReferrer(ctx, params.code) : null;
+    return s ? { valid: true, business_name: s.business_name, welcome_deals: ctx.config.referrals.welcomeDeals } : { valid: false };
   });
 
   r.get('/api/config', async ({ ctx }) => ({
@@ -201,6 +208,8 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         eta: deliveryEstimate(ctx.config, ctx.now(), deal, o),
         photos: await dealPhotos(ctx, deal),
         seller_name: seller.business_name,
+        // So a happy buyer who also sells can join with this seller's invite (their first deals free).
+        seller_invite: ctx.config.referrals.on && o.status === 'completed' ? await refCode(ctx, seller) : null,
         paid_at: o.paid_at,
         seller_phone: seller.phone,
         delivery_state: o.delivery_state,

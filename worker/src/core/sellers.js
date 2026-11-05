@@ -4,6 +4,7 @@ import { namesMatch } from '../lib/names.js';
 import { hit } from '../lib/limits.js';
 import { TOS_VERSION, acceptedTerms } from '../lib/terms.js';
 import { UserError, iso, str, requireLength, normalisePhone, validEmail, getSeller } from './common.js';
+import { recordReferral } from './referrals.js';
 
 // ---------------------------------------------------------------- one-time codes (login by SMS)
 
@@ -55,7 +56,9 @@ export async function signup(ctx, input) {
   if (existing) {
     await update(ctx.env, 'sellers', existing.id, { full_name: fullName, business_name: businessName, email, marketing_opt_in_at: marketing, ...terms });
   } else {
-    await insert(ctx.env, 'sellers', { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
+    const id = await insert(ctx.env, 'sellers', { full_name: fullName, business_name: businessName, phone, email, marketing_opt_in_at: marketing, ...terms, created_at: iso(ctx.now()) });
+    // Joined with someone's invite link: remember it and give the welcome free deals.
+    await recordReferral(ctx, id, input.ref);
   }
   return { phone, ...(await sendCode(ctx, phone, email)) };
 }

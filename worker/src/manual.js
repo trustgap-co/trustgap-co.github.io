@@ -244,6 +244,8 @@ export const MANUAL = {
 <dd>No. Tubalcain Ads Enterprise is the registered business that runs TrustGap; Flutterwave shows the registered name. Only pay through the TrustGap link the seller sent.</dd>
 <dt>“I’ve paid. Where is my item?”</dt>
 <dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
+<dt>“How do free deals / invites work?”</dt>
+<dd>Each seller has an invite link on their dashboard. A seller who joins with it gets their first 2 deals with no TrustGap fee. The inviter gets a free deal when that seller completes their first protected deal (item ₦10,000 or more, no dispute). Free deals are used on the next link automatically (they can untick it), remove only the TrustGap fee, and expire after 90 days. Rewards are blocked for the same person (same bank account, identity or phone). After 5 successful invites a seller becomes a TrustGap Ambassador, and buyers see the badge.</dd>
 <dt>“When will my item arrive?”</dt>
 <dd>The estimated delivery date is on their tracking page (and in their SMS). It comes from Fez’s timelines: within the same state 1–2 days after pickup (up to 3 for remote areas), to another state 3–7 working days. It’s an estimate, not a promise; during the festive season deliveries can take a little longer. If it’s past the latest date, check the order with Fez and tell the admin.</dd>
 <dt>“I didn’t get / lost the Fez delivery code.”</dt>

@@ -1,6 +1,7 @@
 import { first, all, insertStmt, updateStmt, stmt } from '../lib/db.js';
 import { parsePhotos, photoUrls } from '../lib/photos.js';
 import { checkSellerPromo } from './promo.js';
+import { availableFreeDeal, freeDealsLeft, refCode, FREE_DEAL_CODE } from './referrals.js';
 import { fillConsent } from '../lib/terms.js';
 import { randomToken } from '../lib/crypto.js';
 import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira, deliveryPrice, disputeFee } from '../lib/money.js';
@@ -75,16 +76,27 @@ async function priceDeal(ctx, p, { promo = false } = {}) {
 export async function previewDeal(ctx, input, seller) {
   if (seller.suspended_at) throw new UserError('Your account is suspended, so you can’t create links. Contact TrustGap support.');
   const p = pricingInput(ctx, input, seller);
-  const promo = await checkSellerPromo(ctx, seller, input.promo_code, input.replaces ? Number(input.replaces) : null);
-  const { q } = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const revising = input.replaces ? Number(input.replaces) : null;
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, revising);
+  const free = promo ? null : await useFreeDeal(ctx, seller, input, revising);
+  const { q } = await priceDeal(ctx, p, { promo: Boolean(promo || free) });
+  const saving = platformFee(p.itemPrice, ctx.config.fee);
   return {
     pickup_state: p.pickupState,
     delivery_state: p.deliveryState,
     price: q,
     dispute_fee: disputeFee(p.itemPrice, ctx.config.disputeFee),
     eta: deliveryEstimate(ctx.config, ctx.now(), { pickup_state: p.pickupState, delivery_state: p.deliveryState, delivery_days: Number(input.delivery_days) || 2 }),
-    promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) },
+    promo: promo ? { code: promo, saving } : free ? { code: FREE_DEAL_CODE, saving, free_deal: true, left: await freeDealsLeft(ctx, seller.id) } : null,
+    free_deals: await freeDealsLeft(ctx, seller.id),
   };
+}
+
+// A free deal (from referrals) is used on the next link automatically, unless the seller unticks
+// "Use a free deal" (use_free_deal = 'no') or types an early-access code instead.
+async function useFreeDeal(ctx, seller, input, revising) {
+  if (input.use_free_deal === 'no' || input.use_free_deal === false) return null;
+  return availableFreeDeal(ctx, seller, revising);
 }
 
 export async function createDeal(ctx, seller, input) {
@@ -120,7 +132,8 @@ export async function createDeal(ctx, seller, input) {
   if (!photoCount) throw new UserError('Add at least one photo of the item, so the buyer can see what they are paying for.');
   const p = pricingInput(ctx, input, seller);
   const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
-  const { q, courierCost } = await priceDeal(ctx, p, { promo: Boolean(promo) });
+  const free = promo ? null : await useFreeDeal(ctx, seller, input, replaced?.id ?? null);
+  const { q, courierCost } = await priceDeal(ctx, p, { promo: Boolean(promo || free) });
   const dFee = disputeFee(p.itemPrice, ctx.config.disputeFee);
   // The seller confirms the item's condition in a pop-up, seeing what a false description costs them.
   if (input.condition_confirmed !== true && input.condition_confirmed !== 'yes') {
@@ -166,7 +179,8 @@ export async function createDeal(ctx, seller, input) {
       delivery_days: deliveryDays,
       inspection_hours: ctx.config.inspectionHours,
       photo_count: photoCount,
-      promo_code: promo,
+      promo_code: promo || (free ? FREE_DEAL_CODE : null),
+      fee_waived: promo || free ? platformFee(p.itemPrice, ctx.config.fee) : 0,
       condition_confirmed_at: iso(now),
       condition_pledge: fillConsent('seller', q.deliveryFee, dFee),
       status: 'open',
@@ -174,6 +188,8 @@ export async function createDeal(ctx, seller, input) {
       created_at: iso(now),
     }),
     updateStmt(ctx.env, 'sellers', seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState }),
+    // The free deal now belongs to this link (it comes back if the link expires or is cancelled unpaid).
+    ...(free ? [stmt(ctx.env, 'UPDATE free_deals SET used_on_deal_id = (SELECT id FROM deals WHERE token = ?) WHERE id = ?', token, free.id)] : []),
   );
   // Same batch as the deal, so a link never exists without its photos.
   const newDealId = '(SELECT id FROM deals WHERE token = ?)';
@@ -235,6 +251,10 @@ export async function sellerHistoryFor(ctx, seller) {
     completed: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'completed'"),
     disputes: await n('SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ?'),
     decided_against: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ? AND d.fault = 'seller'"),
+    // A TrustGap Ambassador: brought in enough sellers who completed protected deals.
+    ambassador: ctx.config.referrals.on && (await n("SELECT COUNT(*) n FROM referrals WHERE referrer_id = ? AND status = 'rewarded'")) >= ctx.config.referrals.ambassadorAt,
+    // Their invite code, so buyers who also sell can join with it (first deals free).
+    invite_code: ctx.config.referrals.on ? await refCode(ctx, seller) : null,
   };
 }
 
@@ -263,6 +283,7 @@ export async function publicDealView(ctx, deal) {
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
     promo_applied: Boolean(deal.promo_code),
+    promo_kind: deal.promo_code === FREE_DEAL_CODE ? 'free_deal' : deal.promo_code ? 'early_access' : null,
     price: {
       item: q.itemPrice,
       delivery: q.buyerDelivery,

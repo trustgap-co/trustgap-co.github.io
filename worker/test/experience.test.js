@@ -10,7 +10,8 @@ describe('customer experience', () => {
     const seller = await onboardSeller(t);
     const deal = await createDeal(t, seller);
     let h = (await t.get(`/api/deals/${deal.token}`)).data.deal.seller.history;
-    assert.deepEqual({ ...h, joined_at: undefined }, { joined_at: undefined, links_created: 1, paid_orders: 0, completed: 0, disputes: 0, decided_against: 0 });
+    assert.deepEqual({ ...h, joined_at: undefined, invite_code: undefined }, { joined_at: undefined, invite_code: undefined, links_created: 1, paid_orders: 0, completed: 0, disputes: 0, decided_against: 0, ambassador: false });
+    assert.match(h.invite_code, /^[A-Z]{1,5}\d{3}$/);
     assert.ok(h.joined_at);
 
     // A completed order and a dispute decided against the seller both count.

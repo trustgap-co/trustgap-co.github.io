@@ -136,6 +136,17 @@ shown to admin on the order page and copied to Google Sheets.
    calculator, the deal link, the tracking and order pages and the admin order page, and in the payment
    and picked-up SMS. It narrows as the order moves (quote, paid, booked, picked up) and notes the busy
    season until `ETA_BUSY_UNTIL`.
+22. **Referrals** (`core/referrals.js`): every seller has an invite code and link (dashboard card with
+   copy and WhatsApp share). New sellers who join with it get 2 free deals (no TrustGap fee); the
+   inviter gets 1 free deal when the new seller's first order (item ₦10,000+) completes with no
+   dispute; blocked for the same bank account, identity or phone, and capped at 10 a month. Free deals
+   apply to the next link automatically (can be unticked) and expire after 90 days. 5 successful
+   invites earn a TrustGap Ambassador badge shown to buyers. Buyers get a share card after a completed
+   order (WhatsApp message and a status picture), with a link to join with the seller's invite.
+   Admin → Sellers shows top referrers and each seller's referrals. Waived fees are recorded in the
+   ledger (`fee_waived`, status `info`).
+23. **Ledger segments** (Admin → Ledger): Money in, Paid out, TrustGap revenue, Costs, Giveaways,
+   Other and Needs attention, each with its total for the chosen dates; tap one to list only its entries.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

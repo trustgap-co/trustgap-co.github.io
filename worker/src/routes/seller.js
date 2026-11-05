@@ -1,3 +1,4 @@
+import { referralView, freeDealsLeft } from '../core/referrals.js';
 import { deliveryEstimate } from '../lib/eta.js';
 import { first, all, update } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
@@ -51,7 +52,10 @@ export function sellerRoutes(r) {
     return { ok: true };
   });
 
-  r.get('/api/seller/me', async ({ ctx, request }) => ({ seller: sellerView((await requireSeller(ctx, request)).seller) }));
+  r.get('/api/seller/me', async ({ ctx, request }) => {
+    const { seller } = await requireSeller(ctx, request);
+    return { seller: { ...sellerView(seller), free_deals: await freeDealsLeft(ctx, seller.id) } };
+  });
 
   r.post('/api/seller/payout', async ({ ctx, request, body }) => ({
     seller: await setPayoutAccount(ctx, (await requireSeller(ctx, request)).seller, body),
@@ -84,6 +88,7 @@ export function sellerRoutes(r) {
       },
       orders,
       deals,
+      referral: await referralView(ctx, seller),
     };
   });
 

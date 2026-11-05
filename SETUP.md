@@ -279,6 +279,10 @@ With Fez (`worker/src/providers/logistics/fez.js`, built from Fez's API docs):
 | Fez status changes | your webhook → `GET /orders/{orderNo}` | The webhook is only a hint; the status is re-read from Fez. Picked-Up / Dispatched update tracking, **Delivered** starts the buyer's inspection window, **Returned** opens a dispute. The same reply carries Fez's code (`delivery_OTP`), which TrustGap stores encrypted |
 | Every 5 minutes | `GET /orders/{orderNo}` | Catches up any missed webhook |
 
+**Referrals.** On by default. Optional Text variables: `REFERRALS` (`off` to switch it off),
+`REFERRAL_WELCOME_DEALS` (2), `REFERRAL_REWARD_DEALS` (1), `REFERRAL_MIN_ORDER_NAIRA` (10000, item
+price), `REFERRAL_MONTHLY_CAP` (10), `REFERRAL_CREDIT_DAYS` (90), `REFERRAL_AMBASSADOR_AT` (5).
+
 **Delivery estimates.** TrustGap shows buyers and sellers an estimated delivery date from Fez's
 published timelines. Change them if Fez does (Text variables): `ETA_SAME_STATE_HOURS` (default
 `24-48`), `ETA_SAME_STATE_REMOTE_HOURS` (`72`), `ETA_OTHER_STATE_WORKING_DAYS` (`3-7`), and

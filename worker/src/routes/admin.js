@@ -1,3 +1,4 @@
+import { topReferrers } from '../core/referrals.js';
 import { deliveryEstimate } from '../lib/eta.js';
 import { first, all, update, insert } from '../lib/db.js';
 import { nairaToKobo, formatNaira } from '../lib/money.js';
@@ -110,6 +111,18 @@ export function riderRoutes(r) {
     return { ok: true };
   });
 }
+
+// The ledger's segments (kinds of entry), for Admin → Ledger.
+const PROBLEM_STATUSES = "('failed', 'held', 'needs_attention', 'owed')";
+export const LEDGER_SEGMENTS = {
+  in: { label: 'Money in', note: 'Buyer payments received', kinds: ['collected'] },
+  out: { label: 'Paid out', note: 'Seller payouts and buyer refunds', kinds: ['seller_payout', 'buyer_refund'] },
+  revenue: { label: 'TrustGap revenue', note: 'TrustGap fees, delivery margin, dispute fees', kinds: ['platform_fee', 'delivery_margin', 'dispute_fee'] },
+  costs: { label: 'Costs', note: 'Courier (delivery and returns) and payment processing', kinds: ['delivery_cost', 'return_cost', 'processing_fee'] },
+  giveaways: { label: 'Giveaways', note: 'TrustGap fees waived: free deals from referrals and early-access codes', kinds: ['fee_waived'] },
+  other: { label: 'Other', note: 'Kept from dispute decisions, and seller debts recovered', kinds: ['platform_retained', 'debt_recovered'] },
+  problems: { label: 'Needs attention', note: 'Failed, held or owed entries', kinds: [] },
+};
 
 export function adminRoutes(r) {
   r.post('/api/admin/login', ({ ctx, body }) => adminLogin(ctx, body));
@@ -225,12 +238,18 @@ export function adminRoutes(r) {
     sellers: await Promise.all((await all(
       ctx.env,
       `SELECT s.id, s.business_name, s.full_name, s.phone, s.email, s.phone_verified_at, s.payout_verified_at, s.payout_bank_name,
-              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.deal_limit, s.created_at,
+              s.identity_verified_at, s.id_type, s.id_last4, s.amount_owed, s.suspended_at, s.suspend_reason, s.suspended_by, s.deal_limit, s.created_at, s.ref_code,
+              (SELECT business_name FROM sellers x WHERE x.id = s.referred_by) AS referred_by_name,
+              (SELECT COUNT(*) FROM referrals r WHERE r.referrer_id = s.id) AS invited,
+              (SELECT COUNT(*) FROM referrals r WHERE r.referrer_id = s.id AND r.status = 'rewarded') AS invites_active,
+              (SELECT COUNT(*) FROM free_deals f LEFT JOIN deals d ON d.id = f.used_on_deal_id WHERE f.seller_id = s.id AND f.expires_at > ?
+                 AND (f.used_on_deal_id IS NULL OR d.status IN ('expired', 'cancelled', 'replaced'))) AS free_deals,
               (SELECT COALESCE(SUM(l.amount), 0) FROM ledger l JOIN orders o ON o.id = l.order_id
                 WHERE o.seller_id = s.id AND l.kind = 'seller_payout' AND l.status = 'held') AS held
        FROM sellers s WHERE ${dateRange(url, 's.created_at').where} ORDER BY ${dateRange(url, 's.created_at').order} LIMIT 500`,
-      ...dateRange(url, 's.created_at').args,
+      iso(ctx.now()), ...dateRange(url, 's.created_at').args,
     )).map(async (s) => ({ ...s, history: await sellerHistory(ctx, s.id) }))),
+    top_referrers: await topReferrers(ctx),
   }), { cr: true }));
 
   r.post('/api/admin/sellers/:id', admin(async ({ ctx, params, body, who }) => {
@@ -263,13 +282,26 @@ export function adminRoutes(r) {
     return { messages: await all(ctx.env, `SELECT m.* FROM outbox m WHERE ${range.where} ORDER BY ${range.order} LIMIT 500`, ...range.args) };
   }, { cr: true }));
 
+  // The ledger, in segments (?segment=…): what came in, what went out, what TrustGap earned, what it
+  // cost, what it gave away, and entries that need attention. Each segment's total covers the chosen
+  // dates (all time when none), counting only money that actually moved or is due.
   r.get('/api/admin/ledger', admin(async ({ ctx, url }) => {
     const range = dateRange(url, 'l.created_at');
+    const seg = LEDGER_SEGMENTS[url.searchParams.get('segment')] ? url.searchParams.get('segment') : 'all';
+    const segWhere = seg === 'all' ? '1 = 1' : seg === 'problems' ? `l.status IN ${PROBLEM_STATUSES}` : `l.kind IN (${LEDGER_SEGMENTS[seg].kinds.map((k) => `'${k}'`).join(', ')})`;
+    const counted = "l.status NOT IN ('failed', 'cancelled')";
+    const segmentTotals = await Promise.all(Object.entries(LEDGER_SEGMENTS).map(async ([key, s]) => {
+      const where = key === 'problems' ? `l.status IN ${PROBLEM_STATUSES}` : `l.kind IN (${s.kinds.map((k) => `'${k}'`).join(', ')}) AND ${counted}`;
+      const r = await first(ctx.env, `SELECT COALESCE(SUM(l.amount), 0) total, COUNT(*) n FROM ledger l WHERE ${where} AND ${range.where}`, ...range.args);
+      return { key, label: s.label, note: s.note, total: r.total, count: r.n };
+    }));
     return {
     held: (await first(ctx.env, "SELECT COALESCE(SUM(amount),0) t FROM orders WHERE status IN ('paid','shipping','delivered','disputed')")).t,
-    // Totals for the chosen dates (all time when no dates are chosen).
-    totals: await all(ctx.env, `SELECT l.kind, l.status, SUM(l.amount) total FROM ledger l WHERE ${range.where} GROUP BY l.kind, l.status ORDER BY l.kind`, ...range.args),
-    entries: await all(ctx.env, `SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id WHERE ${range.where} ORDER BY ${range.order} LIMIT 1000`, ...range.args),
+    segment: seg,
+    segments: segmentTotals,
+    // Totals for the chosen dates (all time when no dates are chosen), in this segment.
+    totals: await all(ctx.env, `SELECT l.kind, l.status, SUM(l.amount) total FROM ledger l WHERE ${segWhere} AND ${range.where} GROUP BY l.kind, l.status ORDER BY l.kind`, ...range.args),
+    entries: await all(ctx.env, `SELECT l.*, o.ref FROM ledger l LEFT JOIN orders o ON o.id = l.order_id WHERE ${segWhere} AND ${range.where} ORDER BY ${range.order} LIMIT 1000`, ...range.args),
     sheets_synced_at: (await first(ctx.env, "SELECT value FROM meta WHERE key = 'sheets_synced_at'"))?.value || null,
     };
   }));

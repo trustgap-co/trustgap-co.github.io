@@ -31,6 +31,7 @@ import {
   caseRef,
   caseUpdateBy,
 } from './common.js';
+import { rewardReferral, FREE_DEAL_CODE } from './referrals.js';
 import { deliveryEstimate, estimateText } from '../lib/eta.js';
 import { alertNewDispute, alertDecision } from './alerts.js';
 
@@ -709,6 +710,13 @@ async function settleDispute(ctx, order, dispute, { buyerRefund, sellerPayout, s
 export async function releaseToSeller(ctx, order, reason) {
   if (order.status !== 'delivered') throw new UserError('Payment can only be released after delivery.');
   const seller = await getSeller(ctx, order.seller_id);
+  // What TrustGap gave away on this order (a free deal, the seller's or the buyer's early-access code),
+  // recorded for the ledger's giveaways (status 'info': no money moves).
+  const deal = await getDeal(ctx, order.deal_id);
+  const waived = [
+    ...(deal.fee_waived > 0 ? [[deal.fee_waived, deal.promo_code === FREE_DEAL_CODE ? 'referral' : 'promo']] : []),
+    ...(order.promo_discount > 0 ? [[order.promo_discount, 'promo']] : []),
+  ];
   const recovered = Math.min(seller.amount_owed, order.seller_payout);
   const payout = order.seller_payout - recovered;
   const settles = settlesAt(ctx, order.paid_at);
@@ -722,9 +730,12 @@ export async function releaseToSeller(ctx, order, reason) {
     h.insert('ledger', ledgerRow(ctx, order.id, 'platform_fee', order.platform_fee, 'trustgap', 'success')),
     h.insert('ledger', ledgerRow(ctx, order.id, 'processing_fee', order.processing_fee, 'flutterwave', 'success')),
     ...(payout > 0 ? [h.insert('ledger', ledgerRow(ctx, order.id, 'seller_payout', payout, 'seller', 'pending', iso(settles)))] : []),
+    ...waived.map(([amount, why]) => h.insert('ledger', ledgerRow(ctx, order.id, 'fee_waived', amount, why, 'info'))),
     h.event(reason === 'buyer_confirmed' ? 'buyer' : 'system', reason),
   ]);
   if (!won) return false;
+  // A completed, undisputed order may earn whoever invited this seller a free deal.
+  try { await rewardReferral(ctx, order); } catch (err) { console.error('referral reward failed', order.ref, err.message); }
   await sendPendingTransfers(ctx, order.id);
   await ctx.notify.send({
     orderId: order.id,
