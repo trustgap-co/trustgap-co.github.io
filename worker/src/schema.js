@@ -79,5 +79,9 @@ export const MIGRATIONS = [
   {
     "name": "0020_customer_relations_admin.sql",
     "sql": "-- The Customer Relations Admin: one team member with near-admin access (staff.role = 'cr_admin').\n-- At most one active at a time.\nCREATE UNIQUE INDEX IF NOT EXISTS staff_one_cr_admin ON staff(role) WHERE role = 'cr_admin' AND disabled_at IS NULL;\n"
+  },
+  {
+    "name": "0021_pickup_time.sql",
+    "sql": "-- When the courier collected the parcel, so the delivery estimate can count from the real pickup.\nALTER TABLE orders ADD COLUMN picked_up_at TEXT;\n"
   }
 ];

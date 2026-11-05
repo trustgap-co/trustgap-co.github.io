@@ -5,6 +5,7 @@ import { fillConsent } from '../lib/terms.js';
 import { randomToken } from '../lib/crypto.js';
 import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira, deliveryPrice, disputeFee } from '../lib/money.js';
 import { normaliseState } from '../lib/states.js';
+import { deliveryEstimate } from '../lib/eta.js';
 import { UserError, CONDITIONS, EXPIRY_OPTIONS, iso, addHours, str, requireLength, getDeal, getSeller } from './common.js';
 
 const PAYERS = ['buyer', 'seller', 'split'];
@@ -81,6 +82,7 @@ export async function previewDeal(ctx, input, seller) {
     delivery_state: p.deliveryState,
     price: q,
     dispute_fee: disputeFee(p.itemPrice, ctx.config.disputeFee),
+    eta: deliveryEstimate(ctx.config, ctx.now(), { pickup_state: p.pickupState, delivery_state: p.deliveryState, delivery_days: Number(input.delivery_days) || 2 }),
     promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) },
   };
 }
@@ -257,6 +259,7 @@ export async function publicDealView(ctx, deal) {
     delivery_days: deal.delivery_days,
     inspection_hours: deal.inspection_hours,
     dispute_fee: deal.dispute_fee,
+    eta: deliveryEstimate(ctx.config, ctx.now(), deal),
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
     promo_applied: Boolean(deal.promo_code),

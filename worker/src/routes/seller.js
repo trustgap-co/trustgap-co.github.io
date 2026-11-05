@@ -1,3 +1,4 @@
+import { deliveryEstimate } from '../lib/eta.js';
 import { first, all, update } from '../lib/db.js';
 import { UserError, notFound } from '../lib/http.js';
 import { getSeller, payUrl, HELD_STATUSES, iso, caseRef, caseUpdateBy } from '../core/common.js';
@@ -150,6 +151,7 @@ export function sellerRoutes(r) {
         paid_at: o.paid_at,
         dispatched: Boolean(o.dispatched_at),
         inspection_hours: d.inspection_hours,
+        eta: deliveryEstimate(ctx.config, ctx.now(), d, o),
       },
       dispute,
       // Includes the return PIN while the item is on its way back, to give the rider at hand-back.

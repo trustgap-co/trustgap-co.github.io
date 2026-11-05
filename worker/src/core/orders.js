@@ -31,6 +31,7 @@ import {
   caseRef,
   caseUpdateBy,
 } from './common.js';
+import { deliveryEstimate, estimateText } from '../lib/eta.js';
 import { alertNewDispute, alertDecision } from './alerts.js';
 
 // ---------------------------------------------------------------- buyer checkout
@@ -232,14 +233,15 @@ export async function confirmPayment(ctx, txRef, actor = 'system') {
     sms: `TrustGap: payment confirmed. ${order.buyer_name} paid ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) and it is secured. Next: pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}. You are paid after delivery and inspection.`,
     emailSubject: `Payment secured: order ${order.ref}`,
   });
+  const paidEta = estimateText(deliveryEstimate(ctx.config, ctx.now(), deal, { ...order, status: 'paid', paid_at: iso(ctx.now()), ship_by: iso(shipBy) }));
   await ctx.notify.send({
     orderId: order.id,
     event: 'payment_received_buyer',
     phone: order.buyer_phone,
     email: order.buyer_email,
     sms: courierGivesCode(ctx)
-      ? `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. When it’s dispatched, Fez Delivery will text you a delivery code: inspect the item first, then give the rider the code. Track: ${trackUrl(ctx, order)}`
-      : `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
+      ? `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. When it’s dispatched, Fez Delivery will text you a delivery code: inspect the item first, then give the rider the code. Estimated delivery: ${paidEta}. Track: ${trackUrl(ctx, order)}`
+      : `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Estimated delivery: ${paidEta}. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`,
   });
   return getOrder(ctx, order.id);
@@ -364,6 +366,7 @@ export async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   if (res.meta.changes !== 1) {
     throw new UserError(`Cannot mark "${step.label}" while the parcel is "${DELIVERY_LABELS[order.delivery_status] || order.delivery_status}".`);
   }
+  if (['picked_up', 'out_for_delivery'].includes(status)) await run(ctx.env, 'UPDATE orders SET picked_up_at = COALESCE(picked_up_at, ?) WHERE id = ?', iso(ctx.now()), order.id);
   await logEvent(ctx, order.id, actor, 'delivery_' + status, reason || null);
   if (status === 'refused') {
     await openDispute(ctx, await getOrder(ctx, order.id), { by: actor, category: 'refused_at_door', description: reason });
@@ -379,7 +382,8 @@ async function deliveryNotice(ctx, order, stage, reason = '') {
   const seller = await getSeller(ctx, order.seller_id);
   const send = (to, sms) => ctx.notify.send({ orderId: order.id, event: `delivery_${stage}${to === 'seller' ? '_seller' : ''}`, phone: to === 'seller' ? seller.phone : order.buyer_phone, sms });
   if (stage === 'picked_up') {
-    await send('buyer', `TrustGap: your item for order ${order.ref} has been picked up from the seller. Keep your phone on; we’ll text you when it’s out for delivery.`);
+    const eta = deliveryEstimate(ctx.config, ctx.now(), await getDeal(ctx, order.deal_id), await getOrder(ctx, order.id));
+    await send('buyer', `TrustGap: your item for order ${order.ref} has been picked up from the seller.${eta ? ` Expected delivery: ${estimateText(eta)}.` : ''} Keep your phone on; we’ll text you when it’s out for delivery.`);
     await send('seller', `TrustGap: the courier has collected order ${order.ref}. Your part is nearly done; we’ll tell you when it’s delivered.`);
   } else if (stage === 'out_for_delivery') {
     await send('buyer', courierGivesCode(ctx, order.courier)
@@ -453,7 +457,8 @@ export async function syncCourierStatus(ctx, order) {
   if (st.stage === 'delivered') {
     if (order.status === 'shipping') await markDelivered(ctx, order, 'courier', 'delivered_by_courier');
   } else if (STAGE_RANK[st.stage] && (STAGE_RANK[order.delivery_status] || 0) < STAGE_RANK[st.stage]) {
-    await run(ctx.env, "UPDATE orders SET delivery_status = ? WHERE id = ? AND status = 'shipping'", st.stage, order.id);
+    await run(ctx.env, "UPDATE orders SET delivery_status = ?, picked_up_at = COALESCE(picked_up_at, ?) WHERE id = ? AND status = 'shipping'",
+      st.stage, ['picked_up', 'out_for_delivery'].includes(st.stage) ? iso(ctx.now()) : null, order.id);
     await deliveryNotice(ctx, order, st.stage);
   } else if (st.stage === 'problem' && /reject|refus/i.test(st.raw || '') && order.status === 'shipping') {
     // Fez's rider recorded a refusal at the door: same as our rider's "Buyer refused item".

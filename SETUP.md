@@ -279,6 +279,12 @@ With Fez (`worker/src/providers/logistics/fez.js`, built from Fez's API docs):
 | Fez status changes | your webhook → `GET /orders/{orderNo}` | The webhook is only a hint; the status is re-read from Fez. Picked-Up / Dispatched update tracking, **Delivered** starts the buyer's inspection window, **Returned** opens a dispute. The same reply carries Fez's code (`delivery_OTP`), which TrustGap stores encrypted |
 | Every 5 minutes | `GET /orders/{orderNo}` | Catches up any missed webhook |
 
+**Delivery estimates.** TrustGap shows buyers and sellers an estimated delivery date from Fez's
+published timelines. Change them if Fez does (Text variables): `ETA_SAME_STATE_HOURS` (default
+`24-48`), `ETA_SAME_STATE_REMOTE_HOURS` (`72`), `ETA_OTHER_STATE_WORKING_DAYS` (`3-7`), and
+`ETA_BUSY_UNTIL` (`2027-01-31`, the end of Fez's Ember season; shows "busy festive season, allow a
+little longer" until then; empty turns the note off).
+
 **Delivery codes with Fez.** Fez generates the delivery code and texts it to the recipient at
 dispatch, with its own tracking link; the rider can't complete a delivery without it. So on Fez
 orders TrustGap shows no PIN of its own: the payment SMS says "Fez Delivery will text you a delivery

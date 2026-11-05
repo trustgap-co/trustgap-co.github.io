@@ -244,6 +244,8 @@ export const MANUAL = {
 <dd>No. Tubalcain Ads Enterprise is the registered business that runs TrustGap; Flutterwave shows the registered name. Only pay through the TrustGap link the seller sent.</dd>
 <dt>“I’ve paid. Where is my item?”</dt>
 <dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
+<dt>“When will my item arrive?”</dt>
+<dd>The estimated delivery date is on their tracking page (and in their SMS). It comes from Fez’s timelines: within the same state 1–2 days after pickup (up to 3 for remote areas), to another state 3–7 working days. It’s an estimate, not a promise; during the festive season deliveries can take a little longer. If it’s past the latest date, check the order with Fez and tell the admin.</dd>
 <dt>“I didn’t get / lost the Fez delivery code.”</dt>
 <dd>With Fez, the code is texted by Fez Delivery when the rider is dispatched (not before), and it also shows on the buyer’s tracking page. If it isn’t there yet, the item hasn’t been dispatched. If it should be, tell the admin, who can see it on the order page or in the Fez business portal. Never read the code to anyone but the buyer, on their own number.</dd>
 <dt>“I lost my delivery PIN.”</dt>

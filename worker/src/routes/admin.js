@@ -1,3 +1,4 @@
+import { deliveryEstimate } from '../lib/eta.js';
 import { first, all, update, insert } from '../lib/db.js';
 import { nairaToKobo, formatNaira } from '../lib/money.js';
 import { UserError, notFound } from '../lib/http.js';
@@ -146,6 +147,7 @@ export function adminRoutes(r) {
         ...order,
         // Fez's delivery code, for staff helping a buyer who lost the SMS.
         courier_code: await revealCourierCode(ctx, o),
+        eta: deliveryEstimate(ctx.config, ctx.now(), d, o),
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         track_url: trackUrl(ctx, o),
       },

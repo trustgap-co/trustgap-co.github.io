@@ -3,6 +3,8 @@ export function loadConfig(env) {
   const num = (v, d) => (v === undefined || v === '' ? d : Number(v));
   // Names typed into the Cloudflare dashboard often pick up a capital letter or a trailing space.
   const choice = (v, d) => String(v ?? '').trim().toLowerCase() || d;
+  // "24-48" → [24, 48]
+  const range = (v, d) => { const m = String(v ?? '').match(/^\s*(\d+)\s*-\s*(\d+)\s*$/); return m ? [Number(m[1]), Number(m[2])] : d; };
   const testMode = env.TEST_MODE !== 'false';
   if (!env.APP_SECRET && !testMode) throw new Error('APP_SECRET must be set when TEST_MODE is false');
   return {
@@ -72,6 +74,15 @@ export function loadConfig(env) {
       maxUses: num(env.PROMO_MAX_USES, 1000),
     },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
+    // Delivery estimates (lib/eta.js), from the courier's timelines: same state 24-48 hours after pickup
+    // (up to 72 for remote areas), another state 3-7 working days. ETA_BUSY_UNTIL (YYYY-MM-DD) shows a
+    // "busy season, allow a little longer" note until that day (Fez's Ember season ends 31 Jan 2027).
+    eta: {
+      sameStateHours: range(env.ETA_SAME_STATE_HOURS, [24, 48]),
+      sameStateRemoteHours: num(env.ETA_SAME_STATE_REMOTE_HOURS, 72),
+      otherStateWorkingDays: range(env.ETA_OTHER_STATE_WORKING_DAYS, [3, 7]),
+      busyUntil: env.ETA_BUSY_UNTIL === '' ? null : new Date(`${env.ETA_BUSY_UNTIL || '2027-01-31'}T23:59:59+01:00`),
+    },
     // Customer relations members may decide disputes only on orders up to this (the Customer Relations
     // Admin and the admin decide any). Dispute alerts go to ADMIN_ALERT_PHONE and the CR Admin.
     teamDisputeCapKobo: num(env.TEAM_DISPUTE_CAP_NAIRA, 200000) * 100,

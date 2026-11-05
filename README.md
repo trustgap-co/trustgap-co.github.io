@@ -131,6 +131,11 @@ shown to admin on the order page and copied to Google Sheets.
    (step 2 follows straight on if they took the step 1 tour) and the tracking page. Always offered,
    never forced: an invitation, and a "Show me around" (?) button to replay. Back / Next / Skip; once finished or skipped, not offered again on
    that device. GA4 events: tour_offered, tour_started, tour_step, tour_completed, tour_skipped, tour_declined.
+21. **Estimated delivery** (`lib/eta.js`): from Fez's timelines (same state 24-48 hours after pickup, up
+   to 72 for remote areas; another state 3-7 working days). Shown on the seller's price box and
+   calculator, the deal link, the tracking and order pages and the admin order page, and in the payment
+   and picked-up SMS. It narrows as the order moves (quote, paid, booked, picked up) and notes the busy
+   season until `ETA_BUSY_UNTIL`.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

@@ -73,6 +73,10 @@ __name(readBody, "readBody");
 function loadConfig(env) {
   const num = /* @__PURE__ */ __name((v, d) => v === void 0 || v === "" ? d : Number(v), "num");
   const choice = /* @__PURE__ */ __name((v, d) => String(v ?? "").trim().toLowerCase() || d, "choice");
+  const range = /* @__PURE__ */ __name((v, d) => {
+    const m = String(v ?? "").match(/^\s*(\d+)\s*-\s*(\d+)\s*$/);
+    return m ? [Number(m[1]), Number(m[2])] : d;
+  }, "range");
   const testMode = env.TEST_MODE !== "false";
   if (!env.APP_SECRET && !testMode) throw new Error("APP_SECRET must be set when TEST_MODE is false");
   return {
@@ -144,6 +148,15 @@ function loadConfig(env) {
       maxUses: num(env.PROMO_MAX_USES, 1e3)
     },
     inspectionHours: num(env.INSPECTION_HOURS, 24),
+    // Delivery estimates (lib/eta.js), from the courier's timelines: same state 24-48 hours after pickup
+    // (up to 72 for remote areas), another state 3-7 working days. ETA_BUSY_UNTIL (YYYY-MM-DD) shows a
+    // "busy season, allow a little longer" note until that day (Fez's Ember season ends 31 Jan 2027).
+    eta: {
+      sameStateHours: range(env.ETA_SAME_STATE_HOURS, [24, 48]),
+      sameStateRemoteHours: num(env.ETA_SAME_STATE_REMOTE_HOURS, 72),
+      otherStateWorkingDays: range(env.ETA_OTHER_STATE_WORKING_DAYS, [3, 7]),
+      busyUntil: env.ETA_BUSY_UNTIL === "" ? null : /* @__PURE__ */ new Date(`${env.ETA_BUSY_UNTIL || "2027-01-31"}T23:59:59+01:00`)
+    },
     // Customer relations members may decide disputes only on orders up to this (the Customer Relations
     // Admin and the admin decide any). Dispute alerts go to ADMIN_ALERT_PHONE and the CR Admin.
     teamDisputeCapKobo: num(env.TEAM_DISPUTE_CAP_NAIRA, 2e5) * 100,
@@ -1047,6 +1060,10 @@ ALTER TABLE disputes ADD COLUMN decided_by TEXT;
   {
     "name": "0020_customer_relations_admin.sql",
     "sql": "-- The Customer Relations Admin: one team member with near-admin access (staff.role = 'cr_admin').\n-- At most one active at a time.\nCREATE UNIQUE INDEX IF NOT EXISTS staff_one_cr_admin ON staff(role) WHERE role = 'cr_admin' AND disabled_at IS NULL;\n"
+  },
+  {
+    "name": "0021_pickup_time.sql",
+    "sql": "-- When the courier collected the parcel, so the delivery estimate can count from the real pickup.\nALTER TABLE orders ADD COLUMN picked_up_at TEXT;\n"
   }
 ];
 
@@ -1672,6 +1689,80 @@ async function confirmDebtPayment(ctx, txRef) {
 }
 __name(confirmDebtPayment, "confirmDebtPayment");
 
+// src/lib/eta.js
+var LAGOS_OFFSET = 60 * 6e4;
+var DAY = 24 * 60 * 6e4;
+var lagosDay = /* @__PURE__ */ __name((d) => new Date(d.getTime() + LAGOS_OFFSET).getUTCDay(), "lagosDay");
+function addWorkingDays(d, n) {
+  let t = new Date(d);
+  let left = n;
+  while (left > 0) {
+    t = new Date(t.getTime() + DAY);
+    if (![0, 6].includes(lagosDay(t))) left--;
+  }
+  return t;
+}
+__name(addWorkingDays, "addWorkingDays");
+var addHours2 = /* @__PURE__ */ __name((d, h) => new Date(d.getTime() + h * 60 * 6e4), "addHours");
+function transit(config, sameState, from) {
+  const t = config.eta;
+  return sameState ? [addHours2(from, t.sameStateHours[0]), addHours2(from, t.sameStateHours[1])] : [addWorkingDays(from, t.otherStateWorkingDays[0]), addWorkingDays(from, t.otherStateWorkingDays[1])];
+}
+__name(transit, "transit");
+function transitLabel(config, sameState) {
+  const t = config.eta;
+  if (sameState) {
+    const [a2, b2] = t.sameStateHours.map((h) => h / 24);
+    return `${a2}\u2013${b2} days after pickup within the state, up to ${t.sameStateRemoteHours / 24} for remote areas`;
+  }
+  const [a, b] = t.otherStateWorkingDays;
+  return `${a}\u2013${b} working days after pickup to another state`;
+}
+__name(transitLabel, "transitLabel");
+function deliveryEstimate(config, now, deal, order = null) {
+  if (order && (order.delivered_at || !["paid", "shipping"].includes(order.status))) return null;
+  const sameState = deal.pickup_state === (order?.delivery_state || deal.delivery_state);
+  let basis;
+  let early;
+  let late;
+  if (order?.picked_up_at) {
+    basis = "pickup";
+    [early, late] = transit(config, sameState, new Date(order.picked_up_at));
+  } else if (order?.dispatched_at) {
+    basis = "booked";
+    const booked = new Date(order.dispatched_at);
+    early = transit(config, sameState, booked)[0];
+    late = transit(config, sameState, addWorkingDays(booked, 1))[1];
+  } else if (order?.paid_at) {
+    basis = "paid";
+    early = transit(config, sameState, new Date(order.paid_at))[0];
+    late = transit(config, sameState, new Date(order.ship_by))[1];
+  } else {
+    basis = "quote";
+    early = transit(config, sameState, now)[0];
+    late = transit(config, sameState, addHours2(now, (deal.delivery_days || 1) * 24))[1];
+  }
+  if (late < now) late = addHours2(now, 24);
+  if (early < now) early = now;
+  return {
+    earliest: early.toISOString(),
+    latest: late.toISOString(),
+    basis,
+    same_state: sameState,
+    transit: transitLabel(config, sameState),
+    busy: Boolean(config.eta.busyUntil && now <= config.eta.busyUntil)
+  };
+}
+__name(deliveryEstimate, "deliveryEstimate");
+var fmt = /* @__PURE__ */ __name((d) => new Date(d).toLocaleDateString("en-NG", { timeZone: "Africa/Lagos", weekday: "short", day: "numeric", month: "short" }), "fmt");
+function estimateText(eta) {
+  if (!eta) return "";
+  const a = fmt(eta.earliest);
+  const b = fmt(eta.latest);
+  return a === b ? a : `${a} \u2013 ${b}`;
+}
+__name(estimateText, "estimateText");
+
 // src/lib/photos.js
 var MAX_PHOTOS = 4;
 var MAX_PHOTO_BYTES = 600 * 1024;
@@ -1842,6 +1933,7 @@ async function previewDeal(ctx, input, seller) {
     delivery_state: p.deliveryState,
     price: q,
     dispute_fee: disputeFee(p.itemPrice, ctx.config.disputeFee),
+    eta: deliveryEstimate(ctx.config, ctx.now(), { pickup_state: p.pickupState, delivery_state: p.deliveryState, delivery_days: Number(input.delivery_days) || 2 }),
     promo: promo && { code: promo, saving: platformFee(p.itemPrice, ctx.config.fee) }
   };
 }
@@ -2017,6 +2109,7 @@ async function publicDealView(ctx, deal) {
     delivery_days: deal.delivery_days,
     inspection_hours: deal.inspection_hours,
     dispute_fee: deal.dispute_fee,
+    eta: deliveryEstimate(ctx.config, ctx.now(), deal),
     expires_at: deal.expires_at,
     fee_payer: deal.fee_payer,
     promo_applied: Boolean(deal.promo_code),
@@ -2637,12 +2730,13 @@ async function confirmPayment(ctx, txRef, actor = "system") {
     sms: `TrustGap: payment confirmed. ${order.buyer_name} paid ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) and it is secured. Next: pack the item and book pickup in your dashboard before ${fmtDate(shipBy)}. You are paid after delivery and inspection.`,
     emailSubject: `Payment secured: order ${order.ref}`
   });
+  const paidEta = estimateText(deliveryEstimate(ctx.config, ctx.now(), deal, { ...order, status: "paid", paid_at: iso(ctx.now()), ship_by: iso(shipBy) }));
   await ctx.notify.send({
     orderId: order.id,
     event: "payment_received_buyer",
     phone: order.buyer_phone,
     email: order.buyer_email,
-    sms: courierGivesCode(ctx) ? `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. When it\u2019s dispatched, Fez Delivery will text you a delivery code: inspect the item first, then give the rider the code. Track: ${trackUrl(ctx, order)}` : `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Track: ${trackUrl(ctx, order)}`,
+    sms: courierGivesCode(ctx) ? `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. When it\u2019s dispatched, Fez Delivery will text you a delivery code: inspect the item first, then give the rider the code. Estimated delivery: ${paidEta}. Track: ${trackUrl(ctx, order)}` : `TrustGap: payment secured. ${formatNaira(order.amount)} for "${deal.item_title}" (order ${order.ref}) is held safely; ${seller.business_name} has been notified and is not paid until you have the item. Your delivery PIN is ${pin}: inspect the item first, then share it. Estimated delivery: ${paidEta}. Track: ${trackUrl(ctx, order)}`,
     emailSubject: `Your TrustGap order ${order.ref}`
   });
   return getOrder(ctx, order.id);
@@ -2773,6 +2867,7 @@ async function applyDeliveryUpdate(ctx, order, { status, note, actor }) {
   if (res.meta.changes !== 1) {
     throw new UserError(`Cannot mark "${step.label}" while the parcel is "${DELIVERY_LABELS[order.delivery_status] || order.delivery_status}".`);
   }
+  if (["picked_up", "out_for_delivery"].includes(status)) await run(ctx.env, "UPDATE orders SET picked_up_at = COALESCE(picked_up_at, ?) WHERE id = ?", iso(ctx.now()), order.id);
   await logEvent(ctx, order.id, actor, "delivery_" + status, reason || null);
   if (status === "refused") {
     await openDispute(ctx, await getOrder(ctx, order.id), { by: actor, category: "refused_at_door", description: reason });
@@ -2786,7 +2881,8 @@ async function deliveryNotice(ctx, order, stage, reason = "") {
   const seller = await getSeller(ctx, order.seller_id);
   const send = /* @__PURE__ */ __name((to, sms) => ctx.notify.send({ orderId: order.id, event: `delivery_${stage}${to === "seller" ? "_seller" : ""}`, phone: to === "seller" ? seller.phone : order.buyer_phone, sms }), "send");
   if (stage === "picked_up") {
-    await send("buyer", `TrustGap: your item for order ${order.ref} has been picked up from the seller. Keep your phone on; we\u2019ll text you when it\u2019s out for delivery.`);
+    const eta = deliveryEstimate(ctx.config, ctx.now(), await getDeal(ctx, order.deal_id), await getOrder(ctx, order.id));
+    await send("buyer", `TrustGap: your item for order ${order.ref} has been picked up from the seller.${eta ? ` Expected delivery: ${estimateText(eta)}.` : ""} Keep your phone on; we\u2019ll text you when it\u2019s out for delivery.`);
     await send("seller", `TrustGap: the courier has collected order ${order.ref}. Your part is nearly done; we\u2019ll tell you when it\u2019s delivered.`);
   } else if (stage === "out_for_delivery") {
     await send("buyer", courierGivesCode(ctx, order.courier) ? `TrustGap: order ${order.ref} is on its way to you today. Fez Delivery has texted you a delivery code (it\u2019s also on your TrustGap tracking page). Inspect the item first, then give the rider the code. If it isn\u2019t right, keep the code and report it: ${trackUrl(ctx, order)}` : `TrustGap: order ${order.ref} is on its way to you today. When it arrives, inspect it before giving the rider your PIN. If it isn\u2019t right, keep your PIN and report it.`);
@@ -2851,7 +2947,13 @@ async function syncCourierStatus(ctx, order) {
   if (st.stage === "delivered") {
     if (order.status === "shipping") await markDelivered(ctx, order, "courier", "delivered_by_courier");
   } else if (STAGE_RANK[st.stage] && (STAGE_RANK[order.delivery_status] || 0) < STAGE_RANK[st.stage]) {
-    await run(ctx.env, "UPDATE orders SET delivery_status = ? WHERE id = ? AND status = 'shipping'", st.stage, order.id);
+    await run(
+      ctx.env,
+      "UPDATE orders SET delivery_status = ?, picked_up_at = COALESCE(picked_up_at, ?) WHERE id = ? AND status = 'shipping'",
+      st.stage,
+      ["picked_up", "out_for_delivery"].includes(st.stage) ? iso(ctx.now()) : null,
+      order.id
+    );
     await deliveryNotice(ctx, order, st.stage);
   } else if (st.stage === "problem" && /reject|refus/i.test(st.raw || "") && order.status === "shipping") {
     await openDispute(ctx, order, { by: "courier", category: "refused_at_door", description: `Refused at the door (courier: ${st.raw}${st.reason ? `: ${st.reason}` : ""}).` });
@@ -3383,6 +3485,7 @@ button.alt{background:#fff;color:#0B1B3D;box-shadow:inset 0 0 0 1.5px #0B1B3D}.t
         quantity: deal.quantity,
         item_condition: deal.item_condition,
         inspection_hours: deal.inspection_hours,
+        eta: deliveryEstimate(ctx.config, ctx.now(), deal, o),
         photos: await dealPhotos(ctx, deal),
         seller_name: seller.business_name,
         paid_at: o.paid_at,
@@ -3612,7 +3715,8 @@ function sellerRoutes(r) {
         inspection_ends_at: o.inspection_ends_at,
         paid_at: o.paid_at,
         dispatched: Boolean(o.dispatched_at),
-        inspection_hours: d.inspection_hours
+        inspection_hours: d.inspection_hours,
+        eta: deliveryEstimate(ctx.config, ctx.now(), d, o)
       },
       dispute,
       // Includes the return PIN while the item is on its way back, to give the rider at hand-back.
@@ -4146,6 +4250,7 @@ function adminRoutes(r) {
         ...order,
         // Fez's delivery code, for staff helping a buyer who lost the SMS.
         courier_code: await revealCourierCode(ctx, o),
+        eta: deliveryEstimate(ctx.config, ctx.now(), d, o),
         delivery_label: DELIVERY_LABELS[o.delivery_status] || o.delivery_status,
         track_url: trackUrl(ctx, o)
       },
@@ -4875,6 +4980,8 @@ var MANUAL = {
 <dd>No. Tubalcain Ads Enterprise is the registered business that runs TrustGap; Flutterwave shows the registered name. Only pay through the TrustGap link the seller sent.</dd>
 <dt>\u201CI\u2019ve paid. Where is my item?\u201D</dt>
 <dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
+<dt>\u201CWhen will my item arrive?\u201D</dt>
+<dd>The estimated delivery date is on their tracking page (and in their SMS). It comes from Fez\u2019s timelines: within the same state 1\u20132 days after pickup (up to 3 for remote areas), to another state 3\u20137 working days. It\u2019s an estimate, not a promise; during the festive season deliveries can take a little longer. If it\u2019s past the latest date, check the order with Fez and tell the admin.</dd>
 <dt>\u201CI didn\u2019t get / lost the Fez delivery code.\u201D</dt>
 <dd>With Fez, the code is texted by Fez Delivery when the rider is dispatched (not before), and it also shows on the buyer\u2019s tracking page. If it isn\u2019t there yet, the item hasn\u2019t been dispatched. If it should be, tell the admin, who can see it on the order page or in the Fez business portal. Never read the code to anyone but the buyer, on their own number.</dd>
 <dt>\u201CI lost my delivery PIN.\u201D</dt>
