@@ -102,6 +102,7 @@ export const NOTE = {
         'The deal look normal from wetin you tell us. Even so, money wey you send straight to account no get way back.',
         'E no look like scam for now. But na when e look sweet pass, people dey fall. Protect yourself anyway.',
         'You don ask the right questions. Make the last step safe too: pay with protection.',
+        'Even if you trust the seller, TrustGap go still handle the delivery: no dispatch rider to find, item go reach your door.',
       ],
       mid: [
         'Some things no too clear. No send money straight to anybody account. Ask make una use protection.',
@@ -122,6 +123,7 @@ export const NOTE = {
         'Buyer look normal from wetin you tell us. Still, na bank app you go believe, no be talk.',
         'Nothing serious for now. Make the payment pass protection and you go sleep well.',
         'Good questions you ask. One more step: collect through TrustGap and no worry about fake alert.',
+        'Even if the buyer look correct, TrustGap go still carry the item go their door. You no need find rider again.',
       ],
       mid: [
         'Some things no too clear. Confirm the money for your bank app, no be alert or screenshot, before you send anything.',
@@ -144,6 +146,7 @@ export const NOTE = {
         'The deal looks normal from what you told us. Even so, money sent straight to an account has no way back.',
         'Nothing looks like a scam right now. But people fall when it looks sweetest. Protect yourself anyway.',
         'You asked the right questions. Make the last step safe too: pay with protection.',
+        'Even if you trust the seller, TrustGap still handles the delivery: no dispatch rider to find, and the item comes to your door.',
       ],
       mid: [
         'Some things aren’t clear. Don’t send money straight to anyone’s account. Ask to use protection.',
@@ -164,6 +167,7 @@ export const NOTE = {
         'The buyer seems normal from what you told us. Still, trust your bank app, not their word.',
         'Nothing serious for now. Run the payment through protection and sleep well.',
         'Good questions. One more step: collect through TrustGap and stop worrying about fake alerts.',
+        'Even if the buyer seems fine, TrustGap still takes the item to their door. No more finding riders.',
       ],
       mid: [
         'Some things aren’t clear. Confirm the money in your bank app, not an alert or screenshot, before you send anything.',
@@ -193,34 +197,34 @@ export const THINKING = {
 export const WA = {
   pcm: {
     buyer: [
-      (u) => `Hello! I like the item and I ready to buy. Abeg make we do am through TrustGap: my money go dey safe till the item reach me, and you go collect your money once I confirm. E no dey cost you anything to start: ${u}`,
-      (u) => `Good day! I don ready to pay, but I dey use TrustGap now for online deals. You go see the money before you send, and I go see the item before you collect. Fair for both of us: ${u}`,
-      (u) => `Hi! Abeg no vex, I no dey pay straight to account again. If you fit send me TrustGap link, I go pay sharp sharp: ${u}`,
+      (u) => `Hello! I like the item and I ready to buy. Abeg make we do am through TrustGap: my money go dey safe till the item reach me, and you go collect your money once I confirm. Dem even handle the delivery: rider go pick am from you and bring am to my door, so you no need find dispatch rider. E no dey cost you anything to start: ${u}`,
+      (u) => `Good day! I don ready to pay, but I dey use TrustGap now for online deals. You go see the money before you send, I go see the item before you collect, and TrustGap go arrange the delivery from your side to my door. No stress for both of us: ${u}`,
+      (u) => `Hi! Abeg no vex, I no dey pay straight to account again. If you send me TrustGap link, I go pay sharp sharp. Bonus: dem dey handle the delivery too, so you no go waste time find rider: ${u}`,
     ],
     seller: [
-      (u) => `Hello! To make am safe for both of us, abeg pay through TrustGap. Your money go dey safe till the item reach you, and I go send immediately the payment confirm: ${u}`,
-      (u) => `Hi! I dey sell with TrustGap now: you pay, TrustGap hold am, I send, you check, then I collect. Nobody fit cheat anybody: ${u}`,
-      (u) => `Good day! Abeg I no dey send before payment confirm. Pay through TrustGap make we both rest: ${u}`,
+      (u) => `Hello! To make am safe for both of us, abeg pay through TrustGap. Your money go dey safe till the item reach you, and TrustGap go carry the item come your door. You no need arrange rider: ${u}`,
+      (u) => `Hi! I dey sell with TrustGap now: you pay, TrustGap hold am, their rider bring the item to you, you check am, then I collect. No dispatch wahala, nobody fit cheat anybody: ${u}`,
+      (u) => `Good day! I no dey send before payment confirm. Pay through TrustGap and dem go deliver the item straight to your door, with updates till e reach. Make we both rest: ${u}`,
     ],
   },
   en: {
     buyer: [
-      (u) => `Hello! I like the item and I’m ready to buy. Can we do it through TrustGap? My money stays safe until the item reaches me, and you’re paid once I confirm. It costs you nothing to start: ${u}`,
-      (u) => `Good day! I’m ready to pay, but I use TrustGap for online deals now. You see the money before you send, and I see the item before you’re paid. Fair for both of us: ${u}`,
-      (u) => `Hi! No offence, but I don’t pay straight into accounts anymore. If you can send me a TrustGap link, I’ll pay right away: ${u}`,
+      (u) => `Hello! I like the item and I’m ready to buy. Can we do it through TrustGap? My money stays safe until the item reaches me, and you’re paid once I confirm. They also handle the delivery: a rider collects from you and brings it to my door, so you don’t need to find a dispatch rider. It costs you nothing to start: ${u}`,
+      (u) => `Good day! I’m ready to pay, but I use TrustGap for online deals now. You see the money before you send, I see the item before you’re paid, and TrustGap arranges the delivery from you to my door. No stress for either of us: ${u}`,
+      (u) => `Hi! No offence, but I don’t pay straight into accounts anymore. If you send me a TrustGap link, I’ll pay right away. Bonus: they handle the delivery too, so you don’t waste time finding a rider: ${u}`,
     ],
     seller: [
-      (u) => `Hello! To keep it safe for both of us, please pay through TrustGap. Your money stays safe until the item reaches you, and I’ll send as soon as the payment is confirmed: ${u}`,
-      (u) => `Hi! I sell with TrustGap now: you pay, TrustGap holds it, I send, you check, then I’m paid. Nobody can cheat anybody: ${u}`,
-      (u) => `Good day! I don’t send before payment is confirmed. Please pay through TrustGap so we can both relax: ${u}`,
+      (u) => `Hello! To keep it safe for both of us, please pay through TrustGap. Your money stays safe until the item reaches you, and TrustGap brings it to your door. No need to arrange a rider: ${u}`,
+      (u) => `Hi! I sell with TrustGap now: you pay, TrustGap holds it, their rider brings the item to you, you check it, then I’m paid. No dispatch stress, and nobody can cheat anybody: ${u}`,
+      (u) => `Good day! I don’t send before payment is confirmed. Pay through TrustGap and they’ll deliver the item straight to your door, with updates until it arrives. We can both relax: ${u}`,
     ],
   },
 };
 
 // The line on the shared picture.
 export const CARD = {
-  pcm: { buyer: ['Before you pay, ask for TrustGap link.', 'No pay straight to account. Use TrustGap.', 'Shine your eye. Pay with protection.'],
-    seller: ['Before you send the item, make dem pay through TrustGap.', 'No send before money land. Use TrustGap.', 'Fake alert no go catch you. Use TrustGap.'] },
-  en: { buyer: ['Before you pay, ask for a TrustGap link.', 'Don’t pay straight into accounts. Use TrustGap.', 'Stay sharp. Pay with protection.'],
-    seller: ['Before you send the item, ask them to pay through TrustGap.', 'Don’t send before the money lands. Use TrustGap.', 'No more fake alerts. Use TrustGap.'] },
+  pcm: { buyer: ['Before you pay, ask for TrustGap link.', 'No pay straight to account. Use TrustGap.', 'Shine your eye. Pay with protection.', 'Money safe, item delivered to your door. Na TrustGap.'],
+    seller: ['Before you send the item, make dem pay through TrustGap.', 'No send before money land. Use TrustGap.', 'Fake alert no go catch you. Use TrustGap.', 'Money confirm, rider carry am. No dispatch wahala with TrustGap.'] },
+  en: { buyer: ['Before you pay, ask for a TrustGap link.', 'Don’t pay straight into accounts. Use TrustGap.', 'Stay sharp. Pay with protection.', 'Money safe, item delivered to your door. That’s TrustGap.'],
+    seller: ['Before you send the item, ask them to pay through TrustGap.', 'Don’t send before the money lands. Use TrustGap.', 'No more fake alerts. Use TrustGap.', 'Money confirmed, rider collects. No dispatch stress with TrustGap.'] },
 };

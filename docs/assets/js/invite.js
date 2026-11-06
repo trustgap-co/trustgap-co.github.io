@@ -5,7 +5,7 @@ import { html, money, date, track, link, session, $ } from './core.js';
 const POPUP_FLAG = 'tg_invite_popup';
 export const askForInvitePopup = () => session.set(POPUP_FLAG, '1');
 
-const shareText = (rf) => `I use TrustGap to sell safely on WhatsApp and Instagram: the buyer's payment is held, and I'm paid after delivery. Join with my link and your first ${rf.welcome_deals} deals have no TrustGap fee: ${rf.link}`;
+const shareText = (rf) => `I use TrustGap to sell on WhatsApp and Instagram: the buyer's payment is held, TrustGap handles the delivery to the buyer's door (no more looking for dispatch riders), and I'm paid after delivery. Join with my link and your first ${rf.welcome_deals} deals have no TrustGap fee: ${rf.link}`;
 const waLink = (rf) => `https://wa.me/?text=${encodeURIComponent(shareText(rf))}`;
 const rewardText = (rf) => (rf.reward_deals === 1 ? 'a free deal' : `${rf.reward_deals} free deals`);
 
@@ -44,7 +44,7 @@ export function invitePopup(rf) {
     dlg.innerHTML = String(html`<form method="dialog">
       <div class="invite-modal-gift" aria-hidden="true">🎁</div>
       <h2>Invite a seller, earn free deals</h2>
-      <p>Know someone who sells on WhatsApp or Instagram? Send them your link. Their <strong>first ${rf.welcome_deals} deals have no TrustGap fee</strong>, and you get <strong>${rewardText(rf)}</strong> when they complete their first protected deal.</p>
+      <p>Know someone who sells on WhatsApp or Instagram? Payment secured and delivery handled, so no more chasing riders. Send them your link. Their <strong>first ${rf.welcome_deals} deals have no TrustGap fee</strong>, and you get <strong>${rewardText(rf)}</strong> when they complete their first protected deal.</p>
       ${rf.free_deals ? html`<p class="callout ok">You have <strong>${rf.free_deals} free ${rf.free_deals === 1 ? 'deal' : 'deals'}</strong> to use: it’s applied to your next link automatically.</p>` : ''}
       <p class="invite-modal-code">Your code <strong>${rf.code}</strong></p>
       <a class="btn btn-block btn-whatsapp" data-invite-wa href="${waLink(rf)}" target="_blank" rel="noopener">💬 Share on WhatsApp</a>
