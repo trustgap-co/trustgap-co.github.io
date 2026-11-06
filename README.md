@@ -147,6 +147,12 @@ shown to admin on the order page and copied to Google Sheets.
    ledger (`fee_waived`, status `info`).
 23. **Ledger segments** (Admin → Ledger): Money in, Paid out, TrustGap revenue, Costs, Giveaways,
    Other and Needs attention, each with its total for the chosen dates; tap one to list only its entries.
+24. **App layout** for the seller, admin and team accounts and the buyer's deal pages: a slim top bar
+   with the page name, a bottom tab bar on phones (seller: Home, New link, Prices, Settings; admin:
+   Orders, Disputes, Sellers, Team and More), a side menu on computers, soft cards and finger-sized
+   buttons. Sellers can add their account to the phone's home screen (`docs/manifest.webmanifest`;
+   no offline caching, so updates show straight away). The seller's invite card lives in Settings and
+   pops up on the dashboard once after each login.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

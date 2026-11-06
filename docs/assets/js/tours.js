@@ -18,7 +18,7 @@ export const TOURS = {
       { el: 'a.btn[href*="seller/price.html"]', title: 'Price calculator', text: 'Not ready to make a link? Work out the exact price first, including delivery, and send the buyer the total.' },
       { el: headingNamed('Orders'), title: 'Your orders', text: 'When a buyer pays, the order appears here. Tap it to pack the item and book the courier.' },
       { el: headingNamed('Links waiting'), title: 'Links waiting for payment', text: 'Links you have sent that the buyer hasn’t paid yet. Open one to copy it again or change it.' },
-      { el: '.top a[href*="seller/settings.html"]', title: 'Settings', text: 'Your bank account for payouts and your identity check live here. Both must be done before you can create links.' },
+      { el: visible('.app-nav a[href*="seller/settings.html"]'), title: 'Settings', text: 'Your bank account for payouts, your identity check and your invite link live here. Payout and identity must be done before you can create links.' },
     ],
   },
 
@@ -94,7 +94,8 @@ export const TOURS = {
       { el: headingText('Payout account'), title: 'Where you get paid', text: 'Add the bank account your payouts go to. It must be in your own name or your business name; we check the name with the bank.' },
       { el: headingText('Identity'), title: 'Verify your identity', text: 'Enter your NIN and date of birth once. Buyers see a “✓ Identity verified” badge on your links, which helps them trust you.' },
       { el: '#marketing', title: 'News and offers', text: 'Optional. Messages about your deals and payouts always come, whatever you choose here.' },
-      { el: '.top a[href*="seller/new.html"]', title: 'You’re ready', text: 'Once both are done, create your first payment link here or from your dashboard.' },
+      { el: '#invite', title: 'Invite sellers, earn free deals', text: 'Share your link with other sellers. Their first deals have no TrustGap fee, and you earn a free deal when they complete one.' },
+      { el: visible('.app-nav a[href*="seller/new.html"]'), title: 'You’re ready', text: 'Once both are done, create your first payment link here or from your dashboard.' },
     ],
   },
 

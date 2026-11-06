@@ -1,26 +1,11 @@
 import { SITE } from '../site-info.js';
 import { offerTour } from '../tour.js';
 import { TOURS } from '../tours.js';
+import { invitePopup } from '../invite.js';
 import { api, html, show, link, shell, money, date, orderBadge, dealBadge, fail, params, track, trackThenGo, keepFresh, $ } from '../core.js';
 
 await shell('seller');
 
-// Invite a seller: their link, share buttons and how it's going.
-function inviteCard(rf) {
-  const text = `I use TrustGap to sell safely on WhatsApp and Instagram: the buyer's payment is held, and I'm paid after delivery. Join with my link and your first ${rf.welcome_deals} deals have no TrustGap fee: ${rf.link}`;
-  return html`<section class="card invite-card">
-    <h2>🎁 Invite a seller, earn free deals</h2>
-    <p>Sellers who join with your link get their <strong>first ${rf.welcome_deals} deals with no TrustGap fee</strong>. When they complete their first protected deal (item ${money(rf.min_order)} or more), you get <strong>${rf.reward_deals === 1 ? 'a free deal' : `${rf.reward_deals} free deals`}</strong> too.</p>
-    <div class="share-row"><input id="invite-link" readonly value="${rf.link}" aria-label="Your invite link">
-      <button type="button" class="btn btn-small btn-secondary" id="copy-invite">Copy link</button>
-      <a class="btn btn-small btn-whatsapp" id="wa-invite" href="${`https://wa.me/?text=${encodeURIComponent(text)}`}" target="_blank" rel="noopener">💬 Share on WhatsApp</a></div>
-    <ul class="invite-stats">
-      <li><strong>${rf.invited}</strong> invited</li><li><strong>${rf.active}</strong> completed a deal</li>
-      <li><strong>${rf.free_deals}</strong> free ${rf.free_deals === 1 ? 'deal' : 'deals'} to use${rf.free_deals && rf.next_expiry ? html` <small class="muted">(next expires ${date(rf.next_expiry)})</small>` : ''}</li>
-      <li>${rf.ambassador ? html`<span class="badge badge-ok">⭐ TrustGap Ambassador</span>` : html`<strong>${rf.active}/${rf.ambassador_at}</strong> to become a TrustGap Ambassador`}</li></ul>
-    <p class="small muted">Your code: <strong>${rf.code}</strong>. Free deals are used on your next link automatically and remove only the TrustGap fee. They expire after 90 days.</p>
-  </section>`;
-}
 try {
   const { seller: s, stats, orders, deals, referral: rf } = await api('/api/seller/dashboard', { as: 'seller' });
   const setup = [
@@ -47,7 +32,6 @@ try {
       <div class="stat"><span>${stats.completed}</span>completed</div>
     </div>
     ${setup.length || s.amount_owed > 0 || s.suspended ? '' : html`<p class="actions"><a class="btn" href="${link('seller/new.html')}">+ Create a payment link</a><a class="btn btn-secondary" href="${link('seller/price.html')}">Price calculator</a></p>`}
-    ${rf?.on ? inviteCard(rf) : ''}
     <h2>Orders</h2>
     ${orders.length
       ? html`<div class="list">${orders.map((o) => html`<a class="row" href="${link(`seller/order.html?id=${o.id}`)}">
@@ -60,12 +44,6 @@ try {
           <div><strong>${d.item_title}</strong><br><small class="muted">Buyer pays ${money(d.price.buyerTotal)} · expires ${date(d.expires_at)}</small></div>
           <div class="right">${dealBadge(d.status)}</div></a>`)}</div>`
       : html`<p class="muted">No open links.</p>`}`);
-  $('#copy-invite')?.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(rf.link); } catch { $('#invite-link').select(); document.execCommand?.('copy'); }
-    $('#copy-invite').textContent = 'Copied ✓';
-    track('referral_link_copied', {});
-  });
-  $('#wa-invite')?.addEventListener('click', () => track('share', { method: 'whatsapp', content_type: 'seller_invite' }));
   $('#pay-debt')?.addEventListener('click', async (e) => {
     e.target.disabled = true;
     e.target.textContent = 'Opening the payment page…';
@@ -79,6 +57,8 @@ try {
     }
   });
   if (params.get('debt')) track('debt_payment_result', { result: params.get('debt') });
+  // After a login: the invite pop-up first, then (when it's closed) the page tour offer.
+  await invitePopup(rf);
   offerTour('dashboard', TOURS.dashboard);
   keepFresh('/api/seller/dashboard', () => location.reload(), { as: 'seller' });
 } catch (err) {

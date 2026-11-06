@@ -1,13 +1,27 @@
 import { offerTour } from '../tour.js';
 import { TOURS } from '../tours.js';
-import { api, html, show, onSubmit, shell, getBanks, bankOptions, testAccountsHint, date, flash, link, fail, trackThenGo, $ } from '../core.js';
+import { inviteCard, wireInvite } from '../invite.js';
+import { api, auth, html, show, onSubmit, shell, getBanks, bankOptions, testAccountsHint, date, flash, link, fail, trackThenGo, $ } from '../core.js';
 
 const config = await shell('seller');
 
 async function render() {
-  const [{ seller: s }, banks] = await Promise.all([api('/api/seller/me', { as: 'seller' }), getBanks()]);
-  show('#app', html`<section class="card narrow">
-    <h1>1. Payout account</h1>
+  // The invite details come with the dashboard data (no Worker change needed for this page).
+  const [{ seller: s }, banks, rf] = await Promise.all([api('/api/seller/me', { as: 'seller' }), getBanks(),
+    api('/api/seller/dashboard', { as: 'seller' }).then((d) => d.referral).catch(() => null)]);
+  const ready = s.payout && s.identity_verified;
+  show('#app', html`<h1 class="page-title">Settings</h1>
+  <section class="card narrow me-card">
+    <div class="me-head"><span class="avatar" aria-hidden="true">${(s.business_name || s.full_name || '?').trim()[0].toUpperCase()}</span>
+      <div><strong>${s.business_name}</strong><br><small class="muted">${s.full_name} · ${s.phone}</small></div></div>
+    <div class="setup-steps">
+      <span class="${s.payout ? 'done' : ''}">${s.payout ? '✓' : '1'} Payout account</span>
+      <span class="${s.identity_verified ? 'done' : ''}">${s.identity_verified ? '✓' : '2'} Identity</span>
+    </div>
+  </section>
+  ${ready && rf?.on ? html`<div class="narrow">${inviteCard(rf)}</div>` : ''}
+  <section class="card narrow">
+    <h2 class="card-title">1. Payout account</h2>
     <p class="muted">Where we send your money. It must be in your own name: <strong>${s.full_name}</strong>.</p>
     ${s.payout ? html`<div class="callout ok">✓ ${s.payout.bank_name} · ${s.payout.account_number} · ${s.payout.account_name}</div>` : ''}
     <form class="form" id="payout">
@@ -18,7 +32,7 @@ async function render() {
     </form>
   </section>
   <section class="card narrow">
-    <h1>2. Identity</h1>
+    <h2 class="card-title">2. Identity</h2>
     ${s.identity_verified
       ? html`<div class="callout ok">✓ Verified on ${date(s.identity_verified_at)}. Buyers see an “Identity verified” badge on your links.</div>`
       : s.id_attempts_left === 0
@@ -34,11 +48,22 @@ async function render() {
         </form>`}
   </section>
   <section class="card narrow">
-    <h1>3. News and offers</h1>
+    <h2 class="card-title">3. News and offers</h2>
     <label class="choice"><input type="checkbox" id="marketing" ${s.marketing_opt_in ? 'checked' : ''}>
       Send me TrustGap news, selling tips and special offers by SMS, WhatsApp or email</label>
     <p class="muted small" id="marketing-note">Optional. Messages about your deals and payouts are always sent.</p>
+  </section>
+  ${!ready && rf?.on ? html`<div class="narrow">${inviteCard(rf)}</div>` : ''}
+  <section class="card narrow">
+    <button type="button" class="btn btn-block btn-secondary" id="settings-logout">Log out</button>
   </section>`);
+  if (rf?.on) wireInvite(rf, $('#app'));
+  $('#settings-logout').addEventListener('click', async () => {
+    await api('/api/auth/logout', { method: 'POST', body: {}, as: 'seller' }).catch(() => {});
+    auth.clear();
+    location.href = link('index.html');
+  });
+  if (location.hash === '#invite') $('#invite')?.scrollIntoView({ block: 'start' });
 
   $('#marketing').addEventListener('change', async (e) => {
     const r = await api('/api/seller/marketing', { method: 'POST', body: { opt_in: e.target.checked }, as: 'seller' }).catch(() => null);

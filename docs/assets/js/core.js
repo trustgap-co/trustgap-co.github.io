@@ -665,24 +665,76 @@ function loadImage(slot) {
 // Which campaign link or ad brought this visitor, remembered from the page they land on (source.js).
 const rememberSource = () => campaignSource();
 
+// ---------------------------------------------------------------- app layout (accounts and deal pages)
+// Inside the seller, admin and team accounts the pages look and work like an app: a slim top bar
+// with the page name, a tab bar at the bottom on phones and a side menu on computers.
+// The buyer's deal pages get the same slim bar, without tabs.
+const APP_AREAS = ['seller', 'buyer', 'admin', 'team'];
+const AREA_LABEL = { seller: 'Seller', admin: 'Admin', team: 'Team', buyer: '' };
+const svg = (d) => raw(`<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`);
+const ICON = {
+  home: svg('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>'),
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  calc: svg('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h2M16 11v6M8 15h2M12 15h2"/>'),
+  gear: svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>'),
+  box: svg('<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>'),
+  alert: svg('<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>'),
+  store: svg('<path d="M4 9 5.5 4h13L20 9"/><path d="M4 9v11h16V9"/><path d="M4 9a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0"/>'),
+  chat: svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'),
+  coins: svg('<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>'),
+  team: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>'),
+  book: svg('<path d="M4 4h6a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H4z"/><path d="M20 4h-6a3 3 0 0 0-3 3"/><path d="M20 4v13.5h-6.5A2.5 2.5 0 0 0 11 20"/>'),
+  tasks: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/>'),
+  more: svg('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
+  out: svg('<path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4M6 12h10"/>'),
+};
+// [page, label, icon, other pages that light this tab, under "More" on phones, style]
+function appTabs(area) {
+  if (area === 'seller') return auth.seller() ? [
+    ['seller/dashboard.html', 'Home', 'home', ['deal.html', 'order.html']],
+    ['seller/new.html', 'New link', 'plus', [], false, 'primary'],
+    ['seller/price.html', 'Prices', 'calc'],
+    ['seller/settings.html', 'Settings', 'gear'],
+  ] : null;
+  if (area === 'admin') return auth.admin() ? [
+    ['admin/orders.html', 'Orders', 'box', ['order.html']],
+    ['admin/disputes.html', 'Disputes', 'alert'],
+    ['admin/sellers.html', 'Sellers', 'store'],
+    ['admin/team.html', 'Team', 'team'],
+    ['admin/messages.html', 'Messages', 'chat', [], true],
+    ...(auth.isLead() ? [] : [['admin/ledger.html', 'Ledger', 'coins', [], true]]),
+    ['team/manual.html', 'Manual', 'book', [], true],
+  ] : null;
+  if (area === 'team') return auth.team() ? [
+    ['team/index.html', 'My tasks', 'tasks', ['order.html']],
+    ['team/manual.html', 'Manual', 'book'],
+  ] : null;
+  return null;
+}
+function tabBar(tabs, here) {
+  const folder = location.pathname.split('/').slice(-2, -1)[0];
+  const isOn = ([href, , , also = []]) => href === `${folder}/${here}` || (href.startsWith(`${folder}/`) && also.includes(here));
+  const tab = (t) => html`<a class="app-tab ${t[4] ? 'tab-extra' : ''} ${t[5] === 'primary' ? 'tab-primary' : ''} ${isOn(t) ? 'on' : ''}" href="${link(t[0])}" ${isOn(t) ? raw('aria-current="page"') : ''}>
+    <span class="tab-icon">${ICON[t[2]]}</span><span class="tab-label">${t[1]}</span></a>`;
+  const extras = tabs.filter((t) => t[4]);
+  return html`<nav class="app-nav" aria-label="Main">
+    ${tabs.map(tab)}
+    ${extras.length ? html`<button type="button" class="app-tab tab-more ${extras.some(isOn) ? 'on' : ''}" data-more aria-expanded="false" aria-controls="app-sheet">
+      <span class="tab-icon">${ICON.more}</span><span class="tab-label">More</span></button>` : ''}
+    <button type="button" class="app-tab tab-logout" data-logout><span class="tab-icon">${ICON.out}</span><span class="tab-label">Log out</span></button>
+  </nav>
+  ${extras.length ? html`<div class="app-sheet-shade"></div><div class="app-sheet" id="app-sheet" role="menu">
+    ${extras.map((t) => html`<a href="${link(t[0])}" role="menuitem" class="${isOn(t) ? 'on' : ''}"><span class="tab-icon">${ICON[t[2]]}</span>${t[1]}</a>`)}
+    <button type="button" data-logout role="menuitem"><span class="tab-icon">${ICON.out}</span>Log out</button></div>` : ''}`;
+}
+
 // Draws the header and footer straight away (no waiting for the API), then adds the test-mode bar
 // when the settings arrive. Returns the settings.
 export async function shell(area) {
   const configReady = getConfig();
   const here = location.pathname.split('/').pop() || 'index.html';
+  const app = APP_AREAS.includes(area);
   const nav = {
-    seller: html`<nav class="nav"><a href="${link('seller/dashboard.html')}">Dashboard</a><a href="${link('seller/new.html')}">New link</a><a href="${link('seller/price.html')}">Price calculator</a>
-      <a href="${link('seller/settings.html')}">Settings</a><button class="linklike" id="logout">Log out</button></nav>`,
-    admin: auth.admin()
-      ? html`<nav class="nav"><a href="${link('admin/orders.html')}">Orders</a><a href="${link('admin/disputes.html')}">Disputes</a>
-        <a href="${link('admin/sellers.html')}">Sellers</a><a href="${link('admin/messages.html')}">Messages</a>
-        ${auth.isLead() ? '' : html`<a href="${link('admin/ledger.html')}">Ledger</a>`}<a href="${link('admin/team.html')}">Team</a>
-        <a href="${link('team/manual.html')}">Manual</a><button class="linklike" id="logout">Log out</button></nav>`
-      : '',
-    team: auth.team()
-      ? html`<nav class="nav"><a href="${link('team/index.html')}">My tasks</a><a href="${link('team/manual.html')}">Manual</a>
-        <button class="linklike" id="logout">Log out</button></nav>`
-      : '',
     buyer: html`<span class="protected">🔒 Protected deal</span>`,
     public: html`<button class="menu-btn" id="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span><span></span><span></span></button>
       <nav class="nav site-nav" id="site-nav">
@@ -693,10 +745,29 @@ export async function shell(area) {
           : html`<a href="${link('survey.html')}" class="${here === 'survey.html' ? 'on' : ''}">Take the survey</a>
             <a class="btn btn-small btn-light" href="${link('early-access.html')}">Get early access</a>`}
       </nav>`,
-  }[area];
-  document.body.insertAdjacentHTML('afterbegin', String(html`
-    <a class="skip" href="#app">Skip to content</a>
-    <header class="top"><div class="top-in"><a class="logo" href="${link('index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>${nav}</div></header>`));
+  }[area] || '';
+  const tabs = app ? appTabs(area) : null;
+  const title = document.title.split(' · ')[0];
+  document.body.insertAdjacentHTML('afterbegin', String(app
+    ? html`<a class="skip" href="#app">Skip to content</a>
+      <header class="top app-top"><div class="top-in">
+        <a class="logo" href="${link(area === 'seller' && tabs ? 'seller/dashboard.html' : 'index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>
+        ${tabs ? html`<span class="app-title">${title}</span>` : ''}
+        <span class="app-right">${area === 'buyer' ? nav : html`<span class="app-tag">${AREA_LABEL[area]}${area === 'admin' && auth.isLead() ? ' · CR' : ''}</span>`}</span>
+      </div></header>
+      ${tabs ? tabBar(tabs, here) : ''}`
+    : html`<a class="skip" href="#app">Skip to content</a>
+      <header class="top"><div class="top-in"><a class="logo" href="${link('index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>${nav}</div></header>`));
+  if (app) {
+    document.body.classList.add('app', `app-${area}`);
+    if (tabs) document.body.classList.add('has-tabs');
+    if (area === 'seller' && !$('link[rel=manifest]')) {
+      // "Add to Home screen" opens the seller account like an app (no service worker: pages are never cached offline).
+      document.head.insertAdjacentHTML('beforeend', `<link rel="manifest" href="${link('manifest.webmanifest')}">
+        <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-title" content="TrustGap"><link rel="apple-touch-icon" href="${link('assets/app-icon-512.png')}">`);
+    }
+  }
   const fullFooter = html`<div class="container foot-grid">
     <div class="foot-brand"><a class="logo" href="${link('index.html')}">Trust<span>Gap</span></a>
       <p>The safe completion layer for social commerce in Nigeria: payment secured, item delivered, both sides know what happens next.</p>
@@ -740,12 +811,18 @@ export async function shell(area) {
     const open = document.body.classList.toggle('menu-open');
     menu.setAttribute('aria-expanded', String(open));
   });
-  $('#logout')?.addEventListener('click', async () => {
+  $$('[data-logout]').forEach((b) => b.addEventListener('click', async () => {
     const as = ['admin', 'team'].includes(area) ? area : 'seller';
     await api('/api/auth/logout', { method: 'POST', body: {}, as }).catch(() => {});
     auth.clear();
     location.href = link(as === 'seller' ? 'index.html' : `${as}/index.html`);
+  }));
+  // "More" on the phone tab bar (admin): a sheet with the other pages and Log out.
+  $('[data-more]')?.addEventListener('click', () => {
+    const open = document.body.classList.toggle('more-open');
+    $('[data-more]').setAttribute('aria-expanded', String(open));
   });
+  $('.app-sheet-shade')?.addEventListener('click', () => document.body.classList.remove('more-open'));
   const message = flash.take();
   // Placed before <main> because each page replaces main's content when it renders.
   if (message) $('main').insertAdjacentHTML('beforebegin', String(html`<div class="flash-wrap"><div class="flash">${message}</div></div>`));
@@ -766,8 +843,13 @@ export async function shell(area) {
   // the public site (home, survey, early access, policies…), which stays clean while being promoted.
   const innerPage = area !== 'public' || location.pathname.includes('/seller/');
   if (config.test_mode && innerPage) {
-    document.body.insertAdjacentHTML('beforeend', '<div class="testbar" role="note">TEST MODE: a demonstration. No real money moves; payments and couriers are simulated.</div>');
-    document.body.classList.add('has-testbar');
+    const bar = '<div class="testbar" role="note">TEST MODE: a demonstration. No real money moves; payments and couriers are simulated.</div>';
+    // In the app pages it sits under the top bar, clear of the tab bar and the pay button.
+    if (document.body.classList.contains('app')) $('.app-top').insertAdjacentHTML('afterend', bar.replace('class="testbar"', 'class="testbar testbar-top"'));
+    else {
+      document.body.insertAdjacentHTML('beforeend', bar);
+      document.body.classList.add('has-testbar');
+    }
   }
   return config;
 }

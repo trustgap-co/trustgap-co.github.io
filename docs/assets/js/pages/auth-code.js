@@ -1,5 +1,6 @@
 // Step 2 of signup/login: enter the 6-digit code sent by SMS.
 import { api, auth, html, show, onSubmit, link, params, trackThenGo, $ } from '../core.js';
+import { askForInvitePopup } from '../invite.js';
 
 export function codeStep(phone, sent, { next, flow }) {
   show('#app', html`<section class="card narrow">
@@ -18,6 +19,7 @@ export function codeStep(phone, sent, { next, flow }) {
   onSubmit($('#code'), async ({ code }) => {
     const { token } = await api('/api/auth/verify', { method: 'POST', body: { phone, code } });
     auth.setSeller(token);
+    if (flow === 'login') askForInvitePopup(); // the dashboard shows the invite pop-up once after each login
     const url = params.get('next')?.startsWith(link('')) ? params.get('next') : link(next);
     trackThenGo(flow === 'signup' ? 'sign_up' : 'login', { method: 'sms' }, url);
   });

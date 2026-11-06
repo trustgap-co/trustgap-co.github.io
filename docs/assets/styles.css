@@ -734,3 +734,180 @@ body.touring .tour-help, body.touring .tour-invite { display: none; }
 .seg-card small { font-size: .78rem; color: var(--muted); line-height: 1.35; }
 .seg-card.on { border: 2px solid var(--link); }
 .seg-card.warn strong { color: #B4530B; }
+
+/* ======================================================================== app layout
+   Seller, admin and team accounts, and the buyer's deal pages, look and work like a phone app:
+   a slim top bar with the page name, a tab bar at the bottom on phones, a side menu on computers,
+   soft cards and large tap targets. The public pages are not affected (body.app is only set here). */
+body.app { --app-bg: #EEF2F9; --tab-h: 64px; --side-w: 236px; --shadow: 0 1px 2px rgba(11,27,61,.06), 0 10px 28px -16px rgba(11,27,61,.22);
+  background: var(--app-bg); -webkit-tap-highlight-color: transparent; }
+@media (prefers-color-scheme: dark) { body.app { --app-bg: #06102A; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px -18px rgba(0,0,0,.7); } }
+
+/* Top bar */
+.app-top .top-in { max-width: none; padding: 0 16px; height: 56px; gap: 12px; }
+.app-top .logo { font-size: 1.2rem; flex-shrink: 0; }
+.app-title { flex: 1; min-width: 0; font-weight: 600; font-size: 1rem; color: var(--white); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-left: 12px; border-left: 1px solid rgba(255,255,255,.22); }
+.app-right { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.app-tag { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--navy); background: #C9D6F2; border-radius: 999px; padding: 3px 9px; }
+.app-buyer .app-top .top-in { justify-content: space-between; }
+
+/* Tab bar: phones (bottom) */
+.app-nav { position: fixed; z-index: 70; left: 0; right: 0; bottom: 0; display: flex; align-items: stretch; justify-content: space-around;
+  height: calc(var(--tab-h) + env(safe-area-inset-bottom)); padding: 0 4px env(safe-area-inset-bottom);
+  background: var(--card); border-top: 1px solid var(--line); box-shadow: 0 -6px 24px -12px rgba(11,27,61,.25); }
+.app-tab { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  color: var(--muted); text-decoration: none; font: inherit; font-size: .7rem; font-weight: 600; background: none; border: 0; cursor: pointer; padding: 6px 2px; position: relative; }
+.tab-icon { display: grid; place-items: center; width: 44px; height: 28px; border-radius: 999px; transition: background .15s; }
+.tab-icon svg { width: 22px; height: 22px; }
+.app-tab.on { color: var(--text); }
+.app-tab.on .tab-icon { background: var(--brand-soft); }
+.app-tab:active .tab-icon { transform: scale(.92); }
+.tab-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.tab-primary .tab-icon { width: 48px; height: 48px; margin-top: -22px; background: var(--navy); color: #fff; box-shadow: 0 8px 18px -6px rgba(11,27,61,.6); border: 3px solid var(--card); }
+.tab-primary.on .tab-icon { background: var(--navy); }
+@media (prefers-color-scheme: dark) { .tab-primary .tab-icon { background: #F4F7FC; color: #0B1B3D; } .tab-primary.on .tab-icon { background: #F4F7FC; } }
+.tab-extra, .tab-logout { display: none; }
+.app-seller .tab-logout { display: none; } /* sellers log out from Settings on phones */
+.app-team .tab-logout { display: flex; }   /* the team bar has room for it */
+
+/* "More" sheet (admin, phones) */
+.app-sheet-shade { display: none; position: fixed; inset: 0; z-index: 69; background: rgba(7,18,42,.45); }
+.app-sheet { display: none; position: fixed; z-index: 72; left: 8px; right: 8px; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 8px);
+  background: var(--card); border-radius: 18px; padding: 8px; box-shadow: 0 18px 50px rgba(0,0,0,.3); }
+.app-sheet a, .app-sheet button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 10px; border-radius: 12px; border: 0; background: none;
+  color: var(--text); font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; text-align: left; }
+.app-sheet a.on, .app-sheet a:hover, .app-sheet button:hover { background: var(--brand-soft); }
+.app-sheet .tab-icon { width: 28px; }
+.more-open .app-sheet-shade, .more-open .app-sheet { display: block; }
+
+/* Room for the tab bar, and everything that sits at the bottom of the screen moves up above it */
+body.has-tabs { padding-bottom: calc(var(--tab-h) + env(safe-area-inset-bottom)); }
+.testbar.testbar-top { position: sticky; top: 56px; z-index: 49; font-size: .72rem; padding: 3px 8px; }
+body.has-tabs .tour-help { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 34px); }
+body.has-tabs .tour-invite { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 34px); }
+body.has-tabs .live-bar { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 38px); }
+body.has-tabs .consent { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 34px); }
+body.app .site-foot-slim { padding-bottom: 40px; }
+
+/* Side menu: computers and tablets in landscape */
+@media (min-width: 960px) {
+  .app-nav { top: 56px; bottom: 0; right: auto; width: var(--side-w); height: auto; flex-direction: column; justify-content: flex-start; gap: 2px;
+    padding: 16px 12px; border-top: 0; border-right: 1px solid var(--line); box-shadow: none; overflow-y: auto; }
+  .app-tab { flex: 0 0 auto; flex-direction: row; justify-content: flex-start; gap: 10px; font-size: .95rem; padding: 4px 6px; border-radius: 12px; color: var(--muted); }
+  .app-tab:hover { background: var(--bg); color: var(--text); }
+  .app-tab .tab-icon { width: 36px; height: 36px; border-radius: 10px; }
+  .app-tab.on { background: var(--brand-soft); }
+  .app-tab.on .tab-icon { background: transparent; }
+  .tab-primary { order: -1; margin-bottom: 10px; background: var(--navy); color: #fff !important; }
+  .tab-primary:hover { background: var(--brand-dark); }
+  .tab-primary .tab-icon { margin: 0; width: 36px; height: 36px; border: 0; box-shadow: none; background: transparent; }
+  .tab-primary.on { background: var(--navy); }
+  .tab-primary.on .tab-icon { background: transparent; }
+  @media (prefers-color-scheme: dark) { .tab-primary { background: #F4F7FC; color: #0B1B3D !important; } .tab-primary .tab-icon, .tab-primary.on .tab-icon { background: transparent; } }
+  .tab-extra { display: flex; }
+  .tab-more { display: none; }
+  .app-seller .tab-logout, .app-tab.tab-logout { display: flex; margin-top: auto; }
+  .app-sheet, .app-sheet-shade, .more-open .app-sheet, .more-open .app-sheet-shade { display: none; }
+  body.has-tabs { padding-bottom: 0; padding-left: var(--side-w); }
+  body.has-tabs .app-top { margin-left: calc(-1 * var(--side-w)); }
+  body.has-tabs .tour-help, body.has-tabs .tour-invite { bottom: 40px; }
+  body.has-tabs .live-bar { bottom: 52px; }
+  body.has-tabs .consent { bottom: 12px; }
+}
+
+/* Content: one comfortable column, wider for the admin */
+body.app main { max-width: 760px; padding: 18px 16px 24px; }
+body.app-admin main, body.app-team main { max-width: 980px; }
+body.app .live-line, body.app .flash-wrap { max-width: 760px; }
+body.app-admin .live-line, body.app-admin .flash-wrap { max-width: 980px; }
+@media (prefers-reduced-motion: no-preference) {
+  body.app #app > * { animation: app-in .22s ease-out both; }
+  @keyframes app-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+}
+body.app h1 { font-size: 1.45rem; letter-spacing: -.01em; }
+body.app .page-title { font-size: 1.6rem; margin: 2px 0 14px; }
+body.app h2 { font-size: 1.08rem; }
+body.app .card-title { margin: 0 0 8px; font-size: 1.15rem; }
+
+/* Cards and lists: soft, borderless, rounded */
+body.app .card, body.app .list, body.app .stat, body.app .seg-card, body.app .date-filters, body.app .rules, body.app fieldset {
+  border-color: transparent; border-radius: 18px; box-shadow: var(--shadow); }
+body.app .card { padding: 18px; }
+body.app fieldset { background: var(--card); }
+body.app .card fieldset { box-shadow: none; background: var(--bg); border: 0; padding: 4px 14px 12px; }
+body.app .card fieldset legend { float: left; width: 100%; padding: 12px 0 0; }
+body.app .card fieldset legend + * { clear: both; }
+body.app .rules { background: var(--card); }
+body.app .list { border-radius: 18px; }
+body.app .row { padding: 14px 16px; min-height: 64px; align-items: center; }
+body.app a.row { position: relative; padding-right: 34px; }
+body.app a.row::after { content: ""; position: absolute; right: 14px; top: 50%; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-top: 2px solid var(--muted);
+  transform: translateY(-50%) rotate(45deg); opacity: .55; }
+body.app a.row:active { background: var(--bg); }
+body.app .card-warn { box-shadow: var(--shadow), inset 0 0 0 2px var(--warn); }
+body.app .callout { border-radius: 14px; }
+body.app .narrow { max-width: 560px; }
+
+/* Numbers at a glance: swipeable on phones */
+body.app .stats { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 14px -16px; padding: 4px 16px 10px; scrollbar-width: none; }
+body.app .stats::-webkit-scrollbar { display: none; }
+body.app .stat { flex: 1 0 140px; scroll-snap-align: start; padding: 14px 16px; background: var(--card); }
+body.app .stat span { font-size: 1.5rem; }
+body.app .stat:first-child { background: var(--navy); color: #C9D6F2; }
+body.app .stat:first-child span { color: #fff; }
+@media (prefers-color-scheme: dark) { body.app .stat:first-child { background: #1A3266; } }
+
+/* Quick actions under the numbers (dashboard): two big tiles on phones */
+body.app-seller #app > .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px 0 8px; }
+body.app-seller #app > .actions .btn { margin: 0; text-align: center; padding: 14px 10px; }
+
+/* Buttons and fields: finger-sized */
+body.app .btn { min-height: 48px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-align: center; }
+body.app .btn-small { min-height: 38px; border-radius: 11px; }
+body.app .btn:active { transform: scale(.98); }
+body.app .form input:not([type=radio]):not([type=checkbox]), body.app .form select, body.app .form textarea { min-height: 50px; border-radius: 12px; background: var(--card); }
+body.app .form textarea { min-height: 96px; }
+body.app label.choice { border-radius: 12px; min-height: 50px; }
+@media (max-width: 599px) {
+  body.app .card .btn:not(.btn-small), body.app .modal .btn { width: 100%; }
+  body.app .actions .btn { flex: 1 1 auto; }
+}
+
+/* Buyer's deal link (step 1 and 2): progress bar and a pay button that stays in reach */
+.app-buyer .steps { gap: 0; background: var(--card); border-radius: 999px; padding: 4px; box-shadow: var(--shadow); margin: 0 0 16px; }
+.app-buyer .steps li { border: 0; background: none; border-radius: 999px; padding: 8px 6px; font-size: .82rem; }
+.app-buyer .steps li.on { background: var(--navy); color: #fff; border: 0; }
+.app-buyer .steps li.done { color: var(--ok); }
+.app-buyer .steps li.done::before { content: "✓ "; }
+@media (prefers-color-scheme: dark) { .app-buyer .steps li.on { background: #F4F7FC; color: #0B1B3D; } }
+@media (max-width: 699px) {
+  .app-buyer form > .btn-block:last-child, .app-buyer form > .btn-confirm {
+    position: sticky; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 5; box-shadow: 0 10px 24px -8px rgba(11,27,61,.55); }
+}
+.app-buyer .pinbox { border-radius: 18px; }
+
+/* Tables inside cards scroll sideways on small screens instead of squashing */
+body.app .card table.breakdown { display: block; overflow-x: auto; }
+body.app .card table.breakdown tbody { display: table; width: 100%; }
+
+/* Seller Settings: who you are, and how far setup has got */
+.me-head { display: flex; align-items: center; gap: 12px; }
+.avatar { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--navy); color: #fff; font-weight: 700; font-size: 1.2rem; flex-shrink: 0; }
+@media (prefers-color-scheme: dark) { .avatar { background: #F4F7FC; color: #0B1B3D; } }
+.setup-steps { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.setup-steps span { font-size: .82rem; font-weight: 600; padding: 5px 12px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+.setup-steps span.done { background: var(--ok-soft); color: var(--ok); }
+
+/* The invite pop-up after login */
+.invite-modal form { text-align: center; }
+.invite-modal p { color: var(--text); }
+.invite-modal-gift { font-size: 2.6rem; line-height: 1; }
+.invite-modal-code { font-size: .95rem; color: var(--muted) !important; }
+.invite-modal-code strong { display: inline-block; margin-left: 6px; padding: 3px 10px; border-radius: 8px; background: var(--brand-soft); color: var(--text); letter-spacing: .06em; }
+.invite-modal-foot { font-size: .9rem; margin-top: 4px !important; }
+.invite-modal .callout { text-align: left; margin: 0; }
+@media (max-width: 599px) {
+  .modal { margin: auto auto 0; max-width: 100vw; width: 100%; border-radius: 22px 22px 0 0; }
+  .modal form { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+}
