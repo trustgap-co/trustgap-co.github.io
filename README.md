@@ -153,6 +153,15 @@ shown to admin on the order page and copied to Google Sheets.
    buttons. Sellers can add their account to the phone's home screen (`docs/manifest.webmanifest`;
    no offline caching, so updates show straight away). The seller's invite card lives in Settings and
    pops up on the dashboard once after each login.
+25. **Deal safety check** (`docs/check.html`, in the site menu as "Is it safe?"): a free, no-login page
+   in Pidgin (default) or English. Buyers or sellers answer quick yes/no questions, or paste the
+   message they got, and see the red flags in the deal (never a verdict on a person), with suspicious
+   words highlighted. Each result ends with a WhatsApp message asking the other side to use TrustGap
+   and a picture to share on status. Nothing typed is saved or sent; analytics record only the result
+   level (`safety_check_done`).
+   Each result has its own voice: the level always follows the answers, but the headline, note,
+   red-flag explanations, WhatsApp message and share line are picked fresh each time from
+   `docs/assets/js/check-voices.js` (Pidgin and English), using every version before repeating one.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
