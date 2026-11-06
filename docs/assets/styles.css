@@ -966,3 +966,16 @@ body.app .row > div:first-child { min-width: 0; flex: 1 1 auto; }
 .sc-safe h3, .sc-safe p { margin: 0; }
 .sc-safe .btn { margin: 0; }
 .sc-disc { margin: 14px 0 0; }
+.sc-thinking { display: flex; align-items: center; gap: 14px; border-radius: 20px; padding: 22px; }
+.sc-thinking p { margin: 0; font-weight: 600; }
+.sc-dots { display: inline-flex; gap: 5px; }
+.sc-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--navy); opacity: .3; }
+@media (prefers-color-scheme: dark) { .sc-dots i { background: #F4F7FC; } }
+@media (prefers-reduced-motion: no-preference) {
+  .sc-dots i { animation: sc-dot 1s infinite ease-in-out; }
+  .sc-dots i:nth-child(2) { animation-delay: .15s; } .sc-dots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes sc-dot { 0%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-4px); } }
+  .sc-res { animation: sc-pop .35s ease-out both; }
+  @keyframes sc-pop { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+}
+#sc-result { scroll-margin-top: 84px; }

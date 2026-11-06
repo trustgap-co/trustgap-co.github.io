@@ -4,6 +4,7 @@
 // warning signs in the deal, never the person, and every result ends with the TrustGap way to pay.
 import { html, raw, show, link, shell, track, $, $$ } from '../core.js';
 import { SITE } from '../site-info.js';
+import { SHORT, REASON_ALT, HEAD, NOTE, THINKING, WA, CARD } from '../check-voices.js';
 
 shell('public');
 
@@ -161,16 +162,75 @@ function highlighted(text, marks) {
 function score() {
   const qs = QUESTIONS[mode];
   let points = 0, max = 0, flags = 0;
-  const reasons = [];
+  const ids = [];
   for (const q of qs) {
     max += q[1];
-    if (answers[q[0]] === 'yes') { points += q[1]; flags++; reasons.push(lang === 'pcm' ? q[4] : q[5]); }
+    if (answers[q[0]] === 'yes') { points += q[1]; flags++; ids.push(q[0]); }
     else if (answers[q[0]] === 'unsure') points += q[1] / 2;
   }
   const marks = pasted.trim() ? findPhrases(pasted) : [];
   points += Math.min(4, marks.length); // words in the message add up to 4 points
   const level = points >= 7 ? 'high' : points >= 3 ? 'mid' : 'low';
-  return { points, max, flags, total: qs.length, reasons, marks, level };
+  ids.sort((a, b) => weight(b) - weight(a));
+  return { points, max, flags, total: qs.length, ids, marks, level, voice: chooseVoice(level, ids) };
+}
+
+// ---------------------------------------------------------------- the voice of each result
+// The level never changes for the same answers; the words do. Each check picks a fresh headline,
+// note, explanation for each red flag, WhatsApp message and picture line, never the one used last
+// time on this device, so two checks of the same deal read differently.
+const weight = (id) => QUESTIONS[mode].find((q) => q[0] === id)?.[1] || 0;
+const key = (id) => (mode === 'seller' && id === 'pressure' ? 's_pressure' : id);
+// A shuffle bag per kind of line: every version is used once before any repeats, and the next round
+// never starts with the line just used. Kept for this visit only (sessionStorage).
+function pickIndex(name, n, ok = () => true) {
+  let bags = {};
+  try { bags = JSON.parse(sessionStorage.getItem('tg_check_voice') || '{}'); } catch { /* private mode */ }
+  const bag = bags[name] || { left: [], last: -1 };
+  const allowed = [...Array(n).keys()].filter(ok);
+  let left = bag.left.filter((i) => allowed.includes(i));
+  if (!left.length) left = allowed.filter((i) => i !== bag.last);
+  if (!left.length) left = allowed.length ? allowed : [0];
+  const i = left[Math.floor(Math.random() * left.length)];
+  bags[name] = { left: left.filter((x) => x !== i), last: i };
+  try { sessionStorage.setItem('tg_check_voice', JSON.stringify(bags)); } catch { /* private mode */ }
+  return i;
+}
+function chooseVoice(level, ids) {
+  const heads = HEAD.en[mode][level];
+  const needs = (i) => (heads[i].includes('{top2}') ? ids.length >= 2 : heads[i].includes('{top}') ? ids.length >= 1 : true);
+  return {
+    head: pickIndex(`head-${mode}-${level}`, heads.length, needs),
+    note: pickIndex(`note-${mode}-${level}`, NOTE.en[mode][level].length),
+    wa: pickIndex(`wa-${mode}`, WA.en[mode].length),
+    card: pickIndex(`card-${mode}`, CARD.en[mode].length),
+    alt: Object.fromEntries(ids.map((id) => [id, Math.random() < 0.5])),
+  };
+}
+const fill = (text, r) => text
+  .replace('{top2}', SHORT[lang][key(r.ids[1])] || '')
+  .replace('{top}', SHORT[lang][key(r.ids[0])] || '')
+  .replace('{n}', String(r.flags + r.marks.length))
+  .replace(/^./, (c) => c.toUpperCase());
+const headline = (L, r) => fill(HEAD[lang][mode][r.level][r.voice.head], r);
+const noteText = (r) => fill(NOTE[lang][mode][r.level][r.voice.note], r);
+const reasonText = (id, r) => {
+  const q = QUESTIONS[mode].find((x) => x[0] === id);
+  return r.voice.alt[id] ? REASON_ALT[lang][key(id)] : lang === 'pcm' ? q[4] : q[5];
+};
+const cardLine = (r) => CARD[lang][mode][r.voice.card];
+
+// A short "thinking" moment before the result, so it feels like the page is looking at the deal.
+function think(done) {
+  const lines = THINKING[lang][mode];
+  const quick = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const box = $('#sc-result');
+  box.innerHTML = String(html`<section class="card sc-thinking" aria-live="polite"><span class="sc-dots" aria-hidden="true"><i></i><i></i><i></i></span><p id="sc-think">${lines[0]}</p></section>`);
+  box.scrollIntoView({ behavior: quick ? 'auto' : 'smooth', block: 'start' });
+  let i = 0;
+  const step = quick ? 350 : 380 + Math.random() * 120;
+  const timer = setInterval(() => { i++; if (i < lines.length) $('#sc-think').textContent = lines[i]; }, step);
+  setTimeout(() => { clearInterval(timer); done(); }, quick ? 350 : step * lines.length);
 }
 
 function render() {
@@ -205,15 +265,15 @@ function render() {
 
 function resultView(L) {
   const r = result;
-  const note = (mode === 'buyer' ? L.levelNote : L.sellerLevelNote)[r.level];
-  const msg = (mode === 'buyer' ? L.msgSeller : L.msgBuyer)(ctaUrl());
+  const note = noteText(r);
+  const msg = WA[lang][mode][r.voice.wa](ctaUrl());
   return html`<section class="card sc-res sc-${r.level}" aria-live="polite">
     <div class="sc-meter" aria-hidden="true"><span style="width:${Math.min(100, Math.round(r.points / (r.max + 4) * 100) + 8)}%"></span></div>
     <p class="sc-flags">${r.level === 'high' ? '🚩🚩🚩' : r.level === 'mid' ? '🚩' : '✅'} ${L.flags(r.flags + r.marks.length)}</p>
     <h2>${headline(L, r)}</h2>
     <p>${note}</p>
     <h3>${L.why}</h3>
-    ${r.reasons.length ? html`<ul class="sc-reasons">${r.reasons.map((x) => html`<li>${x}</li>`)}</ul>` : html`<p class="muted">${L.noFlags}</p>`}
+    ${r.ids.length ? html`<ul class="sc-reasons">${r.ids.map((id) => html`<li>${reasonText(id, r)}</li>`)}</ul>` : html`<p class="muted">${L.noFlags}</p>`}
     ${r.marks.length ? html`<p class="small"><strong>${L.inMessage}</strong></p><blockquote class="sc-msg">${raw(highlighted(pasted, r.marks))}</blockquote>` : ''}
     <div class="sc-safe"><h3>✅ ${L.safeWay}</h3><p>${mode === 'buyer' ? L.buyerSafe : L.sellerSafe}</p>
       <a class="btn btn-block btn-whatsapp" id="sc-wa" href="${`https://wa.me/?text=${encodeURIComponent(msg)}`}" target="_blank" rel="noopener">${mode === 'buyer' ? L.askSeller : L.askBuyer}</a>
@@ -224,7 +284,6 @@ function resultView(L) {
   </section>`;
 }
 
-const headline = (L, r) => (mode === 'buyer' ? L.level : L.sellerLevel)[r.level];
 
 // The picture to post on WhatsApp status or Instagram stories.
 function card() {
@@ -241,7 +300,7 @@ function card() {
   g.fillText(r.level === 'low' ? '✅' : '🚩', 540, 500);
   g.font = 'bold 76px Roboto, Arial, sans-serif'; g.fillText(L.flags(r.flags + r.marks.length), 540, 640);
   g.font = '600 50px Roboto, Arial, sans-serif'; wrap(g, headline(L, r), 540, 730, 820, 60);
-  g.fillStyle = '#F4F7FC'; g.font = '46px Roboto, Arial, sans-serif'; wrap(g, mode === 'buyer' ? L.cardLine : L.sellerCardLine, 540, 960, 880, 60);
+  g.fillStyle = '#F4F7FC'; g.font = '46px Roboto, Arial, sans-serif'; wrap(g, cardLine(r), 540, 960, 880, 60);
   g.fillStyle = '#C9D3EA'; g.font = '38px Roboto, Arial, sans-serif'; g.fillText(`${location.host}/check.html`, 540, 1200);
   return new Promise((res) => c.toBlob(res, 'image/png'));
 }
@@ -255,7 +314,7 @@ async function share() {
   const blob = await card();
   const file = new File([blob], 'trustgap-deal-check.png', { type: 'image/png' });
   if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], text: `${mode === 'buyer' ? t().cardLine : t().sellerCardLine} ${location.origin}${location.pathname}` }); track('share', { method: 'native', content_type: 'safety_check' }); return; } catch { /* closed */ }
+    try { await navigator.share({ files: [file], text: `${cardLine(result)} ${location.origin}${location.pathname}` }); track('share', { method: 'native', content_type: 'safety_check' }); return; } catch { /* closed */ }
   }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
   $('#sc-share').textContent = '✓ ' + t().saved;
@@ -269,9 +328,10 @@ document.addEventListener('click', (e) => {
   else if (b.dataset.mode) { pasted = $('#sc-paste')?.value || pasted; mode = b.dataset.mode; answers = {}; result = null; render(); }
   else if (b.dataset.q) { pasted = $('#sc-paste')?.value || pasted; answers[b.dataset.q] = b.dataset.a; const keep = scrollY; render(); scrollTo(0, keep); }
   else if (b.id === 'sc-check') {
-    pasted = $('#sc-paste').value; result = score(); render();
-    $('#sc-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    track('safety_check_done', { mode, level: result.level, flags: result.flags + result.marks.length, language: lang, pasted: Boolean(pasted.trim()) });
+    pasted = $('#sc-paste').value; result = null;
+    const next = score();
+    think(() => { result = next; render(); $('#sc-result').scrollIntoView({ block: 'start' }); });
+    track('safety_check_done', { mode, level: next.level, flags: next.flags + next.marks.length, language: lang, pasted: Boolean(pasted.trim()) });
   }
   else if (b.id === 'sc-again') { answers = {}; pasted = ''; result = null; render(); scrollTo({ top: 0, behavior: 'smooth' }); }
   else if (b.id === 'sc-share') share();
