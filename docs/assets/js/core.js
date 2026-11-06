@@ -598,6 +598,7 @@ const PUBLIC_NAV = [
   ['buyers.html', 'For buyers'],
   ['sellers.html', 'For sellers'],
   ['fees.html', 'Fees'],
+  ['check.html', 'Is it safe?'],
   ['faq.html', 'FAQ'],
   ['about.html', 'About'],
 ];
