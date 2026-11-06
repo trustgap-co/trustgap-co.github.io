@@ -911,3 +911,15 @@ body.app .card table.breakdown tbody { display: table; width: 100%; }
   .modal { margin: auto auto 0; max-width: 100vw; width: 100%; border-radius: 22px 22px 0 0; }
   .modal form { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
 }
+
+/* Lists with buttons in each row (Admin → Sellers, Admin → Team): on phones and narrow screens the
+   buttons go under the text, so names and emails keep the full width. */
+body.app .row > div:first-child { min-width: 0; flex: 1 1 auto; }
+@media (max-width: 1199px) {
+  body.app .row:has(> .right.actions), body.app .row:has(> .task-controls) { flex-direction: column; align-items: stretch; gap: 10px; }
+  body.app .row > .right.actions { text-align: left; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
+  body.app .row > .right.actions .btn { flex: 1 1 140px; margin: 0; }
+  body.app .row > .right.actions form { flex: 1 1 140px; }
+  body.app .row > .right.actions form .btn { width: 100%; }
+  body.app .row > .task-controls { text-align: left; }
+}
