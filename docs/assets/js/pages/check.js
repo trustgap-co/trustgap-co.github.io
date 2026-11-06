@@ -5,6 +5,8 @@
 import { html, raw, show, link, shell, track, $, $$ } from '../core.js';
 import { SITE } from '../site-info.js';
 import { SHORT, REASON_ALT, HEAD, NOTE, THINKING, WA, CARD } from '../check-voices.js';
+import { VILLAINS, MET, PHRASE_VILLAIN, PHRASE_NOTES, wahala, meterLabel, METER_TITLE, SAVED, AMOUNT_LABEL, DARE, DARE_BUTTON,
+  BINGO, BINGO_LABEL, BINGO_TEXT, hasBingo, edition, EDITION } from '../check-fun.js';
 
 shell('public');
 
@@ -140,6 +142,8 @@ let lang = (() => { try { return localStorage.getItem('tg_check_lang') || 'pcm';
 let mode = 'buyer';
 let answers = {};
 let pasted = '';
+let amount = '';
+const season = edition();
 let result = null;
 const t = () => T[lang];
 const ctaUrl = () => link(SITE.launched ? 'seller/signup.html' : 'sellers.html');
@@ -153,6 +157,13 @@ function findPhrases(text) {
   for (const m of marks) { const last = merged.at(-1); if (last && m[0] <= last[1]) last[1] = Math.max(last[1], m[1]); else merged.push([...m]); }
   return merged;
 }
+// Which kinds of scam words appear (PHRASES order), for the notes and the character.
+function phraseHits(text) {
+  const found = [];
+  PHRASES.forEach((re, i) => { re.lastIndex = 0; const m = re.exec(text); re.lastIndex = 0; if (m) found.push([m.index, i]); });
+  return found.sort((a, b) => a[0] - b[0]).map(([, i]) => i);
+}
+const nairaText = (n) => '₦' + Number(n).toLocaleString('en-NG');
 function highlighted(text, marks) {
   let out = '', at = 0;
   for (const [a, b] of marks) { out += esc(text.slice(at, a)) + `<mark>${esc(text.slice(a, b))}</mark>`; at = b; }
@@ -172,7 +183,15 @@ function score() {
   points += Math.min(4, marks.length); // words in the message add up to 4 points
   const level = points >= 7 ? 'high' : points >= 3 ? 'mid' : 'low';
   ids.sort((a, b) => weight(b) - weight(a));
-  return { points, max, flags, total: qs.length, ids, marks, level, voice: chooseVoice(level, ids) };
+  const hits = pasted.trim() ? phraseHits(pasted) : [];
+  const villain = level === 'low' ? null
+    : ids.length ? key(ids[0]) : VILLAINS[PHRASE_VILLAIN[hits[0]]] ? PHRASE_VILLAIN[hits[0]] : 'smooth';
+  const bingo = BINGO[mode].map((id) => (id === 'words' ? hits.length > 0 : answers[id === 's_pressure' ? 'pressure' : id] === 'yes'));
+  const amt = Number(String(amount).replace(/[^\d]/g, '')) || 0;
+  const voice = chooseVoice(level, ids);
+  voice.saved = pickIndex(`saved-${mode}`, SAVED.en[mode].length);
+  voice.dare = pickIndex(`dare-${dareKind(level)}`, DARE.en[dareKind(level)].length);
+  return { points, max, flags, total: qs.length, ids, marks, hits, level, meter: wahala(points, level), villain, bingo, amt, voice };
 }
 
 // ---------------------------------------------------------------- the voice of each result
@@ -241,6 +260,7 @@ function render() {
   $('.page-hero .container').innerHTML = String(html`<p class="sc-lang">
       <button type="button" class="sc-lang-btn ${lang === 'pcm' ? 'on' : ''}" data-lang="pcm" aria-pressed="${lang === 'pcm'}">Pidgin</button>
       <button type="button" class="sc-lang-btn ${lang === 'en' ? 'on' : ''}" data-lang="en" aria-pressed="${lang === 'en'}">English</button></p>
+    ${season ? html`<p class="sc-edition">${EDITION[season][lang][0]}</p>` : ''}
     <h1>${L.title}</h1><p>${L.lead}</p><p class="sc-private">🔒 ${L.private}</p>`);
   show('.page-hero + .section .container', html`<div class="sc-wrap">
     <section class="card sc-card">
@@ -256,6 +276,8 @@ function render() {
         </div></li>`)}</ol>
       <label class="sc-paste" for="sc-paste"><strong>${L.paste}</strong><small>${L.pasteHint}</small>
         <textarea id="sc-paste" rows="4" placeholder="${L.pastePh}">${pasted}</textarea></label>
+      <label class="sc-paste" for="sc-amt"><strong>${AMOUNT_LABEL[lang][mode]}</strong><small>${AMOUNT_LABEL[lang].hint}</small>
+        <input id="sc-amt" inputmode="numeric" autocomplete="off" placeholder="₦85,000" value="${amount}"></label>
       <div class="sc-go"><span class="muted small">${L.answered(done, qs.length)}</span>
         <button type="button" class="btn btn-lg" id="sc-check">${L.check}</button></div>
     </section>
@@ -268,40 +290,81 @@ function resultView(L) {
   const note = noteText(r);
   const msg = WA[lang][mode][r.voice.wa](ctaUrl());
   return html`<section class="card sc-res sc-${r.level}" aria-live="polite">
-    <div class="sc-meter" aria-hidden="true"><span style="width:${Math.min(100, Math.round(r.points / (r.max + 4) * 100) + 8)}%"></span></div>
-    <p class="sc-flags">${r.level === 'high' ? '🚩🚩🚩' : r.level === 'mid' ? '🚩' : '✅'} ${L.flags(r.flags + r.marks.length)}</p>
+    <div class="sc-wahala"><p class="sc-wahala-head"><span>${METER_TITLE[lang]}</span><strong>${r.meter}/10</strong></p>
+      <div class="sc-segs" aria-hidden="true">${[...Array(10).keys()].map((i) => html`<i class="${i < r.meter ? 'on' : ''}"></i>`)}</div>
+      <p class="sc-wahala-label">${meterLabel(lang, r.meter)} · ${L.flags(r.flags + r.marks.length)}</p></div>
+    ${r.villain ? html`<div class="sc-villain"><span class="sc-v-face" aria-hidden="true">🦹🏾</span>
+      <div><strong>${MET[lang](VILLAINS[r.villain][0])}</strong><span>${VILLAINS[r.villain][lang === 'pcm' ? 1 : 2]}</span></div></div>` : ''}
     <h2>${headline(L, r)}</h2>
     <p>${note}</p>
+    ${r.level !== 'low' && r.amt ? html`<p class="sc-saved">💰 ${SAVED[lang][mode][r.voice.saved].replace('{amt}', nairaText(r.amt))}</p>` : ''}
+    ${r.level !== 'low' && season ? html`<p class="sc-season">${EDITION[season][lang][1]}</p>` : ''}
     <h3>${L.why}</h3>
     ${r.ids.length ? html`<ul class="sc-reasons">${r.ids.map((id) => html`<li>${reasonText(id, r)}</li>`)}</ul>` : html`<p class="muted">${L.noFlags}</p>`}
-    ${r.marks.length ? html`<p class="small"><strong>${L.inMessage}</strong></p><blockquote class="sc-msg">${raw(highlighted(pasted, r.marks))}</blockquote>` : ''}
+    ${r.marks.length ? html`<p class="small"><strong>${L.inMessage}</strong></p><blockquote class="sc-msg">${raw(highlighted(pasted, r.marks))}</blockquote>
+      ${r.level !== 'low' ? html`<ul class="sc-notes">${r.hits.map((i) => html`<li>${PHRASE_NOTES[lang][i]}</li>`)}</ul>` : ''}` : ''}
+    ${bingoView(r)}
     <div class="sc-safe"><h3>✅ ${L.safeWay}</h3><p>${mode === 'buyer' ? L.buyerSafe : L.sellerSafe}</p>
       <a class="btn btn-block btn-whatsapp" id="sc-wa" href="${`https://wa.me/?text=${encodeURIComponent(msg)}`}" target="_blank" rel="noopener">${mode === 'buyer' ? L.askSeller : L.askBuyer}</a>
       ${mode === 'seller' ? html`<a class="btn btn-block" href="${ctaUrl()}" id="sc-sell">${SITE.launched ? L.sellCta : L.earlyCta}</a>` : ''}
       <button type="button" class="btn btn-block btn-secondary" id="sc-share">📸 ${L.share}</button>
+      <a class="btn btn-block btn-secondary" id="sc-dare" href="${`https://wa.me/?text=${encodeURIComponent(dareText(r))}`}" target="_blank" rel="noopener">${DARE_BUTTON[lang]}</a>
       <p class="small center"><a href="${link('how.html')}">${L.learn}</a> · <button type="button" class="linklike" id="sc-again">${L.again}</button></p></div>
     <p class="fine sc-disc">${L.disclaimer}</p>
   </section>`;
 }
 
+function bingoView(r) {
+  const B = BINGO_TEXT[lang], got = r.bingo.filter(Boolean).length;
+  return html`<div class="sc-bingo"><p class="sc-bingo-head"><strong>${B.title}</strong><span>${B.got(got, r.bingo.length)}</span></p>
+    <div class="sc-grid">${BINGO[mode].map((id, i) => html`<span class="${r.bingo[i] ? 'on' : ''}">${r.bingo[i] ? '🚩 ' : ''}${BINGO_LABEL[lang][id]}</span>`)}</div>
+    ${r.level !== 'low' && hasBingo(r.bingo) ? html`<p class="sc-bingo-win">${B.bingo}</p>` : ''}</div>`;
+}
+const dareKind = (level) => `${level === 'low' ? 'calm' : 'risky'}${mode === 'seller' ? '_s' : ''}`;
+const pageUrl = () => `${location.origin}${location.pathname}`;
+const dareText = (r) => DARE[lang][dareKind(r.level)][r.voice.dare]
+  .replace('{m}', r.meter).replace('{v}', r.villain ? VILLAINS[r.villain][0] : '').replace('{u}', pageUrl());
 
-// The picture to post on WhatsApp status or Instagram stories.
+// The picture to post on WhatsApp status or Instagram stories: the verdict, the Wahala Meter, the
+// character and the bingo card. Never anything they typed, never a name.
 function card() {
   const L = t(), r = result;
   const c = document.createElement('canvas'); c.width = 1080; c.height = 1350;
   const g = c.getContext('2d');
   const color = { low: '#0E7A4A', mid: '#9A5B00', high: '#B42318' }[r.level];
+  const F = 'Roboto, Arial, sans-serif';
   g.fillStyle = '#0B1B3D'; g.fillRect(0, 0, 1080, 1350);
-  g.fillStyle = '#F4F7FC'; g.font = 'bold 64px Roboto, Arial, sans-serif'; g.fillText('Trust', 80, 140);
-  const w = g.measureText('Trust').width; g.font = '64px Roboto, Arial, sans-serif'; g.fillText('Gap', 80 + w, 140);
-  g.fillStyle = '#9DB9F5'; g.font = '600 40px Roboto, Arial, sans-serif'; g.fillText(L.cardTitle.toUpperCase(), 80, 230);
-  g.fillStyle = color; roundRect(g, 80, 300, 920, 520, 40); g.fill();
-  g.fillStyle = '#FFFFFF'; g.font = '150px Roboto, Arial, sans-serif'; g.textAlign = 'center';
-  g.fillText(r.level === 'low' ? '✅' : '🚩', 540, 500);
-  g.font = 'bold 76px Roboto, Arial, sans-serif'; g.fillText(L.flags(r.flags + r.marks.length), 540, 640);
-  g.font = '600 50px Roboto, Arial, sans-serif'; wrap(g, headline(L, r), 540, 730, 820, 60);
-  g.fillStyle = '#F4F7FC'; g.font = '46px Roboto, Arial, sans-serif'; wrap(g, cardLine(r), 540, 960, 880, 60);
-  g.fillStyle = '#C9D3EA'; g.font = '38px Roboto, Arial, sans-serif'; g.fillText(`${location.host}/check.html`, 540, 1200);
+  g.textAlign = 'left';
+  g.fillStyle = '#F4F7FC'; g.font = `bold 60px ${F}`; g.fillText('Trust', 80, 120);
+  const w = g.measureText('Trust').width; g.font = `60px ${F}`; g.fillText('Gap', 80 + w, 120);
+  g.fillStyle = '#9DB9F5'; g.font = `600 34px ${F}`;
+  g.fillText((season ? `${L.cardTitle} · ${EDITION[season][lang][0]}` : L.cardTitle).toUpperCase(), 80, 180);
+  // The verdict panel
+  g.fillStyle = color; roundRect(g, 80, 220, 920, 520, 40); g.fill();
+  g.textAlign = 'center'; g.fillStyle = '#FFFFFF';
+  if (r.villain) {
+    g.font = `600 40px ${F}`; g.fillText(lang === 'pcm' ? 'I don meet' : 'I just met', 540, 300);
+    g.font = `bold 66px ${F}`; wrap(g, `${VILLAINS[r.villain][0]} 😂`, 540, 380, 840, 72);
+  } else {
+    g.font = `bold 60px ${F}`; wrap(g, headline(L, r), 540, 340, 840, 70);
+  }
+  g.font = `600 40px ${F}`; g.fillText(`${METER_TITLE[lang].toUpperCase()}: ${r.meter}/10`, 540, 540);
+  for (let i = 0; i < 10; i++) { g.fillStyle = i < r.meter ? '#FFFFFF' : 'rgba(255,255,255,.28)'; roundRect(g, 160 + i * 78, 570, 66, 34, 10); g.fill(); }
+  g.fillStyle = '#FFFFFF'; g.font = `600 44px ${F}`; g.fillText(meterLabel(lang, r.meter), 540, 680);
+  // Red Flag Bingo
+  const B = BINGO_TEXT[lang], got = r.bingo.filter(Boolean).length;
+  g.fillStyle = '#F4F7FC'; g.font = `bold 36px ${F}`; g.fillText(`${B.title} · ${B.got(got, r.bingo.length)}`, 540, 800);
+  BINGO[mode].forEach((id, i) => {
+    const x = 120 + (i % 3) * 286, y = 830 + Math.floor(i / 3) * 96;
+    g.fillStyle = r.bingo[i] ? '#B42318' : 'rgba(255,255,255,.08)'; roundRect(g, x, y, 266, 80, 16); g.fill();
+    g.fillStyle = r.bingo[i] ? '#FFFFFF' : '#9DB0D6'; g.font = `600 28px ${F}`;
+    g.fillText(`${r.bingo[i] ? '🚩 ' : ''}${BINGO_LABEL[lang][id]}`, x + 133, y + 50);
+  });
+  // The line and the address
+  g.fillStyle = '#F4F7FC'; g.font = `40px ${F}`;
+  const bottom = r.level !== 'low' && r.amt ? SAVED[lang][mode][r.voice.saved].replace('{amt}', nairaText(r.amt)) : cardLine(r);
+  wrap(g, bottom, 540, 1176, 900, 50);
+  g.fillStyle = '#C9D3EA'; g.font = `34px ${F}`; g.fillText(`${location.host}/check.html`, 540, 1300);
   return new Promise((res) => c.toBlob(res, 'image/png'));
 }
 function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
@@ -314,7 +377,7 @@ async function share() {
   const blob = await card();
   const file = new File([blob], 'trustgap-deal-check.png', { type: 'image/png' });
   if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], text: `${cardLine(result)} ${location.origin}${location.pathname}` }); track('share', { method: 'native', content_type: 'safety_check' }); return; } catch { /* closed */ }
+    try { await navigator.share({ files: [file], text: dareText(result) }); track('share', { method: 'native', content_type: 'safety_check' }); return; } catch { /* closed */ }
   }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
   $('#sc-share').textContent = '✓ ' + t().saved;
@@ -324,17 +387,18 @@ async function share() {
 document.addEventListener('click', (e) => {
   const b = e.target.closest('button, a');
   if (!b) return;
-  if (b.dataset.lang) { lang = b.dataset.lang; try { localStorage.setItem('tg_check_lang', lang); } catch { /* private mode */ } track('safety_check_language', { lang }); render(); }
-  else if (b.dataset.mode) { pasted = $('#sc-paste')?.value || pasted; mode = b.dataset.mode; answers = {}; result = null; render(); }
-  else if (b.dataset.q) { pasted = $('#sc-paste')?.value || pasted; answers[b.dataset.q] = b.dataset.a; const keep = scrollY; render(); scrollTo(0, keep); }
+  if (b.dataset.lang) { pasted = $('#sc-paste')?.value ?? pasted; amount = $('#sc-amt')?.value ?? amount; lang = b.dataset.lang; try { localStorage.setItem('tg_check_lang', lang); } catch { /* private mode */ } track('safety_check_language', { lang }); render(); }
+  else if (b.dataset.mode) { pasted = $('#sc-paste')?.value || pasted; amount = $('#sc-amt')?.value || amount; mode = b.dataset.mode; answers = {}; result = null; render(); }
+  else if (b.dataset.q) { pasted = $('#sc-paste')?.value || pasted; amount = $('#sc-amt')?.value || amount; answers[b.dataset.q] = b.dataset.a; const keep = scrollY; render(); scrollTo(0, keep); }
   else if (b.id === 'sc-check') {
-    pasted = $('#sc-paste').value; result = null;
+    pasted = $('#sc-paste').value; amount = $('#sc-amt').value; result = null;
     const next = score();
     think(() => { result = next; render(); $('#sc-result').scrollIntoView({ block: 'start' }); });
-    track('safety_check_done', { mode, level: next.level, flags: next.flags + next.marks.length, language: lang, pasted: Boolean(pasted.trim()) });
+    track('safety_check_done', { mode, level: next.level, meter: next.meter, villain: next.villain || 'none', amount_given: Boolean(next.amt), flags: next.flags + next.marks.length, language: lang, pasted: Boolean(pasted.trim()) });
   }
-  else if (b.id === 'sc-again') { answers = {}; pasted = ''; result = null; render(); scrollTo({ top: 0, behavior: 'smooth' }); }
+  else if (b.id === 'sc-again') { answers = {}; pasted = ''; amount = ''; result = null; render(); scrollTo({ top: 0, behavior: 'smooth' }); }
   else if (b.id === 'sc-share') share();
+  else if (b.id === 'sc-dare') track('share', { method: 'whatsapp', content_type: 'safety_check_dare' });
   else if (b.id === 'sc-wa') track('share', { method: 'whatsapp', content_type: mode === 'buyer' ? 'safety_check_ask_seller' : 'safety_check_ask_buyer' });
   else if (b.id === 'sc-sell') track('safety_check_cta', { cta: SITE.launched ? 'signup' : 'early_access' });
 });

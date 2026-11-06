@@ -162,6 +162,11 @@ shown to admin on the order page and copied to Google Sheets.
    Each result has its own voice: the level always follows the answers, but the headline, note,
    red-flag explanations, WhatsApp message and share line are picked fresh each time from
    `docs/assets/js/check-voices.js` (Pidgin and English), using every version before repeating one.
+   The fun layer (`docs/assets/js/check-fun.js`): a character named after the main trick ("Aunty
+   Today-Only", "Mr Screenshot Alert"), a Wahala Meter out of 10, the money kept when an amount is
+   entered, notes on scam words in the pasted message, Red Flag Bingo, dare-a-friend share text and
+   seasonal editions (ember months, Detty December, New Year). Jokes are about the trick, never the
+   person; low-risk results get none; the share picture never shows what was typed or a name.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

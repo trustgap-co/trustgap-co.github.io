@@ -983,3 +983,28 @@ body.app .row > div:first-child { min-width: 0; flex: 1 1 auto; }
 /* Tiles inside a navy band (the "Delivery included" sections) */
 .section.navy .tile { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.16); color: #F4F7FC; }
 .section.navy .tile h3 { color: #FFFFFF; }
+
+/* Safety check: Wahala Meter, the character, money kept, word notes, Red Flag Bingo, editions */
+.sc-edition { display: inline-block; margin: 0 0 10px !important; padding: 4px 12px; border-radius: 999px; background: #F4B740; color: #0B1B3D !important; font-weight: 700; font-size: .85rem !important; }
+.sc-wahala { margin-bottom: 14px; }
+.sc-wahala-head { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .06em; font-size: .8rem; font-weight: 700; color: var(--muted); }
+.sc-wahala-head strong { font-size: 1.6rem; letter-spacing: 0; color: var(--text); }
+.sc-segs { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
+.sc-segs i { height: 12px; border-radius: 4px; background: var(--bg); }
+.sc-low .sc-segs i.on { background: var(--ok); } .sc-mid .sc-segs i.on { background: var(--warn); } .sc-high .sc-segs i.on { background: #B42318; }
+.sc-wahala-label { margin: 6px 0 0; font-weight: 700; }
+.sc-villain { display: flex; gap: 12px; align-items: center; margin: 4px 0 10px; padding: 12px 14px; border-radius: 16px; background: var(--warn-soft); }
+.sc-v-face { font-size: 2rem; line-height: 1; }
+.sc-villain strong { display: block; font-size: 1.1rem; }
+.sc-villain span { color: var(--muted); font-size: .92rem; }
+.sc-saved { font-weight: 700; padding: 10px 14px; border-radius: 12px; background: var(--ok-soft); color: var(--ok); }
+.sc-season { font-style: italic; color: var(--muted); }
+.sc-notes { margin: -6px 0 14px; padding-left: 20px; font-size: .92rem; }
+.sc-notes li { margin: 4px 0; }
+.sc-bingo { margin: 6px 0 4px; }
+.sc-bingo-head { display: flex; justify-content: space-between; margin: 0 0 8px; }
+.sc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.sc-grid span { min-height: 48px; display: grid; place-items: center; text-align: center; padding: 6px; border-radius: 10px; font-size: .78rem; font-weight: 600; background: var(--bg); color: var(--muted); }
+.sc-grid span.on { background: #B42318; color: #fff; }
+.sc-bingo-win { margin: 8px 0 0; font-weight: 800; color: #B42318; text-align: center; }
+@media (prefers-color-scheme: dark) { .sc-bingo-win { color: #FF8A7A; } }
