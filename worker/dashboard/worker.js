@@ -110,8 +110,8 @@ function loadConfig(env) {
     // Dispute fee, paid by whoever TrustGap finds at fault: DISPUTE_FEE_PERCENT of the item price,
     // between DISPUTE_FEE_MIN_NAIRA and DISPUTE_FEE_NAIRA. DISPUTE_FEE_NAIRA = 0 switches it off.
     disputeFee: {
-      maxKobo: num(env.DISPUTE_FEE_NAIRA, 3e3) * 100,
-      percent: num(env.DISPUTE_FEE_PERCENT, 10),
+      maxKobo: num(env.DISPUTE_FEE_NAIRA, 15e3) * 100,
+      percent: num(env.DISPUTE_FEE_PERCENT, 4),
       minKobo: num(env.DISPUTE_FEE_MIN_NAIRA, 1e3) * 100
     },
     processing: {
@@ -1459,7 +1459,7 @@ __name(normaliseState, "normaliseState");
 
 // src/lib/terms.js
 var TERMS_VERSION = "2026-10-pilot-1";
-var TOS_VERSION = "2026-10-31";
+var TOS_VERSION = "2026-11-06";
 var TOS_DOCUMENTS = {
   seller: ["legal/terms.html", "legal/seller-terms.html", "legal/privacy.html"],
   buyer: ["legal/terms.html", "legal/disputes.html", "legal/privacy.html"]
@@ -4929,7 +4929,7 @@ __name(teamResolveDispute, "teamResolveDispute");
 
 // src/manual.js
 var MANUAL = {
-  updated: "2026-11-02",
+  updated: "2026-11-06",
   // Fez delivery codes, Customer Relations Admin
   sections: [
     {
@@ -5113,7 +5113,7 @@ var MANUAL = {
 <p><strong>Returned item isn\u2019t what was delivered</strong> (opened by the seller): compare the seller\u2019s photos of what came back with the buyer\u2019s photos and the listing. If the buyer swapped or damaged it, refuse or reduce the refund; the seller may be paid even though they have the item, because it isn\u2019t the item they sent. If the seller\u2019s claim doesn\u2019t hold up, refund the buyer as originally decided.</p>
 <p>The presets only fill in the amounts; you can adjust the deductions or the seller charge. The system refuses amounts that add up to more than the buyer paid. <strong>When the item goes back to the seller</strong> (refused at the door, or any refund after delivery), the seller can\u2019t also be paid: they get the item back instead. So on a door refusal there is no \u201Cpay the seller\u201D option: if the item was correct, use <em>Buyer refused a correct item</em>.</p>
 <h3>Who is at fault, and the dispute fee</h3>
-<p>Every decision says who is at fault. Each deal shows its dispute fee (10% of the item price, between \u20A61,000 and \u20A63,000; older deals have none). The presets choose a fault for you; check it.</p>
+<p>Every decision says who is at fault. Each deal shows its dispute fee (4% of the item price, at least \u20A61,000 and at most \u20A615,000; older deals have none). The presets choose a fault for you; check it.</p>
 <ul>
 <li><strong>The buyer</strong>: the fee comes out of their refund. If they get nothing back, it isn\u2019t charged.</li>
 <li><strong>The seller</strong>: the fee comes out of their payout, or is added to what they owe (they can\u2019t create links until it\u2019s paid).</li>
@@ -5172,7 +5172,7 @@ var MANUAL = {
 <dt>\u201CI\u2019ve paid. Where is my item?\u201D</dt>
 <dd>Check the order. If Paid: the seller has until the ship-by time to hand it to the courier, or the case comes to TrustGap. If Shipping: give the courier status.</dd>
 <dt>\u201CHow do free deals / invites work?\u201D</dt>
-<dd>Each seller has an invite link on their dashboard. A seller who joins with it gets their first 2 deals with no TrustGap fee. The inviter gets a free deal when that seller completes their first protected deal (item \u20A610,000 or more, no dispute). Free deals are used on the next link automatically (they can untick it), remove only the TrustGap fee, and expire after 90 days. Rewards are blocked for the same person (same bank account, identity or phone). After 5 successful invites a seller becomes a TrustGap Ambassador, and buyers see the badge.</dd>
+<dd>Each seller has an invite link in Settings (it also pops up on their dashboard after they log in). A seller who joins with it gets their first 2 deals with no TrustGap fee. The inviter gets a free deal when that seller completes their first protected deal (item \u20A610,000 or more, no dispute). Free deals are used on the next link automatically (they can untick it), remove only the TrustGap fee, and expire after 90 days. Rewards are blocked for the same person (same bank account, identity or phone). After 5 successful invites a seller becomes a TrustGap Ambassador, and buyers see the badge.</dd>
 <dt>\u201CWhen will my item arrive?\u201D</dt>
 <dd>The estimated delivery date is on their tracking page (and in their SMS). It comes from Fez\u2019s timelines: within the same state 1\u20132 days after pickup (up to 3 for remote areas), to another state 3\u20137 working days. It\u2019s an estimate, not a promise; during the festive season deliveries can take a little longer. If it\u2019s past the latest date, check the order with Fez and tell the admin.</dd>
 <dt>\u201CI didn\u2019t get / lost the Fez delivery code.\u201D</dt>
@@ -5235,7 +5235,7 @@ var MANUAL = {
 <dt>Packing note</dt><dd>The seller\u2019s description of what they packed, written when booking pickup.</dd>
 <dt>Settlement</dt><dd>Flutterwave moving the buyer\u2019s payment into our account, the next working day.</dd>
 <dt>Seller charge / debt</dt><dd>An amount a seller owes after losing a dispute. Paid on the dashboard or taken from the next payout.</dd>
-<dt>Dispute fee</dt><dd>Paid only by whoever is at fault when TrustGap decides a dispute: 10% of the item price, between \u20A61,000 and \u20A63,000. Shown on the deal before anyone pays.</dd>
+<dt>Dispute fee</dt><dd>Paid only by whoever is at fault when TrustGap decides a dispute: 4% of the item price, at least \u20A61,000 and at most \u20A615,000. Shown on the deal before anyone pays.</dd>
 <dt>Deal limit</dt><dd>Sellers can create links up to \u20A61,000,000. For more, they contact support; the admin checks the deal and raises that seller\u2019s limit.</dd>
 <dt>Delivery fee</dt><dd>TrustGap\u2019s price for booking, tracking and handling the delivery. If asked, it covers TrustGap arranging and following the delivery for them, so they don\u2019t deal with the courier.</dd>
 <dt>Test mode</dt><dd>A demonstration setup where no real money moves. A yellow bar shows at the bottom of every page.</dd>

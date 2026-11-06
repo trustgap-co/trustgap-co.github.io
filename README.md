@@ -159,8 +159,8 @@ shown to admin on the order page and copied to Google Sheets.
 delivery fee), **Payment processing**, Flutterwave's charges passed on at cost (2%, capped at ₦2,000,
 plus the ₦57.79 payout fee), and **Delivery**, TrustGap's own service: the courier's price plus a 15%
 handling margin (at most ₦2,000; not added to your own riders' prices). The ledger keeps the courier's
-cost (`delivery_cost`) and the margin (`delivery_margin`) apart. A **dispute fee** (10% of the item
-price, ₦1,000 to ₦3,000, shown on the deal) is paid by whoever staff find at fault: from the buyer's
+cost (`delivery_cost`) and the margin (`delivery_margin`) apart. A **dispute fee** (4% of the item
+price, ₦1,000 to ₦15,000, shown on the deal) is paid by whoever staff find at fault: from the buyer's
 refund, or the seller's payout or debt; none when the courier or no one is at fault. Deals above
 ₦1,000,000 send the seller to support; the admin can raise one seller's limit on Admin → Sellers.
 The seller and buyer agree who pays the fees and delivery (buyer, seller or 50/50). Seller payouts go out the next working

@@ -71,10 +71,13 @@ describe('deal limit: ₦1,000,000, then support', () => {
 });
 
 describe('dispute fee: paid by whoever is at fault', () => {
-  test('size: 10% of the item, between ₦1,000 and ₦3,000', () => {
+  test('size: 4% of the item, between ₦1,000 and ₦15,000', () => {
     assert.equal(disputeFee(N(5_000), config.disputeFee), N(1_000));
-    assert.equal(disputeFee(N(20_000), config.disputeFee), N(2_000));
-    assert.equal(disputeFee(N(45_000), config.disputeFee), N(3_000));
+    assert.equal(disputeFee(N(20_000), config.disputeFee), N(1_000));
+    assert.equal(disputeFee(N(45_000), config.disputeFee), N(1_800));
+    assert.equal(disputeFee(N(200_000), config.disputeFee), N(8_000));
+    assert.equal(disputeFee(N(375_000), config.disputeFee), N(15_000));
+    assert.equal(disputeFee(N(1_000_000), config.disputeFee), N(15_000));
     assert.equal(disputeFee(N(45_000), { ...config.disputeFee, maxKobo: 0 }), 0);
   });
 
@@ -102,21 +105,21 @@ describe('dispute fee: paid by whoever is at fault', () => {
     const t = boot();
     const seller = await onboardSeller(t);
     const q = await t.post('/api/seller/quote', DEAL, seller);
-    assert.equal(q.data.dispute_fee, N(3_000));
+    assert.equal(q.data.dispute_fee, N(1_800));
     const deal = await createDeal(t, seller);
-    assert.equal((await t.one('SELECT dispute_fee FROM deals')).dispute_fee, N(3_000));
-    assert.match((await t.one('SELECT condition_pledge FROM deals')).condition_pledge, /plus the dispute fee \(₦3,000\)/);
+    assert.equal((await t.one('SELECT dispute_fee FROM deals')).dispute_fee, N(1_800));
+    assert.match((await t.one('SELECT condition_pledge FROM deals')).condition_pledge, /plus the dispute fee \(₦1,800\)/);
     const view = (await t.get(`/api/deals/${deal.token}`)).data.deal;
-    assert.equal(view.dispute_fee, N(3_000));
+    assert.equal(view.dispute_fee, N(1_800));
     const { trackToken } = await buyerPays(t, deal.token);
     const terms = JSON.parse((await t.one('SELECT terms_json FROM orders')).terms_json);
-    assert.equal(terms.money.dispute_fee, N(3_000));
-    assert.ok(terms.rules.some((r) => /dispute fee of ₦3,000/.test(r)));
-    assert.match(terms.buyer_acknowledgement.text, /plus the dispute fee \(₦3,000\) if TrustGap has to decide it/);
+    assert.equal(terms.money.dispute_fee, N(1_800));
+    assert.ok(terms.rules.some((r) => /dispute fee of ₦1,800/.test(r)));
+    assert.match(terms.buyer_acknowledgement.text, /plus the dispute fee \(₦1,800\) if TrustGap has to decide it/);
     await t.post(`/api/track/${trackToken}/dispute`, { category: 'not_delivered', description: 'Nothing arrived' });
     const opened = (await t.db("SELECT sms FROM outbox WHERE event = 'dispute_opened'")).map((m) => m.sms);
     assert.equal(opened.length, 2);
-    for (const sms of opened) assert.match(sms, /whoever is at fault pays a dispute fee of ₦3,000/);
+    for (const sms of opened) assert.match(sms, /whoever is at fault pays a dispute fee of ₦1,800/);
   });
 
   test('seller at fault with nothing to pay from: added to what they owe', async () => {
@@ -129,13 +132,13 @@ describe('dispute fee: paid by whoever is at fault', () => {
     assert.equal(r.status, 200, JSON.stringify(r.data));
     const d = await t.one('SELECT * FROM disputes');
     assert.equal(d.fault, 'seller');
-    assert.equal(d.dispute_fee, N(3_000));
+    assert.equal(d.dispute_fee, N(1_800));
     assert.equal(d.buyer_refund, order.amount, 'the buyer still gets everything back');
-    assert.equal((await t.one('SELECT amount_owed FROM sellers')).amount_owed, N(3_000));
+    assert.equal((await t.one('SELECT amount_owed FROM sellers')).amount_owed, N(1_800));
     const fees = await t.db("SELECT amount, status, counterparty FROM ledger WHERE kind = 'dispute_fee'");
-    assert.deepEqual(fees, [{ amount: N(3_000), status: 'owed', counterparty: 'seller' }]);
+    assert.deepEqual(fees, [{ amount: N(1_800), status: 'owed', counterparty: 'seller' }]);
     const decided = (await t.db("SELECT sms FROM outbox WHERE event = 'dispute_resolved'")).map((m) => m.sms);
-    assert.ok(decided.every((s) => /At fault: the seller, who pays the ₦3,000 dispute fee/.test(s)));
+    assert.ok(decided.every((s) => /At fault: the seller, who pays the ₦1,800 dispute fee/.test(s)));
   });
 
   test('buyer at fault: taken from their refund, and kept by TrustGap', async () => {
@@ -145,8 +148,8 @@ describe('dispute fee: paid by whoever is at fault', () => {
     const r = await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
       { buyer_refund: String(order.amount / 100), seller_payout: '0', seller_charge: '0', fault: 'buyer', note: 'Buyer cancelled before shipping; changed their mind.' }, a);
     assert.equal(r.status, 200, JSON.stringify(r.data));
-    assert.equal((await t.one("SELECT amount FROM ledger WHERE kind = 'buyer_refund'")).amount, order.amount - N(3_000));
-    assert.deepEqual(await t.db("SELECT amount, status FROM ledger WHERE kind = 'dispute_fee'"), [{ amount: N(3_000), status: 'success' }]);
+    assert.equal((await t.one("SELECT amount FROM ledger WHERE kind = 'buyer_refund'")).amount, order.amount - N(1_800));
+    assert.deepEqual(await t.db("SELECT amount, status FROM ledger WHERE kind = 'dispute_fee'"), [{ amount: N(1_800), status: 'success' }]);
     assert.equal(await t.one("SELECT amount FROM ledger WHERE kind = 'platform_retained'"), null, 'the fee isn’t counted twice');
     assert.equal((await t.one('SELECT amount_owed FROM sellers')).amount_owed, 0);
   });

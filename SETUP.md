@@ -207,7 +207,7 @@ pays sellers with the **Transfers API** once delivery is confirmed. The app alre
   Cloudflare earlier, delete them** (or set 15000 and 1000000): typed values win over the new defaults,
   and Admin → Orders warns you while they're there. Other revenue settings, all optional:
   `DELIVERY_MARGIN_PERCENT` (15) and `DELIVERY_MARGIN_CAP_NAIRA` (2000) for TrustGap's delivery price on
-  Fez; `DISPUTE_FEE_NAIRA` (3000, `0` = off), `DISPUTE_FEE_PERCENT` (10) and `DISPUTE_FEE_MIN_NAIRA`
+  Fez; `DISPUTE_FEE_NAIRA` (15000, `0` = off), `DISPUTE_FEE_PERCENT` (4) and `DISPUTE_FEE_MIN_NAIRA`
   (1000); `MAX_DEAL_NAIRA` (1000000). Change `FEE_CAP_NAIRA`, `PROCESSING_PERCENT`, `PROCESSING_CAP_NAIRA` or `PAYOUT_FEE_NAIRA` (Text variables in
   Cloudflare) if you change your cap or your merchant agreement differs; `0` means no cap.
   `MIN_PRICE_DELIVERY_MULTIPLE` (default 2): the item price must be at least that many times the delivery

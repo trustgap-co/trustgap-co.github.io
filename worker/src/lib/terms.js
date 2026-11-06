@@ -5,7 +5,7 @@ export const TERMS_VERSION = '2026-10-pilot-1';
 
 // The version of the Terms of Service people tick to accept. Change it whenever the legal pages change,
 // so every acceptance records which wording was agreed to.
-export const TOS_VERSION = '2026-10-31';
+export const TOS_VERSION = '2026-11-06'; // dispute fee: 4%, ₦1,000 to ₦15,000
 export const TOS_DOCUMENTS = {
   seller: ['legal/terms.html', 'legal/seller-terms.html', 'legal/privacy.html'],
   buyer: ['legal/terms.html', 'legal/disputes.html', 'legal/privacy.html'],

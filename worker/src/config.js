@@ -39,8 +39,8 @@ export function loadConfig(env) {
     // Dispute fee, paid by whoever TrustGap finds at fault: DISPUTE_FEE_PERCENT of the item price,
     // between DISPUTE_FEE_MIN_NAIRA and DISPUTE_FEE_NAIRA. DISPUTE_FEE_NAIRA = 0 switches it off.
     disputeFee: {
-      maxKobo: num(env.DISPUTE_FEE_NAIRA, 3000) * 100,
-      percent: num(env.DISPUTE_FEE_PERCENT, 10),
+      maxKobo: num(env.DISPUTE_FEE_NAIRA, 15000) * 100,
+      percent: num(env.DISPUTE_FEE_PERCENT, 4),
       minKobo: num(env.DISPUTE_FEE_MIN_NAIRA, 1000) * 100,
     },
     processing: {
