@@ -72,3 +72,20 @@ describe('customer experience', () => {
     assert.equal(sellerView.case_ref, ref);
   });
 });
+
+describe('repeat-deal nudge', () => {
+  test('the completion messages invite both sides back, with delivery as the reason', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller);
+    const { trackToken, track } = await buyerPays(t, deal.token);
+    const order = await t.one('SELECT * FROM orders');
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box, receipt inside' }, seller);
+    const rt = new URL((await t.one('SELECT rider_url FROM orders')).rider_url).searchParams.get('t');
+    for (const status of ['picked_up', 'out_for_delivery']) await t.post(`/api/rider/${rt}/status`, { status });
+    await t.post(`/api/rider/${rt}/pin`, { pin: track.order.pin });
+    await t.post(`/api/track/${trackToken}/accept`, {});
+    assert.match((await smsTo(t, 'order_complete'))[0].sms, /Buying from this seller again\? Ask for a TrustGap link: payment protected and delivery sorted, door to door/);
+    assert.match((await smsTo(t, 'payout_released'))[0].sms, /Same buyer again\? Send a new link: we handle the delivery every time\./);
+  });
+});

@@ -744,13 +744,14 @@ export async function releaseToSeller(ctx, order, reason) {
     email: seller.email,
     sms: `TrustGap: ${formatNaira(payout)} for order ${order.ref} has been released to your ${seller.payout_bank_name} account${
       settles > ctx.now() ? ` and will be sent on ${fmtDate(settles)}, once the buyer's payment has settled` : ''
-    }.${recovered ? ` (${formatNaira(recovered)} was deducted for what you owed.)` : ''}`,
+    }.${recovered ? ` (${formatNaira(recovered)} was deducted for what you owed.)` : ''} Same buyer again? Send a new link: we handle the delivery every time.`,
   });
   await ctx.notify.send({
     orderId: order.id,
     event: 'order_complete',
     phone: order.buyer_phone,
-    sms: `TrustGap: order ${order.ref} is complete and the seller has been paid. Thank you for helping make Nigerian online shopping safer. Know a seller who should use TrustGap? Send them ${ctx.config.siteUrl}`,
+    // The repeat-deal nudge: once buyer and seller trust each other, the delivery is still a reason to come back.
+    sms: `TrustGap: order ${order.ref} is complete and the seller has been paid. Thank you! Buying from this seller again? Ask for a TrustGap link: payment protected and delivery sorted, door to door. ${ctx.config.siteUrl}`,
   });
   return true;
 }
