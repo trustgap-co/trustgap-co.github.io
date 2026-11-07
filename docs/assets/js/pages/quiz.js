@@ -4,44 +4,9 @@
 import { html, raw, show, link, shell, track, params, $ } from '../core.js';
 import { VILLAINS } from '../check-fun.js';
 import { faceSvg, drawFace, buzz, confetti } from '../check-art.js';
+import { BANK, SHIELDS } from '../quiz-bank.js';
 
-shell('public');
-
-// [side, scam?, character (when scam), chat lines [[from: them|you, Pidgin, English]], why [Pidgin, English]]
-const BANK = [
-  ['buyer', true, 'pay_first', [['them', 'The bag dey o. Pay first enter my account make I reserve am for you 🙏', 'The bag is available. Pay first into my account so I can reserve it for you 🙏']],
-    ['“Pay first enter my account” na the oldest trick. Once money comot, you no get any way back.', '“Pay first into my account” is the oldest trick. Once the money leaves, there’s no way back.']],
-  ['buyer', false, null, [['them', 'I don create TrustGap link for you. Check everything, pay there, rider go bring am come your house.', 'I’ve made you a TrustGap link. Check everything, pay there, and a rider will bring it to your house.']],
-    ['Legit! Payment protected, delivery handled, and you check the item before the seller collect money.', 'Legit! Payment protected, delivery handled, and you check the item before the seller is paid.']],
-  ['buyer', true, 'deposit', [['them', 'Just send ₦5,000 for delivery first. Balance when the item reach you.', 'Just send ₦5,000 for delivery first. Pay the balance when it arrives.']],
-    ['“Small delivery fee first” today, “clearing fee” tomorrow. The item no go ever come.', '“Small delivery fee first” today, “clearing fee” tomorrow. The item never comes.']],
-  ['buyer', true, 'pressure', [['them', 'Na last one remain o 😩 3 people dey ask. Pay in 10 minutes or I sell am.', 'Only one left 😩 3 people are asking. Pay in 10 minutes or I sell it.']],
-    ['Rush na how dem dey stop you from thinking. Real seller fit wait you small.', 'Rushing you stops you thinking. A real seller can wait a moment.']],
-  ['buyer', false, null, [['you', 'Abeg I fit see the phone live?', 'Can I see the phone live?'], ['them', 'No wahala. Make we do video call now so you see am yourself.', 'Sure. Let’s video call now so you can see it yourself.']],
-    ['Legit sign! Seller wey get the item no dey fear video call.', 'A good sign! A seller who has the item isn’t afraid of a video call.']],
-  ['seller', true, 'fake_alert', [['them', 'I don send ₦45,000 🙏 check your alert. See the screenshot. Send the item now, my driver dey wait.', 'I’ve sent ₦45,000 🙏 check your alert. See the screenshot. Send the item now, my driver is waiting.']],
-    ['Screenshot no be money. Na only your bank app get final say.', 'A screenshot isn’t money. Only your bank app has the final say.']],
-  ['seller', true, 'overpay', [['them', 'Ah sorry! I mistakenly send ₦80,000 instead of ₦8,000. Abeg refund the ₦72,000 now now.', 'Oh sorry! I sent ₦80,000 by mistake instead of ₦8,000. Please refund the ₦72,000 right now.']],
-    ['The “overpaid” money no ever land. Na your own money you go dey refund.', 'The “overpaid” money never arrived. You’d be refunding your own money.']],
-  ['seller', true, 'otp', [['them', 'To confirm my payment, abeg send me the code wey dem just send your phone.', 'To confirm my payment, please send me the code that was just sent to your phone.']],
-    ['Nobody wey wan pay you go need your OTP. That code na key to your account.', 'Nobody paying you needs your OTP. That code is the key to your account.']],
-  ['seller', false, null, [['them', 'I don pay through the TrustGap link ✅ When you go book pickup?', 'I’ve paid through the TrustGap link ✅ When will you book pickup?']],
-    ['Legit! TrustGap confirm the money before you send, and dem go handle the delivery.', 'Legit! TrustGap confirms the money before you send, and handles the delivery.']],
-  ['seller', true, 'pending', [['them', 'My transfer dey pending, bank say e go land tomorrow. Send the item today abeg.', 'My transfer is pending, the bank says it lands tomorrow. Please send the item today.']],
-    ['Money wey “dey pending” no be money yet. Wait make e land.', 'Money that’s “pending” isn’t money yet. Wait until it lands.']],
-  ['buyer', true, 'too_cheap', [['them', 'Brand new iPhone 15 Pro Max for ₦250,000 only 🔥 Promo for today.', 'Brand new iPhone 15 Pro Max for just ₦250,000 🔥 Today’s promo.']],
-    ['If e cheap reach like that, ask why. Price wey too sweet na bait.', 'If it’s that cheap, ask why. A price that’s too sweet is bait.']],
-  ['buyer', false, null, [['them', 'The price na ₦45,000. If you no like am when e reach, you fit return am through TrustGap.', 'It’s ₦45,000. If you don’t like it when it arrives, you can return it through TrustGap.']],
-    ['Legit! Seller wey agree to protection and returns no dey hide anything.', 'Legit! A seller who accepts protection and returns has nothing to hide.']],
-  ['buyer', true, 'no_refund', [['them', 'Pay first. No refund, no return o. Once you pay, e don finish.', 'Pay first. No refund, no return. Once you pay, that’s final.']],
-    ['“No refund” for item wey you never see na risk wey you go carry alone.', '“No refund” on an item you haven’t seen leaves all the risk with you.']],
-  ['seller', true, 's_pressure', [['them', 'My driver don reach your gate 🏍️ Release the item, I go transfer as e reach me.', 'My driver is at your gate 🏍️ Release the item, I’ll transfer when it reaches me.']],
-    ['Driver fit wait five minutes. If money never land, the item no suppose comot.', 'A driver can wait five minutes. If the money hasn’t landed, the item stays.']],
-  ['buyer', true, 'name_mismatch', [['them', 'Our page na Glam Hub. Pay to this account, e get another name because na my cousin own.', 'Our page is Glam Hub. Pay to this account; it’s under another name because it’s my cousin’s.']],
-    ['Business name one thing, account name another thing? Na red flag.', 'One name on the page, another on the account? That’s a red flag.']],
-  ['buyer', false, null, [['them', 'We dey Lekki. You fit come check am for our shop, or pay with TrustGap link make we deliver.', 'We’re in Lekki. You can check it at our shop, or pay with a TrustGap link and we’ll deliver.']],
-    ['Legit! Shop you fit visit, plus protection if you no fit come. Na so e suppose be.', 'Legit! A shop you can visit, plus protection if you can’t. That’s how it should be.']],
-];
+shell('tool');
 
 const T = {
   pcm: {
@@ -55,6 +20,7 @@ const T = {
     shareText: (n, u) => (n >= 8 ? `I score ${n}/10 for Spot the Scam 🧠 “Pay first” no fit catch me. Your turn: ${u}` : `I score ${n}/10 for Spot the Scam 😅 Now I sabi the tricks. You fit beat am? ${u}`),
     challenged: (n) => `Your padi score ${n}/10 for Spot the Scam. You fit beat am? 👀`,
     note: 'All the chats for this game na made-up examples.',
+    avoid: '🛡️ How to avoid am', safe: '✅ Wetin make am safe',
   },
   en: {
     title: 'Spot the Scam 🎮', lead: 'We’ll show you 10 chats. Tap Scam or Legit. Can you catch the scammer?',
@@ -67,6 +33,7 @@ const T = {
     shareText: (n, u) => (n >= 8 ? `I scored ${n}/10 on Spot the Scam 🧠 “Pay first” won’t catch me. Your turn: ${u}` : `I scored ${n}/10 on Spot the Scam 😅 Now I know the tricks. Can you beat me? ${u}`),
     challenged: (n) => `Your friend scored ${n}/10 on Spot the Scam. Can you beat that? 👀`,
     note: 'Every chat in this game is a made-up example.',
+    avoid: '🛡️ How to avoid it', safe: '✅ What made it safe',
   },
 };
 
@@ -77,11 +44,38 @@ const friend = /^(10|\d)$/.test(params.get('s') || '') ? Number(params.get('s'))
 let game = null; // { items, at, answered, right }
 
 const shuffle = (a) => { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+// Ten chats: 7 scams and 3 legit. Legit chats are never back to back (nor first), the same character
+// never shows twice in a row, and chats this phone hasn't seen yet come first, so games keep changing.
+const SEEN_KEY = 'tg_quiz_seen';
+const seenIds = () => { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); } catch { return new Set(); } };
+function freshFirst(list, n) {
+  const seen = seenIds();
+  const fresh = shuffle(list.filter((q) => !seen.has(q.id))), old = shuffle(list.filter((q) => seen.has(q.id)));
+  return [...fresh, ...old].slice(0, n);
+}
+function arrange(scams, legit) {
+  // Legit chats go in slots spread across the game (e.g. 2, 5, 8 of 10), never next to each other, and
+  // the scams are reshuffled until no character shows twice in a row.
+  const slots = shuffle([[1, 4, 7], [2, 5, 8], [1, 5, 8], [2, 4, 7], [1, 4, 8], [2, 6, 9], [3, 6, 9], [1, 6, 9]])[0];
+  let order = [];
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const mixed = shuffle(scams);
+    order = [];
+    let si = 0, li = 0;
+    for (let i = 0; i < scams.length + legit.length; i++) order.push(slots.includes(i) && li < legit.length ? legit[li++] : mixed[si++]);
+    if (order.every((q, i) => !i || !q.scam || !order[i - 1].scam || q.v !== order[i - 1].v)) break;
+  }
+  return order;
+}
 function newGame() {
-  // Ten chats: always some legit ones, and a mix of buyer and seller sides.
-  const legit = shuffle(BANK.filter((q) => !q[1])).slice(0, 3);
-  const scams = shuffle(BANK.filter((q) => q[1])).slice(0, 7);
-  game = { items: shuffle([...legit, ...scams]), at: 0, answered: null, right: 0 };
+  const scams = freshFirst(BANK.filter((q) => q.scam), 7);
+  const legit = freshFirst(BANK.filter((q) => !q.scam), 3);
+  game = { items: arrange(scams, legit), at: 0, answered: null, right: 0 };
+  try {
+    const seen = seenIds(); game.items.forEach((q) => seen.add(q.id));
+    // Once nearly everything has been seen, start the cycle again.
+    localStorage.setItem(SEEN_KEY, JSON.stringify(seen.size >= BANK.length - 10 ? game.items.map((q) => q.id) : [...seen]));
+  } catch { /* private mode */ }
   track('quiz_started', { language: lang, challenged: friend !== null });
 }
 const rank = (n) => t().rank.find(([min]) => n >= min)[1];
@@ -114,13 +108,15 @@ function render() {
   }
   const q = game.items[game.at], done = game.answered;
   show(box, html`<div class="sc-wrap"><section class="card sc-card qz-card">
-    <p class="qz-top"><span>${L.of(game.at + 1, game.items.length)}</span><span class="pill">${q[0] === 'buyer' ? L.buyerSide : L.sellerSide}</span></p>
+    <p class="qz-top"><span>${L.of(game.at + 1, game.items.length)}</span><span class="pill">${q.side === 'buyer' ? L.buyerSide : L.sellerSide}</span></p>
     <div class="qz-bar" aria-hidden="true"><span style="width:${(game.at / game.items.length) * 100}%"></span></div>
-    <div class="qz-chat">${q[3].map(([from, pcm, en]) => html`<p class="qz-msg qz-${from}"><small>${from === 'you' ? L.you : L.them}</small>${lang === 'pcm' ? pcm : en}</p>`)}</div>
+    <div class="qz-chat">${q.chat.map(([from, pcm, en]) => html`<p class="qz-msg qz-${from}"><small>${from === 'you' ? L.you : L.them}</small>${lang === 'pcm' ? pcm : en}</p>`)}</div>
     ${done === null ? html`<div class="qz-answers"><button type="button" class="btn btn-lg qz-scam" data-ans="scam">${L.scam}</button>
         <button type="button" class="btn btn-lg qz-legit" data-ans="legit">${L.legit}</button></div>`
       : html`<div class="qz-feedback ${done ? 'ok' : 'no'}"><p class="qz-verdict">${done ? L.right : L.wrong}</p>
-        ${q[1] ? html`<div class="sc-villain">${raw(faceSvg(q[2], 56))}<div><strong>${L.met(VILLAINS[q[2]][0])}</strong><span>${L2(q[4])}</span></div></div>` : html`<p>${L2(q[4])}</p>`}
+        ${q.scam ? html`<div class="sc-villain">${raw(faceSvg(q.v, 56))}<div><strong>${L.met(VILLAINS[q.v][0])}</strong><span>${L2(q.why)}</span></div></div>` : html`<p>${L2(q.why)}</p>`}
+        <div class="qz-avoid"><p class="qz-avoid-head">${q.scam ? L.avoid : L.safe}</p><p>${L2(q.avoid)}</p>
+          <span class="qz-shield">${SHIELDS[q.tg][0]} ${lang === 'pcm' ? SHIELDS[q.tg][1] : SHIELDS[q.tg][2]}</span></div>
         <button type="button" class="btn btn-block" id="qz-next">${game.at + 1 === game.items.length ? L.finish : L.next}</button></div>`}
   </section></div>`);
 }
@@ -162,7 +158,7 @@ document.addEventListener('click', (e) => {
   if (b.dataset.lang) { lang = b.dataset.lang; try { localStorage.setItem('tg_check_lang', lang); } catch { /* private mode */ } render(); }
   else if (b.id === 'qz-start' || b.id === 'qz-again') { newGame(); render(); scrollTo({ top: 0 }); }
   else if (b.dataset.ans && game && game.answered === null) {
-    const q = game.items[game.at], ok = (b.dataset.ans === 'scam') === q[1];
+    const q = game.items[game.at], ok = (b.dataset.ans === 'scam') === q.scam;
     game.answered = ok; if (ok) game.right++; else buzz([60]);
     render();
   }

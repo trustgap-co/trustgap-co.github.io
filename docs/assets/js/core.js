@@ -670,8 +670,8 @@ const rememberSource = () => campaignSource();
 // Inside the seller, admin and team accounts the pages look and work like an app: a slim top bar
 // with the page name, a tab bar at the bottom on phones and a side menu on computers.
 // The buyer's deal pages get the same slim bar, without tabs.
-const APP_AREAS = ['seller', 'buyer', 'admin', 'team'];
-const AREA_LABEL = { seller: 'Seller', admin: 'Admin', team: 'Team', buyer: '' };
+const APP_AREAS = ['seller', 'buyer', 'admin', 'team', 'tool'];
+const AREA_LABEL = { seller: 'Seller', admin: 'Admin', team: 'Team', buyer: '', tool: '' };
 const svg = (d) => raw(`<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`);
 const ICON = {
   home: svg('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>'),
@@ -688,6 +688,8 @@ const ICON = {
   tasks: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/>'),
   more: svg('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
   out: svg('<path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4M6 12h10"/>'),
+  shield: svg('<path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>'),
+  game: svg('<rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/>'),
 };
 // [page, label, icon, other pages that light this tab, under "More" on phones, style]
 function appTabs(area) {
@@ -706,15 +708,22 @@ function appTabs(area) {
     ...(auth.isLead() ? [] : [['admin/ledger.html', 'Ledger', 'coins', [], true]]),
     ['team/manual.html', 'Manual', 'book', [], true],
   ] : null;
+  // The free tools (deal safety check, Spot the Scam): open to everyone, no login.
+  if (area === 'tool') return [
+    ['check.html', 'Check a deal', 'shield'],
+    ['quiz.html', 'Spot the Scam', 'game'],
+    ['index.html', 'TrustGap', 'home'],
+  ];
   if (area === 'team') return auth.team() ? [
     ['team/index.html', 'My tasks', 'tasks', ['order.html']],
     ['team/manual.html', 'Manual', 'book'],
   ] : null;
   return null;
 }
-function tabBar(tabs, here) {
+function tabBar(tabs, here, { logout = true } = {}) {
   const folder = location.pathname.split('/').slice(-2, -1)[0];
-  const isOn = ([href, , , also = []]) => href === `${folder}/${here}` || (href.startsWith(`${folder}/`) && also.includes(here));
+  const at = folder ? `${folder}/${here}` : here;
+  const isOn = ([href, , , also = []]) => href === at || (folder && href.startsWith(`${folder}/`) && also.includes(here));
   const tab = (t) => html`<a class="app-tab ${t[4] ? 'tab-extra' : ''} ${t[5] === 'primary' ? 'tab-primary' : ''} ${isOn(t) ? 'on' : ''}" href="${link(t[0])}" ${isOn(t) ? raw('aria-current="page"') : ''}>
     <span class="tab-icon">${ICON[t[2]]}</span><span class="tab-label">${t[1]}</span></a>`;
   const extras = tabs.filter((t) => t[4]);
@@ -722,7 +731,7 @@ function tabBar(tabs, here) {
     ${tabs.map(tab)}
     ${extras.length ? html`<button type="button" class="app-tab tab-more ${extras.some(isOn) ? 'on' : ''}" data-more aria-expanded="false" aria-controls="app-sheet">
       <span class="tab-icon">${ICON.more}</span><span class="tab-label">More</span></button>` : ''}
-    <button type="button" class="app-tab tab-logout" data-logout><span class="tab-icon">${ICON.out}</span><span class="tab-label">Log out</span></button>
+    ${logout ? html`<button type="button" class="app-tab tab-logout" data-logout><span class="tab-icon">${ICON.out}</span><span class="tab-label">Log out</span></button>` : ''}
   </nav>
   ${extras.length ? html`<div class="app-sheet-shade"></div><div class="app-sheet" id="app-sheet" role="menu">
     ${extras.map((t) => html`<a href="${link(t[0])}" role="menuitem" class="${isOn(t) ? 'on' : ''}"><span class="tab-icon">${ICON[t[2]]}</span>${t[1]}</a>`)}
@@ -748,15 +757,15 @@ export async function shell(area) {
       </nav>`,
   }[area] || '';
   const tabs = app ? appTabs(area) : null;
-  const title = document.title.split(' · ')[0];
+  const title = $('meta[name=app-title]')?.content || document.title.split(' · ')[0];
   document.body.insertAdjacentHTML('afterbegin', String(app
     ? html`<a class="skip" href="#app">Skip to content</a>
       <header class="top app-top"><div class="top-in">
         <a class="logo" href="${link(area === 'seller' && tabs ? 'seller/dashboard.html' : 'index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>
         ${tabs ? html`<span class="app-title">${title}</span>` : ''}
-        <span class="app-right">${area === 'buyer' ? nav : html`<span class="app-tag">${AREA_LABEL[area]}${area === 'admin' && auth.isLead() ? ' · CR' : ''}</span>`}</span>
+        <span class="app-right">${area === 'buyer' ? nav : AREA_LABEL[area] ? html`<span class="app-tag">${AREA_LABEL[area]}${area === 'admin' && auth.isLead() ? ' · CR' : ''}</span>` : ''}</span>
       </div></header>
-      ${tabs ? tabBar(tabs, here) : ''}`
+      ${tabs ? tabBar(tabs, here, { logout: area !== 'tool' }) : ''}`
     : html`<a class="skip" href="#app">Skip to content</a>
       <header class="top"><div class="top-in"><a class="logo" href="${link('index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>${nav}</div></header>`));
   if (app) {
@@ -790,7 +799,7 @@ export async function shell(area) {
     ${trackingConfigured && !['admin', 'team'].includes(area) ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div>`;
   // Inside accounts and on deal pages (seller, buyer, admin, team) the footer is one slim line; the
   // full footer opens with "More links". The public pages keep the full footer.
-  const slim = ['seller', 'buyer', 'admin', 'team'].includes(area);
+  const slim = ['seller', 'buyer', 'admin', 'team', 'tool'].includes(area);
   document.body.insertAdjacentHTML('beforeend', String(slim
     ? html`<footer class="site-foot site-foot-slim"><div class="container slim-row">
         <span>© ${new Date().getFullYear()} TrustGap</span>
@@ -842,7 +851,7 @@ export async function shell(area) {
   const config = await configReady;
   // The test bar shows only on the deal pages (payment, tracking, rider, seller, admin, team), never on
   // the public site (home, survey, early access, policies…), which stays clean while being promoted.
-  const innerPage = area !== 'public' || location.pathname.includes('/seller/');
+  const innerPage = !['public', 'tool'].includes(area) || location.pathname.includes('/seller/');
   if (config.test_mode && innerPage) {
     const bar = '<div class="testbar" role="note">TEST MODE: a demonstration. No real money moves; payments and couriers are simulated.</div>';
     // In the app pages it sits under the top bar, clear of the tab bar and the pay button.

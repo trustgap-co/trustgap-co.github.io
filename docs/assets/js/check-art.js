@@ -14,6 +14,8 @@ const LOOK = {
   otp: ['#FCA5A5', 0, 'none', '#1F1F1F', '🔑'], pending: ['#DDD6FE', 1, 'cap', '#5B21B6', '⏳'],
   s_pressure: ['#FED7AA', 2, 'cap', '#B42318', '🏍️'], address: ['#FBCFE8', 3, 'gele', '#7C3AED', '📍'],
   new_account: ['#CFFAFE', 0, 'none', '#1F1F1F', '🆕'], smooth: ['#E9D5FF', 1, 'cap', '#0B1B3D', '😏'],
+  customs: ['#FDE68A', 3, 'cap', '#0E7A4A', '🛃'], giveaway: ['#FBCFE8', 2, 'gele', '#DB2777', '🎁'],
+  fake_rider: ['#FED7AA', 1, 'cap', '#1F2937', '🏍️'], clone_page: ['#C7D2FE', 0, 'none', '#1F1F1F', '📋'],
 };
 const look = (id) => LOOK[id] || LOOK.smooth;
 

@@ -9,7 +9,7 @@ import { SHORT, REASON_ALT, HEAD, NOTE, THINKING, WA, CARD } from '../check-voic
 import { VILLAINS, MET, PHRASE_VILLAIN, PHRASE_NOTES, wahala, meterLabel, METER_TITLE, SAVED, AMOUNT_LABEL, DARE, DARE_BUTTON,
   BINGO, BINGO_LABEL, BINGO_TEXT, hasBingo, edition, EDITION } from '../check-fun.js';
 
-shell('public');
+shell('tool');
 
 const T = {
   pcm: {

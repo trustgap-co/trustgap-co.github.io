@@ -1038,3 +1038,35 @@ body.app .row > div:first-child { min-width: 0; flex: 1 1 auto; }
 .qz-big { font-size: 4rem; font-weight: 800; margin: 0; line-height: 1; }
 .qz-rank { font-size: 1.15rem; font-weight: 700; }
 @media (prefers-reduced-motion: no-preference) { .qz-card { animation: sc-pop .3s ease-out both; } }
+
+/* ======================================================================== free tools as an app
+   The deal safety check and Spot the Scam (area "tool"): the same app frame as the accounts, with a
+   Check / Spot the Scam / TrustGap tab bar. The navy hero becomes the top card of the screen. */
+body.app-tool main { max-width: 720px; padding: 14px 14px 28px; }
+body.app-tool .page-hero { border-radius: 24px; padding: 22px 20px 20px; margin: 0 0 14px;
+  background: radial-gradient(120% 140% at 100% 0%, #2350B0 0%, #0B1B3D 55%); box-shadow: var(--shadow); }
+body.app-tool .page-hero .container { padding: 0; max-width: none; }
+body.app-tool .page-hero h1 { font-size: 1.55rem; margin: 2px 0 6px; }
+body.app-tool .page-hero p { font-size: .98rem; margin: 0 0 6px; }
+body.app-tool .section { padding: 0; background: none; }
+body.app-tool .section > .container { padding: 0; max-width: none; }
+body.app-tool .sc-wrap { max-width: none; gap: 12px; }
+body.app-tool .sc-card, body.app-tool .sc-res, body.app-tool .sc-thinking { border-radius: 22px; }
+body.app-tool .sc-lang { margin-bottom: 12px !important; }
+/* Questions as chunky tappable rows */
+body.app-tool .sc-questions li { padding: 14px 0; }
+body.app-tool .sc-ans { min-height: 46px; flex: 1 1 0; }
+body.app-tool .sc-answers { display: grid; grid-template-columns: repeat(3, 1fr); }
+/* The main button stays in reach on phones */
+@media (max-width: 699px) {
+  body.app-tool .sc-go { position: sticky; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 8px); z-index: 5;
+    background: var(--card); padding: 10px; margin: 0 -10px -10px; border-radius: 18px; box-shadow: 0 -8px 24px -12px rgba(11,27,61,.35); }
+  body.app-tool .sc-go .btn { flex: 1; }
+}
+body.app-tool .qz-answers .btn { min-height: 58px; font-size: 1.05rem; }
+body.app-tool .sc-quiz-link, body.app-tool .sc-weekly { margin-top: 4px; }
+/* Spot the Scam: how to avoid it */
+.qz-avoid { margin: 10px 0 12px; padding: 12px 14px; border-radius: 16px; background: var(--ok-soft); }
+.qz-avoid p { margin: 0 0 8px; }
+.qz-avoid-head { font-weight: 800; color: var(--ok); }
+.qz-shield { display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--card); font-size: .82rem; font-weight: 700; }

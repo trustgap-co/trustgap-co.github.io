@@ -23,6 +23,10 @@ export const VILLAINS = {
   address: ['Madam Change Address', 'Lekki today, Ikeja tomorrow, “my cousin house” next.', 'Lekki today, Ikeja tomorrow, “my cousin’s place” next.'],
   new_account: ['Mr Fresh Account', 'Account wey open this morning.', 'An account opened this morning.'],
   smooth: ['The Smooth Talker', 'Sweet mouth, no receipt.', 'Sweet talk, no receipt.'],
+  customs: ['Uncle Customs', 'Parcel never ever land, but customs fee don land.', 'The parcel never lands, but the customs fee always does.'],
+  giveaway: ['Aunty Giveaway', 'You win prize wey you never enter for.', 'You won a prize you never entered.'],
+  fake_rider: ['Fake Dispatch Rider', 'Im bike no dey, but im account number dey.', 'No bike, just an account number.'],
+  clone_page: ['Copy-Copy Page', 'Same logo, same pictures, different account.', 'Same logo, same photos, different account.'],
 };
 export const MET = { pcm: (n) => `You don meet ${n} 😂`, en: (n) => `You just met ${n} 😂` };
 // Scam words in a pasted message point to a character when no question was answered "yes".
