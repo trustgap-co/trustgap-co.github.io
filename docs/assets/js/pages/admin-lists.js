@@ -53,8 +53,10 @@ const pages = {
     return html`<h1>Messages</h1>
       ${sms?.configured ? html`<section class="card sms-balance ${sms.low ? 'card-warn' : ''}">
           <p class="eyebrow">KudiSMS credit</p>
-          ${sms.error ? html`<p class="error">Couldn’t read the balance: ${sms.error}</p>`
-            : html`<p class="sms-big">₦${sms.balance ?? '?'}</p>
+          ${sms.error && sms.balance == null ? html`<p class="error">Couldn’t read the balance: ${sms.error}</p>`
+            : html`<p class="sms-big">${sms.balance != null ? `₦${sms.balance}` : 'Not known yet'}</p>
+              ${sms.as_of ? html`<p class="small muted">As of the last SMS sent, ${new Date(sms.as_of).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' })}.</p>`
+                : sms.balance == null ? html`<p class="small muted">KudiSMS’s balance reply had no amount we could read${sms.fields ? ` (it sent: ${sms.fields})` : ''}. It will show here after the next SMS goes out.</p>` : ''}
               <p class="small muted">Sender ID <strong>${sms.sender_id}</strong> · ${sms.route === 'bulk' ? 'bulk route (gateway 2: DND numbers don’t receive)' : 'corporate route (reaches DND numbers)'}${spent ? ` · ₦${spent.toLocaleString('en-NG', { maximumFractionDigits: 2 })} spent on the messages below` : ''}</p>
               ${sms.low ? html`<p class="callout warn">Credit is low. Top up on KudiSMS soon: when it runs out, login codes and deal updates stop going out.</p>` : ''}`}
           <p class="small"><a href="https://my.kudisms.net/" target="_blank" rel="noopener">Top up on KudiSMS →</a> · <button type="button" class="linklike" onclick="location.reload()">Refresh</button></p></section>`
