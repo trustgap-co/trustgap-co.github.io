@@ -56,10 +56,15 @@ const pages = {
           ${sms.error && sms.balance == null ? html`<p class="error">Couldn’t read the balance: ${sms.error}</p>`
             : html`<p class="sms-big">${sms.balance != null ? `₦${sms.balance}` : 'Not known yet'}</p>
               ${sms.as_of ? html`<p class="small muted">As of the last SMS sent, ${new Date(sms.as_of).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' })}.</p>`
-                : sms.balance == null ? html`<p class="small muted">KudiSMS’s balance reply had no amount we could read${sms.fields ? ` (it sent: ${sms.fields})` : ''}. It will show here after the next SMS goes out.</p>` : ''}
+                : sms.balance == null ? html`<p class="small muted">KudiSMS’s balance reply had no amount we could read${sms.fields ? ` (it sent: ${sms.fields})` : ''}. ${sms.said ? ` KudiSMS said: “${sms.said}”.` : ''} It will show here after the next SMS goes out.</p>` : ''}
               <p class="small muted">Sender ID <strong>${sms.sender_id}</strong> · ${sms.route === 'bulk' ? 'bulk route (gateway 2: DND numbers don’t receive)' : 'corporate route (reaches DND numbers)'}${spent ? ` · ₦${spent.toLocaleString('en-NG', { maximumFractionDigits: 2 })} spent on the messages below` : ''}</p>
               ${sms.low ? html`<p class="callout warn">Credit is low. Top up on KudiSMS soon: when it runs out, login codes and deal updates stop going out.</p>` : ''}`}
-          <p class="small"><a href="https://my.kudisms.net/" target="_blank" rel="noopener">Top up on KudiSMS →</a> · <button type="button" class="linklike" onclick="location.reload()">Refresh</button></p></section>`
+          <form class="sms-test">
+            <label class="small" for="sms-test-phone">Send a test SMS (shows KudiSMS’s exact reply)</label>
+            <div class="row"><input id="sms-test-phone" name="phone" type="tel" inputmode="tel" placeholder="0803 123 4567" required>
+            <button class="btn btn-small" type="submit">Send test</button></div>
+            <p class="small sms-test-out" aria-live="polite"></p></form>
+          <p class="small"><a href="https://my.kudisms.net/" target="_blank" rel="noopener">Top up on KudiSMS →</a> · <button type="button" class="linklike" data-reload>Refresh</button></p></section>`
         : html`<p class="callout">SMS ${sms?.via === 'make' ? 'go through Make.com (each text uses Make credits)' : 'aren’t connected yet'}. To send them straight to KudiSMS, add <strong>KUDISMS_API_KEY</strong> as a secret in Cloudflare (see SETUP.md).</p>`}
       <p class="muted">Every SMS and email TrustGap sends. “logged” means nothing is connected yet, so it wasn’t sent.</p>
       ${dateFilters()}
@@ -105,6 +110,22 @@ pages[list]()
     wireDateFilters();
     // Lists have no forms to protect, so a change simply reloads the page.
     if (LIST_PATHS[list] && !(list === 'ledger' && auth.isLead())) keepFresh(LIST_PATHS[list], () => location.reload(), { as: 'admin' });
+    $('[data-reload]')?.addEventListener('click', () => location.reload());
+    $('form.sms-test')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget, out = form.querySelector('.sms-test-out'), button = form.querySelector('button');
+      button.disabled = true; out.textContent = 'Sending…'; out.className = 'small sms-test-out';
+      try {
+        const r = await api('/api/admin/sms-test', { method: 'POST', body: { phone: form.phone.value }, as: 'admin' });
+        out.textContent = r.ok
+          ? `Sent to ${r.phone}${r.cost ? ` (cost ₦${r.cost})` : ''}${r.balance ? `. Balance now ₦${r.balance}` : ''}. KudiSMS replied: ${JSON.stringify(r.reply)}`
+          : `Not sent. ${r.error}`;
+        out.classList.add(r.ok ? 'ok' : 'error');
+      } catch (err) {
+        out.textContent = err.message; out.classList.add('error');
+      }
+      button.disabled = false;
+    });
     for (const b of $$('[data-seller]')) {
       b.addEventListener('click', async () => {
         const action = b.dataset.action;

@@ -107,8 +107,8 @@ export const TOURS = {
       { el: '[name=buyer_name]', title: 'Your name', text: 'As it appears on your bank account, so a refund can reach you if one is ever due.' },
       { el: '[name=buyer_phone]', title: 'Your phone number', text: 'The rider calls this number, and your delivery code and updates come here by SMS. Use a number you’ll have with you.' },
       { el: fieldsetOf('[name=refund_bank_code]'), title: 'Refund account', text: 'Only used if you’re owed a refund. It must be in your own name, and the seller never sees it.' },
-      { el: '.pay-name-note', title: 'Who you’re paying', text: 'The payment page shows the name of the registered company that runs TrustGap. Pay only there, never to a seller’s own account.' },
-      { el: '#pay > button.btn', title: 'Pay safely', text: 'Tap to go to the secure payment page. Your money is held until you have the item and have checked it.' },
+      { el: '.pay-name-note', title: 'Who you’re paying', text: 'Pay only to the account or payment page TrustGap gives you, never to a seller’s own account.' },
+      { el: '#pay > button.btn', title: 'Pay safely', text: 'Bank transfer gives you an account number for this order only, to pay from your bank app. Or pay with card. Either way, your money is held until you have the item and have checked it.' },
     ],
   },
 };

@@ -45,6 +45,113 @@ async function statusPicture() {
   a.href = URL.createObjectURL(blob); a.download = 'trustgap.png'; a.click();
 }
 
+// ---------------------------------------------------------------- paying
+
+const fmtNumber = (n) => String(n).replace(/(\d{3})(\d{3})(\d{4})/, '$1 $2 $3');
+const left = (iso) => {
+  const s = Math.max(0, Math.round((new Date(iso) - Date.now()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+// A payment that didn't fit: what we received, and that a person is on it.
+function reviewNote(o) {
+  if (!o.payment_review?.length) return '';
+  return html`${o.payment_review.map((r) => r.reason === 'paid_twice'
+    ? html`<div class="callout">This order was already paid, so the extra ${money(r.got)} you sent will be refunded to your ${o.refund_account} account. TrustGap will confirm within 24 hours.</div>`
+    : html`<div class="callout warn"><strong>We’re checking your payment.</strong> We received ${money(r.got)}, but this deal is ${money(r.expected)}, so it hasn’t gone through.
+        <strong>Please don’t send any more money.</strong> TrustGap will contact you within 24 hours, and refund your ${o.refund_account} account if needed.</div>`)}`;
+}
+
+function payBox(o) {
+  if (!o.can_retry_payment) return html`<div class="callout warn">Payment not completed.<br>This link is no longer open. Ask the seller for a new one.</div>`;
+  const card = html`<form id="retry" class="pay-switch"><button class="linklike">💳 Pay with card instead</button></form>`;
+  const a = o.transfer;
+  // An earlier payment was refunded after checking: start again with a new number, the exact amount.
+  if (a && !['open', 'paid'].includes(a.status)) {
+    return html`<div class="callout"><strong>Your earlier payment is being refunded</strong> to your ${o.refund_account} account. Don’t send money to that account number again.
+        To go ahead with the deal, get a new account number and send exactly ${money(o.amount)}.
+      <div class="actions"><button type="button" class="btn" id="tf-new">🏦 Get a new account number</button></div>
+      <p class="small muted" id="tf-note" aria-live="polite"></p>${card}</div>`;
+  }
+  if (a && !a.expired) {
+    return html`<section class="transfer-box" aria-labelledby="tf-head">
+      <p class="eyebrow" id="tf-head">🏦 Pay by bank transfer</p>
+      <p class="tf-label">Send exactly</p>
+      <div class="tf-row"><span class="tf-amount">${money(a.amount)}</span><button type="button" class="btn btn-small btn-secondary" data-copy="${String(a.amount / 100)}">Copy</button></div>
+      <p class="tf-label">To this account</p>
+      <div class="tf-row"><span class="tf-number">${fmtNumber(a.account_number)}</span><button type="button" class="btn btn-small btn-secondary" data-copy="${a.account_number}">Copy</button></div>
+      <p class="tf-bank"><strong>${a.bank_name}</strong> · ${a.account_name}</p>
+      <p class="tf-timer">⏳ Valid for <strong data-expires="${a.expires_at}">${left(a.expires_at)}</strong></p>
+      <ul class="tf-tips small">
+        <li><strong>Send the exact amount in one transfer.</strong> A different amount won’t go through and has to be refunded first.</li>
+        <li>This number is for this order only. Don’t save it or reuse it.</li>
+        <li>Your bank app shows the account name before you send. Check it, then send.</li>
+        <li>This page updates by itself once the money arrives, usually within a minute.</li>
+      </ul>
+      <button type="button" class="btn btn-block" id="tf-sent">I’ve sent the money</button>
+      <p class="small muted center" id="tf-note" aria-live="polite"></p>
+      ${a.test_bank_url ? html`<a class="btn btn-secondary btn-block" href="${a.test_bank_url}">Open the test bank (test mode)</a>` : ''}
+      ${card}
+    </section>`;
+  }
+  if (a || o.pay_method === 'transfer') {
+    return html`<div class="callout warn"><strong>That account number has expired.</strong> Don’t send money to it.
+        If you already sent it, tap “I’ve sent the money” below and we’ll find it.
+      <div class="actions"><button type="button" class="btn" id="tf-new">🏦 Get a new account number</button>
+        <button type="button" class="btn btn-secondary" id="tf-sent">I’ve sent the money</button></div>
+      <p class="small muted" id="tf-note" aria-live="polite"></p>${card}</div>`;
+  }
+  return html`<div class="callout warn">Payment not completed.
+      <div class="actions"><form id="retry"><button class="btn">💳 Try card payment again</button></form>
+        ${o.can_pay_by_transfer ? html`<button type="button" class="btn btn-secondary" id="tf-new">🏦 Pay by bank transfer instead</button>` : ''}</div>
+      <p class="small muted" id="tf-note" aria-live="polite"></p></div>`;
+}
+
+function wirePayBox(o) {
+  clearInterval(wirePayBox.timer);
+  const timer = $('[data-expires]');
+  if (timer) {
+    wirePayBox.timer = setInterval(() => {
+      timer.textContent = left(timer.dataset.expires);
+      if (new Date(timer.dataset.expires) <= Date.now()) { clearInterval(wirePayBox.timer); render(); }
+    }, 1000);
+  }
+  for (const b of document.querySelectorAll('[data-copy]')) {
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied ✓'; } catch { b.textContent = b.dataset.copy; }
+      track('transfer_copy', { field: b.dataset.copy.length === 10 ? 'account_number' : 'amount' });
+      setTimeout(() => { b.textContent = 'Copy'; }, 2500);
+    });
+  }
+  const note = $('#tf-note');
+  $('#tf-new')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      await api(path + '/transfer-account', { method: 'POST', body: {} });
+      track('transfer_account_requested', { transaction_id: o.ref });
+      await render();
+      $('.transfer-box')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } catch (err) {
+      if (note) note.textContent = err.message;
+      e.currentTarget.disabled = false;
+    }
+  });
+  $('#tf-sent')?.addEventListener('click', async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true;
+    if (note) note.textContent = 'Checking with the bank…';
+    try {
+      const { status } = await api(path + '/check-payment', { method: 'POST', body: {} });
+      track('transfer_sent_tapped', { transaction_id: o.ref, found: status !== 'awaiting_payment' && status !== 'cancelled' });
+      if (status !== 'awaiting_payment' && status !== 'cancelled') return render();
+      if (note) note.textContent = 'Not here yet. Transfers usually arrive within a few minutes; this page updates by itself when it does. No need to send again.';
+    } catch (err) {
+      if (note) note.textContent = err.message;
+    }
+    b.disabled = false;
+  });
+}
+
 async function render() {
   const [{ order: o, dispute, return: ret, case: kase, events }, config] = await Promise.all([api(path), getConfig()]);
   measure(o, dispute);
@@ -54,10 +161,8 @@ async function render() {
     ${gallery(o.photos, o.item_title)}
     <p class="muted small">Delivering to ${o.delivery_address}, ${o.delivery_state}</p>
     ${orderJourney(o, { as: 'buyer', dispute })}
-    ${['awaiting_payment', 'cancelled'].includes(o.status)
-      ? html`<div class="callout warn">Payment not completed.
-          ${o.can_retry_payment ? html`<form id="retry"><button class="btn">Try payment again</button></form>` : html`<br>This link is no longer open. Ask the seller for a new one.`}</div>`
-      : ''}
+    ${reviewNote(o)}
+    ${['awaiting_payment', 'cancelled'].includes(o.status) && !o.payment_review?.length ? payBox(o) : ''}
     ${o.pin || o.courier_code
       ? html`<div class="pinbox"><p>${o.courier_code ? 'Your Fez delivery code' : 'Your delivery PIN'}</p><div class="pin">${o.courier_code || o.pin}</div>
           ${o.courier_code ? html`<p class="small muted">The same code Fez Delivery texted you. The rider can’t complete the delivery without it.</p>` : ''}
@@ -164,10 +269,13 @@ async function render() {
     <p class="muted small">This is your private tracking page. Bookmark it to come back on this phone, or use the link in your SMS from any device. Seller’s phone: ${o.seller_phone}</p>
   </section>`);
 
+  wirePayBox(o);
+  render.waitingForTransfer = Boolean(o.transfer && !o.transfer.expired);
   $('#share-wa')?.addEventListener('click', () => track('share', { method: 'whatsapp', content_type: 'completed_order' }));
   $('#share-status')?.addEventListener('click', () => { track('share', { method: 'status_picture', content_type: 'completed_order' }); statusPicture(); });
   if ($('#retry')) {
     onSubmit($('#retry'), async () => {
+      if (o.transfer && !o.transfer.expired && !confirm('Pay with card instead? If you have already sent a bank transfer, don’t pay again: tap “I’ve sent the money”.')) return;
       const { payment_url } = await api(path + '/retry', { method: 'POST', body: {} });
       trackThenGo('payment_retry', { transaction_id: o.ref, value: naira(o.price.total), currency: 'NGN' }, payment_url);
     });
@@ -239,5 +347,6 @@ if (!token) {
   show('#app', html`<section class="card narrow"><h1>Open your tracking link</h1>
     <p>This page needs the tracking link from your SMS or WhatsApp message. Please open that link again.</p></section>`);
 } else {
-  render().then(() => { keepFresh(path, render); offerTour('track', TOURS.track); }).catch(fail);
+  // Every 10 seconds while a bank transfer is expected (so the page moves on soon after the money lands).
+  render().then(() => { keepFresh(path, render, { every: render.waitingForTransfer ? 10_000 : 30_000 }); offerTour('track', TOURS.track); }).catch(fail);
 }

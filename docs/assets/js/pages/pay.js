@@ -175,9 +175,14 @@ async function details(d, checkoutId, total) {
         ${testAccountsHint(config)}
       </fieldset>
       <label class="choice"><input type="checkbox" name="marketing_opt_in" value="yes"> Send me TrustGap news and special offers by SMS, WhatsApp or email <small>(optional; stop any time)</small></label>
-      <p class="pay-name-note small">On the payment page and for bank transfers, the account name is
-        <strong>${String(SITE.legalName).toUpperCase()}</strong>, the registered company that runs TrustGap. Pay only on that page, never to a seller’s own account.</p>
-      <button class="btn btn-block">Pay ${money(total)} securely</button>
+      ${config.pay_by_transfer
+        ? html`<p class="pay-name-note small">Choose how to pay. <strong>Bank transfer</strong> gives you an account number for this order only, to pay from your bank app.
+            Pay only to the account TrustGap shows you, never to a seller’s own account.</p>
+          <button class="btn btn-block" name="pay_method" value="transfer">🏦 Pay ${money(total)} by bank transfer</button>
+          <button class="btn btn-secondary btn-block pay-alt" name="pay_method" value="card">💳 Pay with card</button>`
+        : html`<p class="pay-name-note small">On the payment page and for bank transfers, the account name is
+            <strong>${String(SITE.legalName).toUpperCase()}</strong>, the registered company that runs TrustGap. Pay only on that page, never to a seller’s own account.</p>
+          <button class="btn btn-block" name="pay_method" value="card">Pay ${money(total)} securely</button>`}
       <p class="muted small center">Your payment is secured under the deal rules. The seller is not paid until delivery and inspection.</p>
     </form>
   </section>`);
@@ -188,7 +193,7 @@ async function details(d, checkoutId, total) {
       method: 'POST',
       body: { ...data, checkout_id: checkoutId, expected_total: total },
     });
-    trackThenGo('add_payment_info', { ...ecommerce(d), value: naira(total), payment_type: 'payment_page' }, res.payment_url);
+    trackThenGo('add_payment_info', { ...ecommerce(d), value: naira(total), payment_type: data.pay_method === 'transfer' ? 'bank_transfer' : 'payment_page' }, res.payment_url);
   });
 }
 

@@ -1,7 +1,7 @@
 import { api, auth, html, show, shell, money, date, orderBadge, link, params, flash, fail, keepFresh, $, dateFilters, wireDateFilters, dateQuery, byDay } from '../core.js';
 
 await shell('admin');
-const FILTERS = ['', 'awaiting_payment', 'paid', 'shipping', 'delivered', 'disputed', 'completed', 'refunded', 'cancelled'];
+const FILTERS = ['', 'payment_review', 'awaiting_payment', 'paid', 'shipping', 'delivered', 'disputed', 'completed', 'refunded', 'cancelled'];
 
 // Health and risky settings, so a misconfiguration is seen as soon as the admin logs in.
 const settingsBox = (h) => (!h ? '' : !h.ok || h.warnings?.length ? html`<section class="card ${h.ok && !h.warnings.some((w) => w.level === 'danger') ? '' : 'card-warn'}">
@@ -24,11 +24,13 @@ async function render() {
       ${auth.isLead() ? '' : html`<div class="actions"><button class="btn btn-small btn-secondary" id="jobs">Run timers now</button>
       <button class="btn btn-small btn-secondary" id="sync">Copy to Google Sheets now</button>
       <button class="btn btn-small btn-secondary" id="fezhook">Register Fez webhook</button></div>`}</div>
-    <p class="filters">${FILTERS.map((f) => html`<a class="${f === status ? 'on' : ''}" href="${link(`admin/orders.html?status=${f}${dateQuery() ? `&${dateQuery()}` : ''}`)}">${f || 'active'}${f ? ` (${counts[f] || 0})` : ''}</a> `)}</p>
+    <p class="filters">${FILTERS.map((f) => html`<a class="${f === status ? 'on' : ''}" href="${link(`admin/orders.html?status=${f}${dateQuery() ? `&${dateQuery()}` : ''}`)}">${f === 'payment_review' ? '💰 payments to check' : f || 'active'}${f ? ` (${counts[f] || 0})` : ''}</a> `)}</p>
+    ${counts.payment_review && status !== 'payment_review' ? html`<p class="callout warn"><strong>${counts.payment_review} payment${counts.payment_review > 1 ? 's' : ''} to check</strong> (wrong amount or paid twice).
+      <a href="${link('admin/orders.html?status=payment_review')}">Open the list →</a></p>` : ''}
     ${dateFilters()}
     <div class="list">${byDay(orders, (o) => html`<a class="row" href="${link(`admin/order.html?id=${o.id}`)}">
       <div><strong>${o.ref}</strong> · ${o.item_title}<br><small class="muted">${o.business_name} → ${o.buyer_name} · ${date(o.created_at)}</small></div>
-      <div class="right">${orderBadge(o.status)}<br><small>${money(o.amount)}</small></div></a>`,
+      <div class="right">${o.to_check ? html`<span class="badge badge-warn">💰 to check</span> ` : ''}${orderBadge(o.status)}<br><small>${money(o.amount)}</small></div></a>`,
       { summary: (day) => money(day.reduce((n, o) => n + o.amount, 0)) })}</div>`);
   wireDateFilters();
   $('#jobs')?.addEventListener('click', async () => {

@@ -5,7 +5,7 @@ const id = encodeURIComponent(params.get('id'));
 const naira = (kobo) => String(kobo / 100);
 
 async function render() {
-  const { order: o, deal: d, photos, seller: s, disputes, return: ret, ledger, events, messages } = await api(`/api/admin/orders/${id}`, { as: 'admin' });
+  const { order: o, deal: d, photos, seller: s, disputes, return: ret, ledger, events, messages, transfer_accounts: accounts = [] } = await api(`/api/admin/orders/${id}`, { as: 'admin' });
   const open = disputes.find((x) => x.status === 'open');
   const presets = open
     ? [
@@ -47,7 +47,24 @@ async function render() {
     <p class="small">Delivery: ${o.delivery_label} ${o.courier ? `· ${o.courier}` : ''} ${o.delivery_ref ? `· ${o.delivery_ref}` : ''}
       ${o.courier_status ? `· courier says “${o.courier_status}”` : ''} · ship by ${date(o.ship_by)}${o.eta ? ` · estimated delivery ${etaRange(o.eta)}` : ''} · ${o.courier === 'fez' ? html`Fez delivery code: <strong>${o.courier_code || 'not sent yet (Fez sends it at dispatch)'}</strong>` : `PIN attempts ${o.pin_attempts}`}
       ${o.courier === 'fez' && o.status === 'shipping' ? html`<button class="linklike" id="sync">check with Fez now</button>` : ''}</p>
+    <p class="small">Paid by: ${o.pay_method === 'transfer' ? 'bank transfer' : o.pay_method === 'card' ? 'card checkout' : 'checkout'}</p>
+    ${accounts.length ? html`<details class="small"><summary>Bank transfer account numbers (${accounts.length})</summary>
+      <table class="breakdown">${accounts.map((a) => html`<tr><td>${a.bank_name} ${a.account_number} · ${money(a.amount)}</td><td>${a.status} · until ${date(a.expires_at)}</td></tr>`)}</table></details>` : ''}
   </section>
+  ${(o.payment_review || []).map((r) => html`<section class="card pay-review">
+    <h2>💰 Payment to check</h2>
+    <p>${r.reason === 'paid_twice'
+      ? html`<strong>${money(r.got)}</strong> arrived ${date(r.at)} on an old account number, after this order was already paid. Refund it.`
+      : html`<strong>${money(r.got)}</strong> arrived ${date(r.at)}, but the deal is <strong>${money(r.expected)}</strong>
+          (${r.got > r.expected ? `${money(r.got - r.expected)} too much` : `${money(r.expected - r.got)} too little`}). The order has not moved on.`}</p>
+    <p class="small muted">Refund goes to ${o.refund_bank_name} ••••${o.refund_account_last4} (${o.refund_account_name}), after Flutterwave settles the money. Reference ${r.tx_ref}.</p>
+    <div class="row">
+      ${r.reason === 'amount' && r.got >= r.expected && ['awaiting_payment', 'cancelled'].includes(o.status)
+        ? html`<button class="btn" data-review="accept" data-ref="${r.tx_ref}">Accept: mark paid and refund the extra ${money(r.got - r.expected)}</button>` : ''}
+      <button class="btn ${r.reason === 'amount' && r.got >= r.expected ? 'btn-secondary' : ''}" data-review="refund" data-ref="${r.tx_ref}">Refund ${money(r.got)} in full</button>
+      ${whatsappButton(o.buyer_phone, `Hello ${o.buyer_name.split(' ')[0]}, this is TrustGap about your payment for order ${o.ref}.`, 'Message the buyer')}
+    </div>
+  </section>`)}
   ${disputes.map((x) => html`<section class="card ${x.status === 'open' ? 'card-warn' : ''} ${x.status === 'superseded' ? 'card-muted' : ''}">
     <h2>Dispute #${x.id}: ${x.category_label} (${x.status})</h2>
     <p class="small muted">Case ${o.ref}-C${x.id} · opened by ${x.opened_by} · ${date(x.created_at)}${x.parcel_location ? ` · parcel: ${x.parcel_location === 'rider' ? 'rider took it back' : 'left with the buyer'}` : ''}</p>
@@ -157,6 +174,20 @@ async function render() {
     flash.set(`Fez status: ${status}`);
     location.reload();
   });
+  for (const b of $$('[data-review]')) {
+    b.addEventListener('click', async () => {
+      const accept = b.dataset.review === 'accept';
+      if (!confirm(accept ? 'Mark the order paid and refund the extra to the buyer?' : 'Refund this whole payment to the buyer’s refund account?')) return;
+      b.disabled = true;
+      try {
+        const r = await api(`/api/admin/orders/${id}/payment-review`, { method: 'POST', body: { tx_ref: b.dataset.ref, action: b.dataset.review }, as: 'admin' });
+        flash.set(accept ? `Payment accepted: order is ${r.order_status}.` : 'Refund recorded. It goes out once Flutterwave has settled the money.');
+      } catch (err) {
+        alert(err.message);
+      }
+      location.reload();
+    });
+  }
   for (const b of $$('[data-retry]')) {
     b.addEventListener('click', async () => {
       const { entry } = await api(`/api/admin/ledger/${b.dataset.retry}/retry`, { method: 'POST', body: {}, as: 'admin' });

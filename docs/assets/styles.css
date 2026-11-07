@@ -1072,3 +1072,22 @@ body.app-tool .sc-quiz-link, body.app-tool .sc-weekly { margin-top: 4px; }
 .qz-shield { display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--card); font-size: .82rem; font-weight: 700; }
 /* Admin → Messages: KudiSMS credit */
 .sms-big { font-size: 2rem; font-weight: 800; margin: 0; font-variant-numeric: tabular-nums; }
+.sms-test { margin: 0.75rem 0; } .sms-test .row { display: flex; gap: 0.5rem; margin-top: 0.25rem; } .sms-test input { flex: 1; min-width: 0; }
+.sms-test-out { word-break: break-word; } .sms-test-out.ok { color: var(--ok, #0E7A4A); } .sms-test-out.error { color: var(--danger, #B42318); }
+
+/* Pay by bank transfer (tracking page) */
+.transfer-box { border: 1.5px solid var(--brand); border-radius: var(--radius); padding: 16px; margin: 14px 0; background: var(--card); }
+.transfer-box .eyebrow { margin: 0 0 8px; }
+.tf-label { margin: 10px 0 2px; color: var(--muted); font-size: 0.85rem; }
+.tf-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.tf-amount, .tf-number { font-size: 1.6rem; font-weight: 800; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+.tf-number { letter-spacing: 0.06em; }
+.tf-bank { margin: 6px 0 0; }
+.tf-timer { margin: 12px 0 6px; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); }
+.tf-timer strong { font-variant-numeric: tabular-nums; }
+.tf-tips { margin: 8px 0 12px; padding-left: 18px; }
+.tf-tips li { margin: 4px 0; }
+.pay-switch { margin: 10px 0 0; text-align: center; }
+.pay-alt { margin-top: 8px; }
+.pay-review { border: 1.5px solid var(--warn); }
+.pay-review .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
