@@ -2,7 +2,8 @@
 // for buyers ("I wan buy") and sellers ("I wan sell"). Pidgin by default, English as an option.
 // Everything runs on the phone: nothing typed or pasted is saved or sent anywhere. It scores the
 // warning signs in the deal, never the person, and every result ends with the TrustGap way to pay.
-import { html, raw, show, link, shell, track, $, $$ } from '../core.js';
+import { html, raw, show, link, shell, track, api, params, $, $$ } from '../core.js';
+import { faceSvg, drawFace, buzz, confetti } from '../check-art.js';
 import { SITE } from '../site-info.js';
 import { SHORT, REASON_ALT, HEAD, NOTE, THINKING, WA, CARD } from '../check-voices.js';
 import { VILLAINS, MET, PHRASE_VILLAIN, PHRASE_NOTES, wahala, meterLabel, METER_TITLE, SAVED, AMOUNT_LABEL, DARE, DARE_BUTTON,
@@ -144,6 +145,28 @@ let answers = {};
 let pasted = '';
 let amount = '';
 const season = edition();
+
+// Words for the challenge banner, the weekly counter and the quiz link.
+const EXTRA = {
+  pcm: {
+    challenged: (v, m) => (v ? `Your padi meet ${v} and score ${m}/10 for Wahala Meter 😂 Check your own deal make you know.` : `Your padi check their deal: Wahala Meter ${m}/10. Your turn!`),
+    weekly: (v, n) => `This week, ${v} don show for ${n.toLocaleString('en-NG')} checks 😂`,
+    quiz: '🎮 Play Spot the Scam: you fit catch scammer?',
+  },
+  en: {
+    challenged: (v, m) => (v ? `Your friend met ${v} and scored ${m}/10 on the Wahala Meter 😂 Check your own deal.` : `Your friend checked their deal: Wahala Meter ${m}/10. Your turn!`),
+    weekly: (v, n) => `This week, ${v} turned up in ${n.toLocaleString('en-NG')} checks 😂`,
+    quiz: '🎮 Play Spot the Scam: can you catch the scammer?',
+  },
+};
+// A challenge link: check.html?c=<meter>.<character>.<b|s>. Only these three things, checked strictly.
+const challenge = (() => {
+  const m = /^(\d{1,2})\.([a-z_]+)\.([bs])$/.exec(params.get('c') || '');
+  if (!m || Number(m[1]) > 10 || (m[2] !== 'none' && !VILLAINS[m[2]])) return null;
+  return { meter: Number(m[1]), villain: m[2] === 'none' ? null : m[2], mode: m[3] === 's' ? 'seller' : 'buyer' };
+})();
+let weekly = null; // this week's most-met character, from the Worker
+
 let result = null;
 const t = () => T[lang];
 const ctaUrl = () => link(SITE.launched ? 'seller/signup.html' : 'sellers.html');
@@ -261,8 +284,11 @@ function render() {
       <button type="button" class="sc-lang-btn ${lang === 'pcm' ? 'on' : ''}" data-lang="pcm" aria-pressed="${lang === 'pcm'}">Pidgin</button>
       <button type="button" class="sc-lang-btn ${lang === 'en' ? 'on' : ''}" data-lang="en" aria-pressed="${lang === 'en'}">English</button></p>
     ${season ? html`<p class="sc-edition">${EDITION[season][lang][0]}</p>` : ''}
-    <h1>${L.title}</h1><p>${L.lead}</p><p class="sc-private">🔒 ${L.private}</p>`);
+    <h1>${L.title}</h1><p>${L.lead}</p><p class="sc-private">🔒 ${L.private}</p>
+    ${weekly ? html`<p class="sc-weekly">${raw(faceSvg(weekly.villain, 34))}<span>${EXTRA[lang].weekly(VILLAINS[weekly.villain][0], weekly.count)}</span></p>` : ''}
+    <p><a class="sc-quiz-link" href="${link('quiz.html')}">${EXTRA[lang].quiz}</a></p>`);
   show('.page-hero + .section .container', html`<div class="sc-wrap">
+    ${challenge && !result ? html`<div class="sc-challenge">${challenge.villain ? raw(faceSvg(challenge.villain, 56)) : ''}<p>${EXTRA[lang].challenged(challenge.villain && VILLAINS[challenge.villain][0], challenge.meter)}</p></div>` : ''}
     <section class="card sc-card">
       <p class="label">${L.who}</p>
       <div class="sc-modes" role="tablist">
@@ -293,7 +319,7 @@ function resultView(L) {
     <div class="sc-wahala"><p class="sc-wahala-head"><span>${METER_TITLE[lang]}</span><strong>${r.meter}/10</strong></p>
       <div class="sc-segs" aria-hidden="true">${[...Array(10).keys()].map((i) => html`<i class="${i < r.meter ? 'on' : ''}"></i>`)}</div>
       <p class="sc-wahala-label">${meterLabel(lang, r.meter)} · ${L.flags(r.flags + r.marks.length)}</p></div>
-    ${r.villain ? html`<div class="sc-villain"><span class="sc-v-face" aria-hidden="true">🦹🏾</span>
+    ${r.villain ? html`<div class="sc-villain">${raw(faceSvg(r.villain, 64))}
       <div><strong>${MET[lang](VILLAINS[r.villain][0])}</strong><span>${VILLAINS[r.villain][lang === 'pcm' ? 1 : 2]}</span></div></div>` : ''}
     <h2>${headline(L, r)}</h2>
     <p>${note}</p>
@@ -309,7 +335,7 @@ function resultView(L) {
       ${mode === 'seller' ? html`<a class="btn btn-block" href="${ctaUrl()}" id="sc-sell">${SITE.launched ? L.sellCta : L.earlyCta}</a>` : ''}
       <button type="button" class="btn btn-block btn-secondary" id="sc-share">📸 ${L.share}</button>
       <a class="btn btn-block btn-secondary" id="sc-dare" href="${`https://wa.me/?text=${encodeURIComponent(dareText(r))}`}" target="_blank" rel="noopener">${DARE_BUTTON[lang]}</a>
-      <p class="small center"><a href="${link('how.html')}">${L.learn}</a> · <button type="button" class="linklike" id="sc-again">${L.again}</button></p></div>
+      <p class="small center"><a href="${link('how.html')}">${L.learn}</a> · <a href="${link('quiz.html')}">Spot the Scam 🎮</a> · <button type="button" class="linklike" id="sc-again">${L.again}</button></p></div>
     <p class="fine sc-disc">${L.disclaimer}</p>
   </section>`;
 }
@@ -322,8 +348,9 @@ function bingoView(r) {
 }
 const dareKind = (level) => `${level === 'low' ? 'calm' : 'risky'}${mode === 'seller' ? '_s' : ''}`;
 const pageUrl = () => `${location.origin}${location.pathname}`;
+const challengeUrl = (r) => `${pageUrl()}?c=${r.meter}.${r.villain || 'none'}.${mode === 'seller' ? 's' : 'b'}`;
 const dareText = (r) => DARE[lang][dareKind(r.level)][r.voice.dare]
-  .replace('{m}', r.meter).replace('{v}', r.villain ? VILLAINS[r.villain][0] : '').replace('{u}', pageUrl());
+  .replace('{m}', r.meter).replace('{v}', r.villain ? VILLAINS[r.villain][0] : '').replace('{u}', challengeUrl(r));
 
 // The picture to post on WhatsApp status or Instagram stories: the verdict, the Wahala Meter, the
 // character and the bingo card. Never anything they typed, never a name.
@@ -342,15 +369,19 @@ function card() {
   // The verdict panel
   g.fillStyle = color; roundRect(g, 80, 220, 920, 520, 40); g.fill();
   g.textAlign = 'center'; g.fillStyle = '#FFFFFF';
+  let my = 540;
   if (r.villain) {
-    g.font = `600 40px ${F}`; g.fillText(lang === 'pcm' ? 'I don meet' : 'I just met', 540, 300);
-    g.font = `bold 66px ${F}`; wrap(g, `${VILLAINS[r.villain][0]} 😂`, 540, 380, 840, 72);
+    drawFace(g, r.villain, 470, 238, 140);
+    g.textAlign = 'center'; g.fillStyle = '#FFFFFF';
+    g.font = `600 36px ${F}`; g.fillText(lang === 'pcm' ? 'I don meet' : 'I just met', 540, 424);
+    g.font = `bold 56px ${F}`; g.fillText(`${VILLAINS[r.villain][0]} 😂`, 540, 492, 860);
+    my = 572;
   } else {
     g.font = `bold 60px ${F}`; wrap(g, headline(L, r), 540, 340, 840, 70);
   }
-  g.font = `600 40px ${F}`; g.fillText(`${METER_TITLE[lang].toUpperCase()}: ${r.meter}/10`, 540, 540);
-  for (let i = 0; i < 10; i++) { g.fillStyle = i < r.meter ? '#FFFFFF' : 'rgba(255,255,255,.28)'; roundRect(g, 160 + i * 78, 570, 66, 34, 10); g.fill(); }
-  g.fillStyle = '#FFFFFF'; g.font = `600 44px ${F}`; g.fillText(meterLabel(lang, r.meter), 540, 680);
+  g.font = `600 36px ${F}`; g.fillText(`${METER_TITLE[lang].toUpperCase()}: ${r.meter}/10`, 540, my);
+  for (let i = 0; i < 10; i++) { g.fillStyle = i < r.meter ? '#FFFFFF' : 'rgba(255,255,255,.28)'; roundRect(g, 160 + i * 78, my + 24, 66, 30, 10); g.fill(); }
+  g.fillStyle = '#FFFFFF'; g.font = `600 40px ${F}`; g.fillText(meterLabel(lang, r.meter), 540, my + 110);
   // Red Flag Bingo
   const B = BINGO_TEXT[lang], got = r.bingo.filter(Boolean).length;
   g.fillStyle = '#F4F7FC'; g.font = `bold 36px ${F}`; g.fillText(`${B.title} · ${B.got(got, r.bingo.length)}`, 540, 800);
@@ -393,14 +424,24 @@ document.addEventListener('click', (e) => {
   else if (b.id === 'sc-check') {
     pasted = $('#sc-paste').value; amount = $('#sc-amt').value; result = null;
     const next = score();
-    think(() => { result = next; render(); $('#sc-result').scrollIntoView({ block: 'start' }); });
+    think(() => {
+      result = next; render(); $('#sc-result').scrollIntoView({ block: 'start' });
+      if (next.level === 'high') buzz();
+      if (next.villain) api('/api/check/met', { method: 'POST', body: { villain: next.villain } }).catch(() => {});
+    });
     track('safety_check_done', { mode, level: next.level, meter: next.meter, villain: next.villain || 'none', amount_given: Boolean(next.amt), flags: next.flags + next.marks.length, language: lang, pasted: Boolean(pasted.trim()) });
   }
   else if (b.id === 'sc-again') { answers = {}; pasted = ''; amount = ''; result = null; render(); scrollTo({ top: 0, behavior: 'smooth' }); }
   else if (b.id === 'sc-share') share();
   else if (b.id === 'sc-dare') track('share', { method: 'whatsapp', content_type: 'safety_check_dare' });
-  else if (b.id === 'sc-wa') track('share', { method: 'whatsapp', content_type: mode === 'buyer' ? 'safety_check_ask_seller' : 'safety_check_ask_buyer' });
+  else if (b.id === 'sc-wa') { confetti(); }
+  if (b.id === 'sc-wa') track('share', { method: 'whatsapp', content_type: mode === 'buyer' ? 'safety_check_ask_seller' : 'safety_check_ask_buyer' });
   else if (b.id === 'sc-sell') track('safety_check_cta', { cta: SITE.launched ? 'signup' : 'early_access' });
 });
 
+if (challenge) { mode = challenge.mode; track('safety_check_challenge_opened', { meter: challenge.meter, villain: challenge.villain || 'none' }); }
 render();
+api('/api/check/top').then((d) => {
+  const top = d.top?.[0];
+  if (top && VILLAINS[top.villain] && top.count >= 10) { weekly = top; pasted = $('#sc-paste')?.value ?? pasted; amount = $('#sc-amt')?.value ?? amount; render(); }
+}).catch(() => { /* the line just doesn't show */ });

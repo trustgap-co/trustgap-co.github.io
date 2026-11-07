@@ -1008,3 +1008,33 @@ body.app .row > div:first-child { min-width: 0; flex: 1 1 auto; }
 .sc-grid span.on { background: #B42318; color: #fff; }
 .sc-bingo-win { margin: 8px 0 0; font-weight: 800; color: #B42318; text-align: center; }
 @media (prefers-color-scheme: dark) { .sc-bingo-win { color: #FF8A7A; } }
+
+/* Drawn characters, confetti, challenge banner, weekly line (safety check) and Spot the Scam */
+.tg-face { flex-shrink: 0; display: block; }
+.tg-confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 2000; }
+.sc-challenge { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border-radius: 18px; background: #F4B740; color: #0B1B3D; font-weight: 600; }
+.sc-challenge p { margin: 0; }
+.sc-weekly { display: inline-flex; gap: 10px; align-items: center; padding: 6px 14px 6px 6px; border-radius: 999px; background: rgba(255,255,255,.1); font-size: .92rem !important; }
+.sc-quiz-link { display: inline-block; margin-top: 4px; padding: 8px 14px; border-radius: 999px; background: #F4F7FC; color: #0B1B3D !important; font-weight: 700; text-decoration: none; }
+.qz-faces { display: flex; justify-content: center; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.qz-top { display: flex; justify-content: space-between; align-items: center; margin: 0 0 8px; color: var(--muted); font-weight: 600; font-size: .9rem; }
+.qz-bar { height: 8px; border-radius: 999px; background: var(--bg); overflow: hidden; margin-bottom: 16px; }
+.qz-bar span { display: block; height: 100%; background: var(--navy); border-radius: 999px; }
+@media (prefers-color-scheme: dark) { .qz-bar span { background: #9DB9F5; } }
+.qz-chat { display: grid; gap: 8px; padding: 14px; border-radius: 16px; background: #E8F0E4; margin-bottom: 16px; }
+@media (prefers-color-scheme: dark) { .qz-chat { background: #0C2A22; } }
+.qz-msg { margin: 0; max-width: 86%; padding: 8px 12px 10px; border-radius: 14px; background: #FFFFFF; color: #111; line-height: 1.45; box-shadow: 0 1px 1px rgba(0,0,0,.08); }
+.qz-msg small { display: block; font-size: .72rem; font-weight: 700; color: #0E7A4A; }
+.qz-you { justify-self: end; background: #D9FDD3; }
+.qz-you small { color: #2350B0; }
+.qz-answers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.qz-answers .btn { margin: 0; }
+.qz-scam { background: #B42318 !important; color: #fff !important; }
+.qz-legit { background: var(--ok) !important; color: #fff !important; }
+.qz-verdict { font-size: 1.3rem; font-weight: 800; margin: 0 0 8px; }
+.qz-feedback.ok .qz-verdict { color: var(--ok); }
+.qz-feedback.no .qz-verdict { color: #B42318; }
+@media (prefers-color-scheme: dark) { .qz-feedback.no .qz-verdict { color: #FF8A7A; } }
+.qz-big { font-size: 4rem; font-weight: 800; margin: 0; line-height: 1; }
+.qz-rank { font-size: 1.15rem; font-weight: 700; }
+@media (prefers-reduced-motion: no-preference) { .qz-card { animation: sc-pop .3s ease-out both; } }
