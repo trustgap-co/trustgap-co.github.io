@@ -167,6 +167,14 @@ shown to admin on the order page and copied to Google Sheets.
    entered, notes on scam words in the pasted message, Red Flag Bingo, dare-a-friend share text and
    seasonal editions (ember months, Detty December, New Year). Jokes are about the trick, never the
    person; low-risk results get none; the share picture never shows what was typed or a name.
+   Round three: a drawn cartoon face for every character (`check-art.js`, SVG on the page and canvas
+   on share pictures), a buzz on red results (Android), confetti when someone asks for a TrustGap
+   link, challenge links (`check.html?c=8.pressure.b` carries only the meter, the character and the
+   side) and a weekly "most-met" line from the Worker (`check_stats`: a count per character per week,
+   nothing else; `POST /api/check/met`, `GET /api/check/top`, shown once a character passes 10).
+26. **Spot the Scam** (`docs/quiz.html`): a game of 10 made-up chats (from 16), Scam or Legit, the
+   character behind each trick, a score picture and a dare link (`quiz.html?s=9`) that shows the
+   friend's score. Pidgin first, English option.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

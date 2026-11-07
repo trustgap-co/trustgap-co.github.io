@@ -41,6 +41,7 @@ PAGES = {
     'sellers.html': ('Sell on WhatsApp & Instagram with payment secured before dispatch · TrustGap', 'For sellers', '0.9'),
     'fees.html': ('TrustGap fees: 1.5% protection fee and calculator · TrustGap', 'Fees', '0.8'),
     'check.html': ('Is this deal safe? Free check before you pay · TrustGap', 'Deal safety check', '0.8'),
+    'quiz.html': (None, 'Spot the Scam', '0.7'),
     'faq.html': ('TrustGap FAQ: safe payments for WhatsApp & Instagram deals in Nigeria', 'FAQ', '0.9'),
     'about.html': (None, 'About', '0.8'),
     'survey.html': (None, 'Survey', '0.6'),
@@ -53,7 +54,7 @@ for f in sorted((DOCS / 'legal').glob('*.html')):
         PAGES[rel] = (None, None, '0.4')
 
 LINKS = [('index.html', 'Home'), ('how.html', 'How TrustGap works'), ('buyers.html', 'For buyers'),
-         ('sellers.html', 'For sellers'), ('fees.html', 'Fees'), ('check.html', 'Is this deal safe?'), ('faq.html', 'FAQ'), ('about.html', 'About TrustGap'),
+         ('sellers.html', 'For sellers'), ('fees.html', 'Fees'), ('check.html', 'Is this deal safe?'), ('quiz.html', 'Spot the Scam'), ('faq.html', 'FAQ'), ('about.html', 'About TrustGap'),
          ('early-access.html', 'Get early access'), ('survey.html', 'Survey'), ('legal/index.html', 'Policies'),
          ('legal/terms.html', 'Terms of Service'), ('legal/privacy.html', 'Privacy Policy'),
          ('legal/disputes.html', 'Returns, refunds and disputes')]
