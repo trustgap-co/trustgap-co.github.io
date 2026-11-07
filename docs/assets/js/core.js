@@ -180,6 +180,33 @@ export function keepFresh(path, render, { as, every = 30_000 } = {}) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
 }
 
+// Announcements from TrustGap (Admin → Announce): banners at the top of the page, until closed.
+// Closed ones are remembered on this phone.
+const CLOSED_KEY = 'tg_ann_closed';
+const closedIds = () => { try { return JSON.parse(localStorage.getItem(CLOSED_KEY) || '[]'); } catch { return []; } };
+export function showAnnouncements(list = [], { onClose = null } = {}) {
+  $('.ann-wrap')?.remove();
+  const open = (list || []).filter((a) => !closedIds().includes(a.id));
+  if (!open.length || !$('#app')) return;
+  const wrap = Object.assign(document.createElement('div'), { className: 'ann-wrap' });
+  wrap.innerHTML = String(html`${open.map((a) => html`<aside class="ann ann-${a.kind}" role="note" data-ann="${a.id}">
+    <span class="ann-icon" aria-hidden="true">${a.kind === 'marketing' ? '🎉' : a.kind === 'welcome' ? '👋' : '📢'}</span>
+    <div class="ann-text"><strong>${a.title}</strong><p>${a.body}</p>
+      ${a.link_url ? html`<a href="${a.link_url}" ${a.kind === 'welcome' ? '' : raw('target="_blank" rel="noopener"')}>${a.kind === 'welcome' ? 'Finish setting up →' : 'Find out more →'}</a>` : ''}</div>
+    <button type="button" class="ann-close" aria-label="Close this message">×</button></aside>`)}`);
+  $('#app').prepend(wrap);
+  for (const b of wrap.querySelectorAll('.ann-close')) {
+    b.addEventListener('click', () => {
+      const box = b.closest('[data-ann]');
+      box.remove();
+      // The seller's banners are marked read on their account; others are remembered on this phone.
+      if (onClose) return onClose();
+      try { localStorage.setItem(CLOSED_KEY, JSON.stringify([...closedIds(), Number(box.dataset.ann)].slice(-50))); } catch { /* private mode */ }
+      track('announcement_closed', { announcement_id: Number(box.dataset.ann) });
+    });
+  }
+}
+
 // Site settings from the API. Kept for 10 minutes in this tab so later pages don't wait for it.
 let configPromise;
 export const getConfig = () => (configPromise ||= (() => {
@@ -692,6 +719,8 @@ const ICON = {
   more: svg('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
   out: svg('<path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4M6 12h10"/>'),
   shield: svg('<path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>'),
+  bell: svg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>'),
+  megaphone: svg('<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'),
   game: svg('<rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/>'),
 };
 // [page, label, icon, other pages that light this tab, under "More" on phones, style]
@@ -708,6 +737,7 @@ function appTabs(area) {
     ['admin/sellers.html', 'Sellers', 'store'],
     ['admin/team.html', 'Team', 'team'],
     ['admin/messages.html', 'Messages', 'chat', [], true],
+    ['admin/announcements.html', 'Announce', 'megaphone', [], true],
     ...(auth.isLead() ? [] : [['admin/ledger.html', 'Ledger', 'coins', [], true]]),
     ['team/manual.html', 'Manual', 'book', [], true],
   ] : null;
@@ -766,7 +796,7 @@ export async function shell(area) {
       <header class="top app-top"><div class="top-in">
         <a class="logo" href="${link(area === 'seller' && tabs ? 'seller/dashboard.html' : 'index.html')}" aria-label="TrustGap home">Trust<span>Gap</span></a>
         ${tabs ? html`<span class="app-title">${title}</span>` : ''}
-        <span class="app-right">${area === 'buyer' ? nav : AREA_LABEL[area] ? html`<span class="app-tag">${AREA_LABEL[area]}${area === 'admin' && auth.isLead() ? ' · CR' : ''}</span>` : ''}</span>
+        <span class="app-right">${area === 'seller' && tabs ? html`<button type="button" class="bell" id="bell" aria-label="Notifications">${ICON.bell}<span class="bell-count" hidden></span></button>` : ''}${area === 'buyer' ? nav : AREA_LABEL[area] ? html`<span class="app-tag">${AREA_LABEL[area]}${area === 'admin' && auth.isLead() ? ' · CR' : ''}</span>` : ''}</span>
       </div></header>
       ${tabs ? tabBar(tabs, here, { logout: area !== 'tool' }) : ''}`
     : html`<a class="skip" href="#app">Skip to content</a>
@@ -774,6 +804,8 @@ export async function shell(area) {
   if (app) {
     document.body.classList.add('app', `app-${area}`);
     if (tabs) document.body.classList.add('has-tabs');
+    // The seller's notifications (the bell): loaded after the page, never in its way.
+    if (area === 'seller' && tabs) import('./inbox.js').then((m) => m.startInbox()).catch(() => {});
     if (area === 'seller' && !$('link[rel=manifest]')) {
       // "Add to Home screen" opens the seller account like an app (no service worker: pages are never cached offline).
       document.head.insertAdjacentHTML('beforeend', `<link rel="manifest" href="${link('manifest.webmanifest')}">

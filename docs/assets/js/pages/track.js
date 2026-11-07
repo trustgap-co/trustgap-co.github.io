@@ -2,7 +2,7 @@
 import { photoPicker } from '../photos.js';
 import { offerTour } from '../tour.js';
 import { TOURS } from '../tours.js';
-import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, orderJourney, link, $ } from '../core.js';
+import { api, html, show, onSubmit, shell, money, date, orderBadge, timeline, params, getConfig, flash, fail, gallery, local, track, trackThenGo, naira, caseAccounts, keepFresh, orderJourney, link, showAnnouncements, $ } from '../core.js';
 
 await shell('buyer');
 const token = params.get('t') || '';
@@ -153,7 +153,7 @@ function wirePayBox(o) {
 }
 
 async function render() {
-  const [{ order: o, dispute, return: ret, case: kase, events }, config] = await Promise.all([api(path), getConfig()]);
+  const [{ order: o, dispute, return: ret, case: kase, events, announcements }, config] = await Promise.all([api(path), getConfig()]);
   measure(o, dispute);
   show('#app', html`<section class="card">
     <div class="spread"><h1>Order ${o.ref}</h1>${orderBadge(o.status)}</div>
@@ -270,6 +270,7 @@ async function render() {
   </section>`);
 
   wirePayBox(o);
+  showAnnouncements(announcements);
   render.waitingForTransfer = Boolean(o.transfer && !o.transfer.expired);
   $('#share-wa')?.addEventListener('click', () => track('share', { method: 'whatsapp', content_type: 'completed_order' }));
   $('#share-status')?.addEventListener('click', () => { track('share', { method: 'status_picture', content_type: 'completed_order' }); statusPicture(); });

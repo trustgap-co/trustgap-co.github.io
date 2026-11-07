@@ -1,5 +1,5 @@
 // Team portal: sign in, set your own password, and work through the tasks the admin assigned you.
-import { api, auth, html, show, onSubmit, shell, link, date, flash, fail, $, $$, keepFresh } from '../core.js';
+import { api, auth, html, show, onSubmit, shell, link, date, flash, fail, $, $$, keepFresh, showAnnouncements } from '../core.js';
 
 await shell('team');
 
@@ -109,7 +109,9 @@ async function render() {
     location.href = link('admin/orders.html');
     return;
   }
-  await tasksView();
-  keepFresh('/api/team/tasks', tasksView, { as: 'team' });
+  const { announcements } = await api('/api/team/announcements', { as: 'team' }).catch(() => ({ announcements: [] }));
+  const view = async () => { await tasksView(); showAnnouncements(announcements); };
+  await view();
+  keepFresh('/api/team/tasks', view, { as: 'team' });
 }
 render().catch(fail);

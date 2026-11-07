@@ -1,4 +1,4 @@
-import { api, auth, html, show, shell, money, date, orderBadge, link, params, flash, fail, keepFresh, $, dateFilters, wireDateFilters, dateQuery, byDay } from '../core.js';
+import { api, auth, html, show, shell, money, date, orderBadge, link, params, flash, fail, keepFresh, showAnnouncements, $, dateFilters, wireDateFilters, dateQuery, byDay } from '../core.js';
 
 await shell('admin');
 const FILTERS = ['', 'payment_review', 'awaiting_payment', 'paid', 'shipping', 'delivered', 'disputed', 'completed', 'refunded', 'cancelled'];
@@ -33,6 +33,8 @@ async function render() {
       <div class="right">${o.to_check ? html`<span class="badge badge-warn">💰 to check</span> ` : ''}${orderBadge(o.status)}<br><small>${money(o.amount)}</small></div></a>`,
       { summary: (day) => money(day.reduce((n, o) => n + o.amount, 0)) })}</div>`);
   wireDateFilters();
+  // The Customer Relations Admin is a team member: announcements for the team show here too.
+  if (auth.isLead()) api('/api/team/announcements', { as: 'admin', peek: true }).then((r) => showAnnouncements(r.announcements)).catch(() => {});
   $('#jobs')?.addEventListener('click', async () => {
     flash.set('Timers run: ' + JSON.stringify((await api('/api/admin/jobs', { method: 'POST', body: {}, as: 'admin' })).result));
     location.reload();
