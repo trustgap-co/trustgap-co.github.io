@@ -97,7 +97,30 @@ The site appears at `https://trustgap-co.github.io/`.
 `ALLOWED_ORIGINS = https://trustgap-co.github.io`. If you later buy a domain, change both (and
 `API_URL`) and redeploy.
 
-## 3. Make.com → KudiSMS (SMS) and email
+## 3. SMS straight to KudiSMS (recommended)
+
+The Worker can send every SMS itself, straight to KudiSMS, so texts use no Make.com credits (Make's
+free plan is only 1,000 credits a month, about 40 deals). Emails still go through Make (section below).
+
+1. In KudiSMS, get your API key (Developers → API Key) and an **approved sender ID**. For login codes
+   and deal alerts use a **corporate** sender ID (KudiSMS → Corporate Sender ID): the corporate route
+   reaches numbers on DND. Until it is approved you can use a promotional sender ID with
+   `KUDISMS_ROUTE = bulk` (gateway 2: DND numbers are refunded but don't receive the text).
+2. In Cloudflare → Workers & Pages → trustgap-api → Settings → Variables and secrets:
+   - **Secret** `KUDISMS_API_KEY` = your KudiSMS API key (never put it in GitHub or a chat).
+   - **Text** `KUDISMS_SENDER_ID` = your approved sender ID (up to 11 characters, e.g. `TrustGap`).
+   - **Text** `KUDISMS_ROUTE` = `corporate` (default) or `bulk`.
+   - Optional: `SMS_PROVIDER = make` switches back to sending SMS through Make.
+3. Deploy. Admin → Messages now shows your **KudiSMS credit**, the sender ID and route, and warns
+   when credit is under ₦2,000. Each message shows its cost and any KudiSMS error.
+4. **In your Make scenario, stop the SMS**: Make now only receives emails (`channel: "email"`, no
+   phone number). Delete the KudiSMS module, or add a filter on it: `to_phone` exists.
+
+Texts that fail are retried by the 5-minute timer (up to 5 times), except errors that can't fix
+themselves (invalid number, blocked word, unapproved or blocked sender ID, bad API key), which are
+shown in Admin → Messages. Running out of credit (code 109) is retried, so texts resume after a top-up.
+
+## 3b. Make.com → email (and SMS, if KudiSMS direct isn't set up)
 
 The Worker sends every message to one Make webhook as JSON:
 
@@ -248,6 +271,31 @@ Steps:
    the test banner showing would confuse people). Flutterwave was clear
    that **TrustGap, not Flutterwave, is the custodian of the money in the wallet**, so do this only
    after a Nigerian fintech lawyer has advised on safeguarding and segregation of those funds.
+
+**Pay by bank transfer (an account number for each order).** Step 2 of the buyer's payment offers
+**Pay by bank transfer** first and **Pay with card** second. Bank transfer asks Flutterwave for a
+temporary account number (a *dynamic virtual account*, `POST /v3/virtual-account-numbers`) for that order's
+exact amount. The buyer's tracking page shows the bank, the account number, the amount (with copy
+buttons) and a countdown, and they also get it by SMS. When the money lands, Flutterwave's webhook tells
+the Worker, the Worker confirms it with Flutterwave (the same check as every payment), and the order is
+paid. The page checks every 10 seconds, and "I've sent the money" asks Flutterwave straight away.
+- **Switch it on** with the Text variable `PAY_BY_TRANSFER = true`, once Flutterwave has confirmed dynamic
+  virtual accounts are enabled on your account (ask: "Can I create dynamic virtual accounts through the
+  API, and what is the fee?"). With the simulator (`PAYMENT_PROVIDER = mock`) it's on already, and the
+  tracking page has an **Open the test bank** button that sends the right amount, too little or too much.
+- **Test it** with your Flutterwave test key first: create one order, pay by transfer, and look at the
+  name your bank app shows for the account number. `TRANSFER_ACCOUNT_NAME` (default `TrustGap`) is sent as
+  the account's name ("narration"); Flutterwave may add its own text to it.
+- `TRANSFER_ACCOUNT_MINUTES` (default 60, between 15 and 1440): how long each number is valid. After that
+  the page offers a new number. Every number keeps its own reference, so money sent to an older number
+  (a little late) still pays the order; the timers keep checking expired numbers for 3 more hours.
+- **Wrong amount, or paid twice:** a transfer must be the exact amount. Anything else never moves the
+  deal on. The buyer is told not to send more, the admin (`ADMIN_ALERT_PHONE`) and the Customer Relations
+  Admin get an SMS, and the order shows **💰 Payment to check** (Admin → Orders → "payments to check").
+  There you **Accept** a payment that covers the deal (the order is paid and the extra refunded) or
+  **Refund** it in full to the buyer's refund account (an unpaid order can then be paid correctly). Money
+  that arrives for an order that's already paid is put up for a refund the same way.
+- The webhook needs nothing new: bank transfers arrive as payment (`charge.completed`) events.
 
 **Sellers paying what they owe.** When admin charges a seller in a dispute (e.g. twice the delivery
 fee), the seller's dashboard shows **Pay ₦X now**. It opens the same Flutterwave payment page buyers

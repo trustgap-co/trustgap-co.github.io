@@ -181,6 +181,16 @@ shown to admin on the order page and copied to Google Sheets.
    protection stops it (payment protection, tracked delivery, check before the code, verified sellers,
    bank app, refunds). The check and the quiz use the app layout (area "tool": Check / Spot the Scam /
    TrustGap tabs, slim collapsible footer).
+27. **SMS straight to KudiSMS** (`worker/src/providers/notify/kudisms.js`): with the secret
+   `KUDISMS_API_KEY`, every SMS goes to KudiSMS's corporate route (or bulk, gateway 2) from the Worker,
+   and Make.com only gets emails, so texts cost no Make credits. Each channel is marked when sent, so a
+   retry never texts twice; permanent errors aren't retried. Admin → Messages shows the KudiSMS credit.
+28. **Database indexes** (migration 0024) for the timers, code checks and per-order lookups.
+29. **Pay by bank transfer** (`worker/src/core/transfers.js`, migration 0026): a temporary account number
+   for each payment attempt (Flutterwave dynamic virtual accounts), shown on the buyer's tracking page
+   and sent by SMS, valid 60 minutes. Only Flutterwave's confirmation moves an order. A wrong amount or a
+   second payment never moves the deal: it goes to **Payment to check** for staff to accept or refund.
+   Switched on with `PAY_BY_TRANSFER = true` (always on with the simulator). See SETUP.md, section 6.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
