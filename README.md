@@ -175,6 +175,12 @@ shown to admin on the order page and copied to Google Sheets.
 26. **Spot the Scam** (`docs/quiz.html`): a game of 10 made-up chats (from 16), Scam or Legit, the
    character behind each trick, a score picture and a dare link (`quiz.html?s=9`) that shows the
    friend's score. Pidgin first, English option.
+   The chats live in `docs/assets/js/quiz-bank.js` (64: 50 scams, 14 legit). Each game takes 7 scams and
+   3 legit, puts the legit ones apart (never first, never back to back), never shows the same character
+   twice in a row and serves unseen chats first. Every answer says how to avoid the trick and which
+   protection stops it (payment protection, tracked delivery, check before the code, verified sellers,
+   bank app, refunds). The check and the quiz use the app layout (area "tool": Check / Spot the Scam /
+   TrustGap tabs, slim collapsible footer).
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
