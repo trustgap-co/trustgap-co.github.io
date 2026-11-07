@@ -20,6 +20,14 @@ export const SITE = {
   // approves it (children's data needs parental consent under the NDPA): then set this to true.
   allowUnder18Contact: false,
 
+    // ---- Social media ---------------------------------------------------------------------------
+  // Shown as icons in the footer of every page (and told to search engines). An empty one is hidden:
+  // paste the Facebook page address between the quotes when it's ready.
+  instagramUrl: 'https://www.instagram.com/trustgap.co',
+  xUrl: 'https://x.com/TrustGapgz9',
+  tiktokUrl: 'https://vt.tiktok.com/ZSpJB2khD/',
+  facebookUrl: '', // e.g. 'https://www.facebook.com/yourpage'
+
   legalName: 'Tubalcain Ads Enterprise', // TrustGap is a trading name of this business
   rcNumber: '9568185',
   registeredAddress: 'Warri, Delta State, Nigeria',
