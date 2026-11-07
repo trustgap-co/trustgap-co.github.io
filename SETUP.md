@@ -162,6 +162,40 @@ If Make is down, messages are retried every 5 minutes (up to 5 times). See **Adm
 Without `MAKE_WEBHOOK_URL`, messages are only saved (status "logged"), and in test mode login codes
 appear on screen.
 
+## 3c. Announcements to sellers, buyers and team members
+
+**Admin → Announce** (open to you and the Customer Relations Admin) sends one message as a **banner** on
+people's pages (seller dashboard, buyer tracking page, team portal: free), an **SMS** and/or an **email**.
+1. Choose the kind:
+   - **Service notice**: terms or fee changes, downtime, security warnings. Goes to everyone with an
+     account or a paid order. No offers here.
+   - **News and offers**: only sellers and buyers who ticked "Send me TrustGap news" (never the team).
+     Every SMS and email has a stop link; tapping it shows a page with a button to stop (sellers can also
+     switch it off in Settings).
+2. Choose who and how, write it, then **Check who gets it**: the page shows the number of people, SMS
+   pages and the rough KudiSMS cost (`SMS_PRICE_NAIRA`, default ₦5 a page), and warns if your credit is
+   too low. **Send test** sends it to you (your team profile phone, or `ADMIN_ALERT_PHONE`, or a number
+   you type).
+3. **Send**. Banners show at once. Texts and emails go out 20 at a time on the 5-minute timer
+   (`ANNOUNCE_PER_RUN`), so Cloudflare's free plan limits are never hit: about 240 an hour. **Stop**
+   removes the banner and cancels whatever hasn't gone yet.
+
+**Make it personal:** write `{first_name}` or `{business_name}` in the title, message or SMS and each
+person gets their own (buyers and team members have no business name: they get their first name). The
+preview shows the SMS as a real person will get it.
+
+**The seller's bell.** Every seller page has a bell in the top bar with the number of new notifications.
+It keeps everything sent to sellers (announcements, by banner, SMS or email) and personal messages such as
+the **welcome** every new seller gets on sign-up. The newest new one also shows as a banner: within a
+minute if the seller is on the app when it's sent, or as soon as they next log in. Closing the banner or
+opening the bell marks them read on their account (so on every phone).
+
+**Offers by SMS use KudiSMS's promotional route** (`/api/sms`, gateway 2), not the corporate route your
+login codes use, so the corporate sender ID stays safe. Numbers on Do-Not-Disturb don't receive them.
+If KudiSMS gives you a separate promotional sender ID, add it as `KUDISMS_PROMO_SENDER_ID`.
+Emails go through Make.com (one Make credit each): for large email sends, a dedicated email service is
+cheaper (ask and it can be connected).
+
 ## 4. Google Sheets copy
 
 1. Create a Google Sheet. Copy its ID from the URL (`/spreadsheets/d/<THIS PART>/edit`).
@@ -296,6 +330,11 @@ paid. The page checks every 10 seconds, and "I've sent the money" asks Flutterwa
   **Refund** it in full to the buyer's refund account (an unpaid order can then be paid correctly). Money
   that arrives for an order that's already paid is put up for a refund the same way.
 - The webhook needs nothing new: bank transfers arrive as payment (`charge.completed`) events.
+- **"Pay with card" is card only** while bank transfer is on: Flutterwave's own checkout has a Bank
+  Transfer tab that shows your registered business name (Tubalcain Ads Enterprise), so it's hidden and
+  buyers who want to transfer get TrustGap's account instead (their bank shows **TrustGap**). To change
+  what the checkout offers, set `CHECKOUT_PAYMENT_OPTIONS` (e.g. `card, ussd`), or `all` for everything.
+  Sellers paying a debt still see every option.
 
 **Sellers paying what they owe.** When admin charges a seller in a dispute (e.g. twice the delivery
 fee), the seller's dashboard shows **Pay ₦X now**. It opens the same Flutterwave payment page buyers

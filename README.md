@@ -191,6 +191,16 @@ shown to admin on the order page and copied to Google Sheets.
    and sent by SMS, valid 60 minutes. Only Flutterwave's confirmation moves an order. A wrong amount or a
    second payment never moves the deal: it goes to **Payment to check** for staff to accept or refund.
    Switched on with `PAY_BY_TRANSFER = true` (always on with the simulator). See SETUP.md, section 6.
+30. **Announcements** (`worker/src/core/announcements.js`, Admin → Announce, migration 0027): one message to
+   sellers, buyers and/or team members as a banner (seller dashboard, tracking page, team portal), SMS
+   and/or email. Service notices go to everyone; news and offers only to the opted-in, with a stop link and
+   KudiSMS's promotional route. Preview with count and cost, a test send, gradual sending on the timer, Stop.
+   Open to the admin and the Customer Relations Admin. See SETUP.md, section 3c. `{first_name}` and
+   `{business_name}` are filled in for each person.
+31. **The seller's bell** (`worker/src/core/inbox.js`, `docs/assets/js/inbox.js`, migration 0028): every
+   seller page has a bell with the unread count and a list of all notifications: announcements and
+   personal messages (a personal welcome on sign-up). The newest unread one shows as a banner, checked
+   every minute; read state is on the account.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
