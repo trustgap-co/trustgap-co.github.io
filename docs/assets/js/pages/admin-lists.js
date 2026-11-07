@@ -48,8 +48,18 @@ const pages = {
       </div></div>`)}</div>`;
   },
   async messages() {
-    const { messages } = await api(withDates('/api/admin/outbox'), { as: 'admin' });
-    return html`<h1>Messages</h1><p class="muted">SMS and emails handed to Make.com. “logged” means no Make webhook is set yet, so nothing was sent.</p>
+    const [{ messages }, sms] = await Promise.all([api(withDates('/api/admin/outbox'), { as: 'admin' }), api('/api/admin/sms-balance', { as: 'admin' }).catch(() => null)]);
+    const spent = messages.reduce((n, m) => n + (Number(String(m.cost || '').replace(/[^\d.]/g, '')) || 0), 0);
+    return html`<h1>Messages</h1>
+      ${sms?.configured ? html`<section class="card sms-balance ${sms.low ? 'card-warn' : ''}">
+          <p class="eyebrow">KudiSMS credit</p>
+          ${sms.error ? html`<p class="error">Couldn’t read the balance: ${sms.error}</p>`
+            : html`<p class="sms-big">₦${sms.balance ?? '?'}</p>
+              <p class="small muted">Sender ID <strong>${sms.sender_id}</strong> · ${sms.route === 'bulk' ? 'bulk route (gateway 2: DND numbers don’t receive)' : 'corporate route (reaches DND numbers)'}${spent ? ` · ₦${spent.toLocaleString('en-NG', { maximumFractionDigits: 2 })} spent on the messages below` : ''}</p>
+              ${sms.low ? html`<p class="callout warn">Credit is low. Top up on KudiSMS soon: when it runs out, login codes and deal updates stop going out.</p>` : ''}`}
+          <p class="small"><a href="https://my.kudisms.net/" target="_blank" rel="noopener">Top up on KudiSMS →</a> · <button type="button" class="linklike" onclick="location.reload()">Refresh</button></p></section>`
+        : html`<p class="callout">SMS ${sms?.via === 'make' ? 'go through Make.com (each text uses Make credits)' : 'aren’t connected yet'}. To send them straight to KudiSMS, add <strong>KUDISMS_API_KEY</strong> as a secret in Cloudflare (see SETUP.md).</p>`}
+      <p class="muted">Every SMS and email TrustGap sends. “logged” means nothing is connected yet, so it wasn’t sent.</p>
       ${dateFilters()}
       <div class="list">${byDay(messages, (m) => html`<div class="row"><div><small class="muted">${date(m.created_at)} · ${m.to_phone || m.to_email} · ${m.event}</small><br>${m.sms}
         ${m.last_error ? html`<br><small class="muted">Error: ${m.last_error}</small>` : ''}</div>
