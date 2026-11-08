@@ -201,6 +201,18 @@ shown to admin on the order page and copied to Google Sheets.
    seller page has a bell with the unread count and a list of all notifications: announcements and
    personal messages (a personal welcome on sign-up). The newest unread one shows as a banner, checked
    every minute; read state is on the account.
+32. **Founder emails** (`worker/src/emails/founder.js`): an HTML welcome from Tubalcain M. (story, vision,
+   how TrustGap protects both sides and handles delivery) to every new seller, and a tailored one to every
+   newsletter subscriber (buyer / seller / both, with a stop link). Make sends them using `email_html`.
+33. **Newsletter** (`docs/assets/js/newsletter.js`, migration 0029): a pop-up on the safety check and Spot
+   the Scam (after a result or a game), name / phone / email / buyer-seller-both with consent; subscribers
+   are an Announce audience.
+34. **Admin login code**: password, then an SMS code to `ADMIN_ALERT_PHONE`; `ADMIN_RECOVERY_CODE` as a
+   fallback (texts a warning when used). Team members and the Customer Relations Admin already log in with
+   a texted code.
+35. **Spot the Scam: play till you fail**: chats keep coming, one wrong answer ends it; a 10-second clock per
+   chat after 10 correct (8 after 30); best score on the phone; share picture and `?e=` challenge links. The
+   10-chat round stays as "Quick round".
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the

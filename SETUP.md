@@ -162,6 +162,26 @@ If Make is down, messages are retried every 5 minutes (up to 5 times). See **Adm
 Without `MAKE_WEBHOOK_URL`, messages are only saved (status "logged"), and in test mode login codes
 appear on screen.
 
+## 3b-2. The founder's emails (HTML) and the newsletter
+
+**Welcome emails from Tubalcain M.** Every new seller gets one when their phone is verified, and every
+newsletter subscriber gets one tailored to buyer, seller or both (with a stop link). Both are built in the
+Worker (`worker/src/emails/founder.js`) with the photo at `docs/assets/images/founder.png`, and sent through
+Make like every other email. **One change in Make:** in your scenario's email module (Gmail / Email),
+set the content type to **HTML** and map the body to **`email_html`**, falling back to **`email_body`** when
+`email_html` is empty (a Make `ifempty(email_html; email_body)`). Until then they arrive as plain text.
+
+**The newsletter pop-up** shows on the Is it safe? pages (after a safety check result and after a game of
+Spot the Scam), once per phone; if closed, again after 14 days. It collects name, phone, email and buyer /
+seller / both, with consent. Subscribers are saved in the `newsletter_subscribers` table and can be chosen
+as an audience in **Admin → Announce** (every message to them has a stop link).
+
+**Admin login code.** The admin login now asks for the password, then a 6-digit code texted to
+`ADMIN_ALERT_PHONE` (like sellers and team members). Add a secret **`ADMIN_RECOVERY_CODE`** (at least 12
+characters; write it down somewhere safe offline): on the code screen, "Not getting the SMS?" lets you log
+in with it instead, and you get an SMS whenever it is used. Without `ADMIN_ALERT_PHONE` the login is the
+password alone, and Admin → Orders warns you.
+
 ## 3c. Announcements to sellers, buyers and team members
 
 **Admin → Announce** (open to you and the Customer Relations Admin) sends one message as a **banner** on
