@@ -1123,3 +1123,19 @@ dialog.inbox::backdrop { background: rgba(11, 27, 61, 0.45); }
 .inbox-list li { display: flex; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .inbox-list li.unread { background: var(--info-soft); }
 dialog.inbox > p { padding: 16px; }
+
+/* Spot the Scam: play till you fail */
+.qz-clock { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--warn); }
+.qz-clock.hurry { color: var(--danger); animation: qz-pulse 0.5s ease-in-out infinite alternate; }
+.qz-timebar span { background: var(--warn); transition: width 0.2s linear; }
+@keyframes qz-pulse { from { opacity: 1; } to { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .qz-clock.hurry { animation: none; } .qz-timebar span { transition: none; } }
+
+/* Newsletter pop-up (Is it safe? pages) */
+dialog.nl-pop { width: min(460px, calc(100vw - 32px)); max-height: 92vh; padding: 20px; border: 0; border-radius: var(--radius); background: var(--card); color: var(--text); box-shadow: 0 20px 60px rgba(11, 27, 61, 0.35); }
+dialog.nl-pop::backdrop { background: rgba(11, 27, 61, 0.5); }
+dialog.nl-pop h2 { margin: 0 32px 6px 0; }
+dialog.nl-pop .nl-x { position: absolute; top: 10px; right: 10px; }
+dialog.nl-pop form { position: relative; }
+dialog.nl-pop .choices { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+#nl-err:empty { display: none; }

@@ -4,7 +4,7 @@ import { api, html, show, shell, date, fail, flash, $, $$ } from '../core.js';
 
 await shell('admin');
 
-const AUD = { sellers: 'Sellers', buyers: 'Buyers', team: 'Team members' };
+const AUD = { sellers: 'Sellers', buyers: 'Buyers', subscribers: 'Newsletter subscribers', team: 'Team members' };
 const CH = { banner: '📢 Banner on their page (free)', sms: '💬 SMS', email: '✉️ Email' };
 const naira = (n) => `₦${Number(n).toLocaleString('en-NG')}`;
 let last = null; // the last preview, so the send matches what was checked
@@ -51,7 +51,7 @@ function previewCard(p) {
     <h2>Check before sending</h2>
     <p><strong>${p.people}</strong> ${p.people === 1 ? 'person' : 'people'}: ${p.audiences.map((a) => `${AUD[a]} ${p.by_audience[a]}`).join(' · ')}</p>
     <ul class="small">
-      ${p.channels.includes('banner') ? html`<li>Banner on their ${p.audiences.map((a) => ({ sellers: 'seller dashboard', buyers: 'order tracking page', team: 'team portal' })[a]).join(', ')} for ${p.days} days (people can close it).</li>` : ''}
+      ${p.channels.includes('banner') ? html`<li>Banner on their ${p.audiences.filter((a) => a !== 'subscribers').map((a) => ({ sellers: 'seller dashboard', buyers: 'order tracking page', team: 'team portal' })[a]).join(', ') || 'pages (subscribers have no TrustGap page: use SMS or email for them)'} for ${p.days} days (people can close it).</li>` : ''}
       ${p.channels.includes('sms') ? html`<li>SMS to <strong>${p.sms_to}</strong>: ${p.sms_pages} page${p.sms_pages > 1 ? 's' : ''} each, about <strong>${naira(p.sms_cost_naira)}</strong> of KudiSMS credit${p.sms_balance ? ` (you have ₦${p.sms_balance})` : ''}.</li>` : ''}
       ${p.channels.includes('email') ? html`<li>Email to <strong>${p.email_to}</strong>.</li>` : ''}
       ${p.minutes ? html`<li>Texts and emails go out a few at a time: all sent in about ${p.minutes} minutes.</li>` : ''}
@@ -94,7 +94,7 @@ async function render() {
         <label class="choice"><input type="radio" name="kind" value="marketing"> News and offers</label></div>
         <p class="small muted" id="kind-note"></p></fieldset>
       <fieldset><legend>Who for?</legend><div class="choices">
-        ${Object.entries(AUD).map(([k, v]) => html`<label class="choice"><input type="checkbox" name="audiences" value="${k}" ${k !== 'team' ? 'checked' : ''}> ${v}</label>`)}</div></fieldset>
+        ${Object.entries(AUD).map(([k, v]) => html`<label class="choice"><input type="checkbox" name="audiences" value="${k}" ${k === 'sellers' || k === 'buyers' ? 'checked' : ''}> ${v}</label>`)}</div></fieldset>
       <fieldset><legend>How?</legend><div class="choices">
         ${Object.entries(CH).map(([k, v]) => html`<label class="choice"><input type="checkbox" name="channels" value="${k}" ${k === 'banner' ? 'checked' : ''}> ${v}</label>`)}</div></fieldset>
       <p class="small callout">✨ <strong>Make it personal:</strong> write <code>{first_name}</code> or <code>{business_name}</code> anywhere and each person sees their own,

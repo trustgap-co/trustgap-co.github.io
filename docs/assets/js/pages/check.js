@@ -5,6 +5,7 @@
 import { html, raw, show, link, shell, track, api, params, $, $$ } from '../core.js';
 import { faceSvg, drawFace, buzz, confetti } from '../check-art.js';
 import { SITE } from '../site-info.js';
+import { offerNewsletter } from '../newsletter.js';
 import { SHORT, REASON_ALT, HEAD, NOTE, THINKING, WA, CARD } from '../check-voices.js';
 import { VILLAINS, MET, PHRASE_VILLAIN, PHRASE_NOTES, wahala, meterLabel, METER_TITLE, SAVED, AMOUNT_LABEL, DARE, DARE_BUTTON,
   BINGO, BINGO_LABEL, BINGO_TEXT, hasBingo, edition, EDITION } from '../check-fun.js';
@@ -428,6 +429,8 @@ document.addEventListener('click', (e) => {
       result = next; render(); $('#sc-result').scrollIntoView({ block: 'start' });
       if (next.level === 'high') buzz();
       if (next.villain) api('/api/check/met', { method: 'POST', body: { villain: next.villain } }).catch(() => {});
+      // A few seconds after the result (once read): the newsletter invitation.
+      setTimeout(() => offerNewsletter('check', lang, mode === 'seller' ? 'seller' : 'buyer'), 7000);
     });
     track('safety_check_done', { mode, level: next.level, meter: next.meter, villain: next.villain || 'none', amount_given: Boolean(next.amt), flags: next.flags + next.marks.length, language: lang, pasted: Boolean(pasted.trim()) });
   }
