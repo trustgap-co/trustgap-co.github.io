@@ -1,14 +1,25 @@
 {
-  "name": "TrustGap for sellers",
+  "name": "TrustGap",
   "short_name": "TrustGap",
-  "description": "Payment links, orders and payouts for your WhatsApp and Instagram deals.",
-  "start_url": "seller/dashboard.html?source=app",
+  "description": "Buy and sell safely on WhatsApp, Instagram and Facebook: payment secured, item delivered.",
+  "start_url": "app.html?source=app",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0B1B3D",
   "theme_color": "#0B1B3D",
   "icons": [
-    { "src": "assets/favicon.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "assets/app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
-  ]
+    {
+      "src": "assets/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "id": "app.html"
 }
