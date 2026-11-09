@@ -213,6 +213,10 @@ shown to admin on the order page and copied to Google Sheets.
 35. **Spot the Scam: play till you fail**: chats keep coming, one wrong answer ends it; a 10-second clock per
    chat after 10 correct (8 after 30); best score on the phone; share picture and `?e=` challenge links. The
    10-chat round stays as "Quick round".
+36. **Get the TrustGap app** (footer on every page, `docs/assets/js/install.js`): Android, iPhone, Windows and
+   Mac buttons. One-tap install where the browser allows it (Chrome/Edge), step-by-step instructions
+   elsewhere (Safari). The app opens `app.html`: a logged-in seller goes to the dashboard, everyone else to
+   the home page. No service worker, so the app is always the live site.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
