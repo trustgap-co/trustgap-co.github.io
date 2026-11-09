@@ -207,6 +207,21 @@ export function showAnnouncements(list = [], { onClose = null } = {}) {
   }
 }
 
+// The footer's app buttons: one per platform, this device's first.
+const appDevice = () => {
+  const ua = navigator.userAgent;
+  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'ios'
+    : /Android/.test(ua) ? 'android' : /Windows/.test(ua) ? 'windows' : /Macintosh/.test(ua) ? 'mac' : 'android';
+};
+function appButtons() {
+  const all = [['android', 'Android', '🤖'], ['ios', 'iPhone', '🍎'], ['windows', 'Windows', '🪟'], ['mac', 'Mac', '💻']];
+  const mine = appDevice();
+  const ordered = [...all.filter(([k]) => k === mine), ...all.filter(([k]) => k !== mine)];
+  return html`<p class="small">Install TrustGap on your phone or computer. Free, no app store needed.</p>
+    <div class="app-buttons">${ordered.map(([k, label, icon]) => html`<button type="button" class="app-btn ${k === mine ? 'mine' : ''}" data-install="${k}">
+      <span aria-hidden="true">${icon}</span><span><small>Get it for</small>${label}</span></button>`)}</div>`;
+}
+
 // Site settings from the API. Kept for 10 minutes in this tab so later pages don't wait for it.
 let configPromise;
 export const getConfig = () => (configPromise ||= (() => {
@@ -806,13 +821,17 @@ export async function shell(area) {
     if (tabs) document.body.classList.add('has-tabs');
     // The seller's notifications (the bell): loaded after the page, never in its way.
     if (area === 'seller' && tabs) import('./inbox.js').then((m) => m.startInbox()).catch(() => {});
-    if (area === 'seller' && !$('link[rel=manifest]')) {
-      // "Add to Home screen" opens the seller account like an app (no service worker: pages are never cached offline).
-      document.head.insertAdjacentHTML('beforeend', `<link rel="manifest" href="${link('manifest.webmanifest')}">
-        <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-title" content="TrustGap"><link rel="apple-touch-icon" href="${link('assets/app-icon-512.png')}">`);
-    }
   }
+  // TrustGap can be installed as an app from any page (footer → Get the TrustGap app). No service
+  // worker: pages are never cached offline, so the app is always the live, up-to-date site.
+  if (!$('link[rel=manifest]')) {
+    document.head.insertAdjacentHTML('beforeend', `<link rel="manifest" href="${link('manifest.webmanifest')}">
+      <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+      <meta name="apple-mobile-web-app-title" content="TrustGap"><link rel="apple-touch-icon" href="${link('assets/app-icon-512.png')}">`);
+  }
+  // Chrome / Edge offer one-tap install: kept for the footer buttons. Sellers still see the browser's own
+  // install offer on their pages; elsewhere the footer buttons ask instead.
+  window.addEventListener('beforeinstallprompt', (e) => { if (area !== 'seller') e.preventDefault(); window.__tgInstallPrompt = e; });
   const fullFooter = html`<div class="container foot-grid">
     <div class="foot-brand"><a class="logo" href="${link('index.html')}">Trust<span>Gap</span></a>
       <p>The safe completion layer for social commerce in Nigeria: payment secured, item delivered, both sides know what happens next.</p>
@@ -826,6 +845,7 @@ export async function shell(area) {
       <a href="${link('legal/disputes.html')}">Returns, refunds &amp; disputes</a><a href="${link('legal/fees.html')}">Fees &amp; payments</a>
       <a href="${link('legal/acceptable-use.html')}">Acceptable use &amp; prohibited items</a><a href="${link('legal/cookies.html')}">Cookie Policy</a>
       <a href="${link('legal/seller-terms.html')}">Seller terms</a><a href="${link('legal/partners.html')}">Partners &amp; responsibilities</a></div>
+    <div class="foot-app"><h4>Get the TrustGap app</h4>${appButtons()}</div>
     <div><h4>Contact</h4><p>
       <span data-site="supportEmail"></span><br><span data-site="supportPhone"></span><br><span data-site="supportHours"></span><br>
       <span data-site="registeredAddress"></span></p></div>
@@ -840,7 +860,8 @@ export async function shell(area) {
         <span>© ${new Date().getFullYear()} TrustGap</span>
         <a href="${link('legal/terms.html')}">Terms</a><a href="${link('legal/privacy.html')}">Privacy</a>
         <a href="${link('legal/disputes.html')}">Refunds &amp; disputes</a>
-        <span>Support: <span data-site="supportEmail"></span></span></div>
+        <span>Support: <span data-site="supportEmail"></span></span>
+        <button type="button" class="linklike foot-app-link" data-install="${appDevice()}">📲 Get the app</button></div>
       <details class="foot-more"><summary class="container">More links</summary>${fullFooter}</details></footer>`
     : html`<footer class="site-foot">${fullFooter}</footer>`));
   rememberSource();
@@ -849,6 +870,10 @@ export async function shell(area) {
   // Launch switch (site-info.js → launched): pages mark buttons .when-live / .when-prelaunch.
   document.body.classList.toggle('is-live', Boolean(SITE.launched));
   $('#cookie-settings')?.addEventListener('click', openCookieSettings);
+  for (const b of document.querySelectorAll('[data-install]')) {
+    b.addEventListener('click', () => import('./install.js').then((m) => m.openInstall(b.dataset.install)));
+  }
+  if (matchMedia('(display-mode: standalone)').matches || navigator.standalone === true) document.body.classList.add('is-installed');
   fillSiteInfo();
   loadImages();
   const menu = $('#menu');

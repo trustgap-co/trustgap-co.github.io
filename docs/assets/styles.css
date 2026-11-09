@@ -335,7 +335,7 @@ body.site main { max-width: none; padding: 0; }
 .site-foot h4 { color: #fff; margin: 0 0 10px; font-size: .95rem; }
 .site-foot .logo { display: inline-block; color: #fff; margin-bottom: 8px; }
 .foot-grid { display: grid; gap: 32px; }
-@media (min-width: 820px) { .foot-grid { grid-template-columns: 1.4fr 1fr 1.3fr 1fr; } }
+@media (min-width: 820px) { .foot-grid { grid-template-columns: 1.3fr 0.9fr 1.2fr 1.1fr 1fr; } }
 .foot-bottom { border-top: 1px solid rgba(255,255,255,.1); margin-top: 32px; padding-top: 18px; font-size: .82rem; color: #8E9BBB; }
 .foot-bottom a { display: inline; }
 .foot { display: none; }
@@ -1139,3 +1139,22 @@ dialog.nl-pop .nl-x { position: absolute; top: 10px; right: 10px; }
 dialog.nl-pop form { position: relative; }
 dialog.nl-pop .choices { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 #nl-err:empty { display: none; }
+
+/* Footer: Get the TrustGap app */
+.app-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.app-btn { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 10px; background: rgba(255, 255, 255, 0.06); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.app-btn:hover, .app-btn:focus-visible { background: rgba(255, 255, 255, 0.14); }
+.app-btn.mine { border-color: #F4B740; }
+.app-btn > span:first-child { font-size: 1.35rem; }
+.app-btn small { display: block; font-size: 0.7rem; opacity: 0.75; line-height: 1.1; }
+.foot-app-link { color: inherit; }
+.is-installed .foot-app, .is-installed .foot-app-link { display: none; }
+dialog.install-pop { width: min(440px, calc(100vw - 32px)); padding: 20px; border: 0; border-radius: var(--radius); background: var(--card); color: var(--text); box-shadow: 0 20px 60px rgba(11, 27, 61, 0.35); }
+dialog.install-pop::backdrop { background: rgba(11, 27, 61, 0.5); }
+dialog.install-pop h2 { margin: 10px 32px 10px 0; }
+.install-icon { border-radius: 16px; }
+.install-steps { padding-left: 20px; }
+.install-steps li { margin: 8px 0; }
+dialog.install-pop .nl-x { position: absolute; top: 10px; right: 10px; }
+.app-buttons { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+.app-btn > span:last-child { white-space: nowrap; }
