@@ -27,7 +27,7 @@ CSP = '; '.join([
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: blob: https: http://localhost:8787",
-    f"connect-src 'self' {API} http://localhost:8787 https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.facebook.com",
+    f"connect-src 'self' {API} http://localhost:8787 https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.facebook.com https://api.web3forms.com",
     "media-src 'self' blob:",
     "frame-src 'none'",
     "object-src 'none'",

@@ -44,6 +44,7 @@ PAGES = {
     'quiz.html': (None, 'Spot the Scam', '0.7'),
     'faq.html': ('TrustGap FAQ: safe payments for WhatsApp & Instagram deals in Nigeria', 'FAQ', '0.9'),
     'about.html': (None, 'About', '0.8'),
+    'contact.html': ('Contact TrustGap: questions, orders, delivery and partnerships', 'Contact', '0.7'),
     'survey.html': (None, 'Survey', '0.6'),
     'early-access.html': (None, 'Early access', '0.7'),
     'legal/index.html': (None, 'Policies', '0.5'),
@@ -54,7 +55,7 @@ for f in sorted((DOCS / 'legal').glob('*.html')):
         PAGES[rel] = (None, None, '0.4')
 
 LINKS = [('index.html', 'Home'), ('how.html', 'How TrustGap works'), ('buyers.html', 'For buyers'),
-         ('sellers.html', 'For sellers'), ('fees.html', 'Fees'), ('check.html', 'Is this deal safe?'), ('quiz.html', 'Spot the Scam'), ('faq.html', 'FAQ'), ('about.html', 'About TrustGap'),
+         ('sellers.html', 'For sellers'), ('fees.html', 'Fees'), ('check.html', 'Is this deal safe?'), ('quiz.html', 'Spot the Scam'), ('faq.html', 'FAQ'), ('about.html', 'About TrustGap'), ('contact.html', 'Contact us'),
          ('early-access.html', 'Get early access'), ('survey.html', 'Survey'), ('legal/index.html', 'Policies'),
          ('legal/terms.html', 'Terms of Service'), ('legal/privacy.html', 'Privacy Policy'),
          ('legal/disputes.html', 'Returns, refunds and disputes')]

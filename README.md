@@ -217,6 +217,10 @@ shown to admin on the order page and copied to Google Sheets.
    Mac buttons. One-tap install where the browser allows it (Chrome/Edge), step-by-step instructions
    elsewhere (Safari). The app opens `app.html`: a logged-in seller goes to the dashboard, everyone else to
    the home page. No service worker, so the app is always the live site.
+37. **Contact page** (`docs/contact.html`): name, phone, email, topic and message, sent straight to your email
+   through Web3Forms (never through the Worker). Paste your Web3Forms access key into `web3formsKey` in
+   `docs/assets/js/site-info.js`. Spam protection: hidden robot field, minimum time on the page, 3 messages
+   an hour per browser, and checks before sending.
 
 **Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
 ₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
