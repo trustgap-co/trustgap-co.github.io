@@ -646,6 +646,7 @@ const PUBLIC_NAV = [
   ['check.html', 'Is it safe?'],
   ['faq.html', 'FAQ'],
   ['about.html', 'About'],
+  ['contact.html', 'Contact'],
 ];
 
 const isPlaceholder = (v) => /^\[.*\]$/.test(String(v));
@@ -848,7 +849,7 @@ export async function shell(area) {
     <div class="foot-app"><h4>Get the TrustGap app</h4>${appButtons()}</div>
     <div><h4>Contact</h4><p>
       <span data-site="supportEmail"></span><br><span data-site="supportPhone"></span><br><span data-site="supportHours"></span><br>
-      <span data-site="registeredAddress"></span></p></div>
+      <span data-site="registeredAddress"></span></p><a href="${link('contact.html')}">Send us a message →</a></div>
   </div><div class="container foot-bottom">© ${new Date().getFullYear()} TrustGap, a trading name of <span data-site="legalName"></span> · RC <span data-site="rcNumber"></span>.
     TrustGap is not a bank and does not guarantee items or sellers. See the <a href="${link('legal/terms.html')}">Terms</a>.
     ${trackingConfigured && !['admin', 'team'].includes(area) ? html` · <button type="button" class="linklike" id="cookie-settings">Cookie settings</button>` : ''}</div>`;

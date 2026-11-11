@@ -1158,3 +1158,8 @@ dialog.install-pop h2 { margin: 10px 32px 10px 0; }
 dialog.install-pop .nl-x { position: absolute; top: 10px; right: 10px; }
 .app-buttons { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
 .app-btn > span:last-child { white-space: nowrap; }
+
+/* Contact page */
+.hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.contact-grid .form h2 { margin-top: 0; }
+#contact-err:empty { display: none; }
