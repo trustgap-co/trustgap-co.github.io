@@ -32,6 +32,11 @@ export const SITE = {
   rcNumber: '9568185',
   registeredAddress: 'Warri, Delta State, Nigeria',
   operatingAddress: 'Lagos Nigeria',
+  
+  // Contact page (contact.html): messages go to your email through Web3Forms (web3forms.com). Create a
+  // free access key there with the email that should receive the messages, and paste it between the quotes.
+  web3formsKey: '[WEB3FORMS ACCESS KEY]',
+
   supportEmail: 'trustgap.co@gmail.com',
   privacyEmail: 'trustgap.co@gmail.com',
   complaintsEmail: 'trustgap.co@gmail.com',
