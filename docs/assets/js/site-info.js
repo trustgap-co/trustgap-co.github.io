@@ -35,7 +35,7 @@ export const SITE = {
   
   // Contact page (contact.html): messages go to your email through Web3Forms (web3forms.com). Create a
   // free access key there with the email that should receive the messages, and paste it between the quotes.
-  web3formsKey: '[WEB3FORMS ACCESS KEY]',
+  web3formsKey: 'c9d185df-1eeb-463e-ba50-d1fc8feac6cd',
 
   supportEmail: 'trustgap.co@gmail.com',
   privacyEmail: 'trustgap.co@gmail.com',
